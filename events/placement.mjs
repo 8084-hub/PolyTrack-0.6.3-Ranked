@@ -9,11 +9,11 @@ export function eventFinishPlace({board,periodId,trackId,accountId,timeMs}){
     seen.add(row.accountId);if(row.accountId!==accountId)others.set(row.accountId,row);
   }
   const pending=validBoard?board.pendingPlaybacks??[]:[];
-  if(!Array.isArray(pending))return null;
-  const pendingAccounts=new Set(),runIds=new Set();let ownPending=false;
+  if(!Array.isArray(pending)||pending.length>512)return null;
+  const runIds=new Set();let ownPending=false;
   for(const row of pending){
-    if(!HASH.test(row?.accountId||'')||pendingAccounts.has(row.accountId)||!HASH.test(row.runId||'')||runIds.has(row.runId)||!Number.isSafeInteger(row.timeMs)||row.timeMs<=0||row.verificationStatus!=='waiting'||row.pending!==true||row.verified!==false||row.eventRpEligible!==false||row.source!=='pending-event-playback')return null;
-    pendingAccounts.add(row.accountId);runIds.add(row.runId);
+    if(!HASH.test(row?.accountId||'')||!HASH.test(row.runId||'')||runIds.has(row.runId)||!Number.isSafeInteger(row.timeMs)||row.timeMs<=0||row.timeMs>300000||row.verificationStatus!=='waiting'||row.pending!==true||row.verified!==false||row.eventRpEligible!==false||row.source!=='pending-event-playback')return null;
+    runIds.add(row.runId);
     if(row.accountId===accountId){ownPending=true;continue;}
     const prior=others.get(row.accountId);
     if(!prior||row.timeMs<prior.timeMs)others.set(row.accountId,row);

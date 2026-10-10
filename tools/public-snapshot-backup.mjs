@@ -14,6 +14,8 @@ const outputDirectory = path.join(root, 'local-reports', 'snapshot-staging');
 const TRACK_ID = /^[a-f0-9]{64}$/;
 const EVENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const PUBLIC_ACCOUNT_ID = /^[a-f0-9]{64}$/;
+const MAX_PENDING_EVENT_ROWS = 512;
+const MAX_EVENT_TIME_MS = 300000;
 
 const overallFields = ['updatedAt', 'builtAt', 'revision', 'builtRevision', 'sourceRevision', 'algorithmVersion',
   'schemaVersion', 'averagePlacementVersion', 'derivedMetricsVersion', 'serverAchievementVersion', 'complete',
@@ -47,6 +49,7 @@ const eventEntryFields = ['accountId', 'name', 'carStyle', 'timeMs', 'rp', 'rank
 const eventFields = ['id', 'kind', 'trackId', 'period', 'scoreVersion', 'targetPolicy', 'targetMs', 'maxRp', 'sourceRevision',
   'updatedAt', 'archived', 'state', 'racerCount', 'complete', 'totalEntries', 'sourceTotalEntries', 'sourceCompleteness',
   'contributions', 'eventRpComplete', 'entries'];
+const pendingEventFields = ['accountId', 'runId', 'timeMs', 'name', 'carStyle', 'submittedAt'];
 
 function project(source, fields) {
   const result = {};
@@ -78,7 +81,8 @@ function projectOverallEntry(entry) {
       projectedAchievements.casual = {
         ...(Number.isSafeInteger(casual.count) && casual.count >= 0 ? {count: casual.count} : {}),
         ...(Number.isSafeInteger(casual.rp) && casual.rp >= 0 ? {rp: casual.rp} : {}),
-        ...(Number.isSafeInteger(casual.pointsPerTrack) && casual.pointsPerTrack === 100 ? {pointsPerTrack: 100} : {})
+        ...(Number.isSafeInteger(casual.pointsPerTrack) && casual.pointsPerTrack === 100 ? {pointsPerTrack: 100} : {}),
+        ...(casual.scoringVersion === 1 ? {scoringVersion: 1} : {})
       };
       if (!Object.keys(projectedAchievements.casual).length) delete projectedAchievements.casual;
     }
@@ -152,6 +156,30 @@ function projectPeriod(value) {
   return result;
 }
 
+function projectPendingEventRows(rows, eventId, period) {
+  if (!Array.isArray(rows) || rows.length > MAX_PENDING_EVENT_ROWS || !period || period.id !== eventId ||
+      !TRACK_ID.test(period.trackId || '') || !['daily', 'weekly', 'custom', 'kodub'].includes(period.kind) ||
+      !Number.isSafeInteger(period.startsAt) || !Number.isSafeInteger(period.endsAt) || period.endsAt <= period.startsAt) return null;
+  const runs = new Set(), projected = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object' || Array.isArray(row) ||
+        !PUBLIC_ACCOUNT_ID.test(row.accountId || '') || !/^[a-f0-9]{64}$/.test(row.runId || '') ||
+        runs.has(row.runId) ||
+        !Number.isSafeInteger(row.timeMs) || row.timeMs < 1 || row.timeMs > MAX_EVENT_TIME_MS ||
+        typeof row.name !== 'string' || row.name.length > 24 ||
+        typeof row.carStyle !== 'string' || row.carStyle.length > 256 || row.carStyle && !/^[A-Za-z0-9_-]+$/.test(row.carStyle) ||
+        !Number.isSafeInteger(row.submittedAt) || row.submittedAt < period.startsAt || row.submittedAt >= period.endsAt ||
+        row.verificationStatus !== 'waiting' || row.pending !== true || row.verified !== false ||
+        row.eventRpEligible !== false || row.source !== 'pending-event-playback' ||
+        row.periodId !== undefined && row.periodId !== eventId || row.trackId !== undefined && row.trackId !== period.trackId) return null;
+    runs.add(row.runId);
+    projected.push({...project(row, pendingEventFields), name: publicDisplayName(row.name),
+      verificationStatus: 'waiting', pending: true, verified: false, eventRpEligible: false,
+      source: 'pending-event-playback'});
+  }
+  return projected;
+}
+
 export function publicEventBackup(value, eventId) {
   if (!EVENT_ID.test(eventId) || !value || typeof value !== 'object' || !Number.isSafeInteger(value.updatedAt) ||
       !Array.isArray(value.entries) || value.entries.length > 500) throw Error('Invalid public event snapshot');
@@ -161,6 +189,10 @@ export function publicEventBackup(value, eventId) {
   if (value.period) result.period = projectPeriod(value.period);
   result.id = eventId;
   result.entries = value.entries.map(row => project(row, eventEntryFields));
+  if (value.archived !== true && Array.isArray(value.pendingPlaybacks) && value.pendingPlaybacks.length) {
+    const pending = projectPendingEventRows(value.pendingPlaybacks, eventId, value.period);
+    if (pending) result.pendingPlaybacks = pending;
+  }
   if (result.contributions && typeof result.contributions === 'object') result.contributions = project(result.contributions, ['normalRp', 'eventRp']);
   if (result.dynamicComponents && typeof result.dynamicComponents === 'object') {
     const rolling = result.dynamicComponents.permanentRollingHills;
@@ -402,8 +434,7 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
     const summary = overall.trackSummaries.find(row => row.trackId === id);
     if (summary && summary.updatedAt !== value.updatedAt) trackSummaryMismatches.push(id);
     nextTracks[id] = {path: relative, revision: Number(value.revision || value.sourceRevision || 0),
-      sourceUpdatedAt: value.updatedAt, updatedAt: value.updatedAt,
-      ...(!summary ? {checkedAt: now} : {})};
+      sourceUpdatedAt: value.updatedAt, updatedAt: value.updatedAt, checkedAt: now};
   }
   for (const {id, value} of eventRows) {
     if (!value) { missingEvents++; continue; }

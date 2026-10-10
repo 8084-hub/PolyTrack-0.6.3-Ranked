@@ -5,6 +5,7 @@ const MAX_TRACK_RULES = 8;
 const MAX_TRACK_WEIGHTS = 64;
 const MAX_TRACK_TIME_MS = 36000000;
 const MAX_TRACK_TIME_SECONDS = MAX_TRACK_TIME_MS / 1000;
+let userPickerNumber = 0;
 const COUNTRY_LABELS = typeof Intl !== 'undefined' && Intl.DisplayNames
   ? new Intl.DisplayNames(['en'], { type: 'region' })
   : null;
@@ -658,15 +659,35 @@ export function mountFilterMenu({
     return candidates;
   }
   function makeUserPicker(parent, title, field) {
+    const pickerId = ++userPickerNumber;
     const container = el('div', 'fm-user-picker');
     const input = document.createElement('input'); input.type = 'search'; input.autocomplete = 'off'; input.maxLength = 80;
     input.placeholder = 'Type a username or account ID'; input.setAttribute('aria-label', title);
-    const popup = el('div', 'fm-suggestions'); popup.hidden = true; popup.setAttribute('role', 'listbox');
+    const popup = el('div', 'fm-suggestions'); popup.id = `fm-racer-listbox-${pickerId}`; popup.hidden = true; popup.setAttribute('role', 'listbox');
+    input.setAttribute('aria-controls', popup.id);
     const suggestionStatus = el('span', 'fm-suggestion-status');
     suggestionStatus.setAttribute('role', 'status'); suggestionStatus.setAttribute('aria-live', 'polite'); suggestionStatus.setAttribute('aria-atomic', 'true');
     input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('aria-expanded', 'false');
+    let activeSuggestion = -1;
     const chips = el('div', 'fm-chips'); chips.setAttribute('aria-label', `${title} selected`);
     container.append(labelFor(title, input), popup, suggestionStatus, chips); parent.append(container);
+    function clearActiveSuggestion() {
+      activeSuggestion = -1;
+      input.removeAttribute('aria-activedescendant');
+      for (const option of popup.querySelectorAll('button[role="option"]')) option.setAttribute('aria-selected', 'false');
+    }
+    function setActiveSuggestion(index) {
+      const options = [...popup.querySelectorAll('button[role="option"]')];
+      if (!options.length) {
+        clearActiveSuggestion();
+        return;
+      }
+      activeSuggestion = (index + options.length) % options.length;
+      for (const [optionIndex, option] of options.entries()) {
+        option.setAttribute('aria-selected', String(optionIndex === activeSuggestion));
+      }
+      input.setAttribute('aria-activedescendant', options[activeSuggestion].id);
+    }
     const refreshSelected = () => {
       const ids = new Set(filter[field]);
       selectedUsers[field] = [...ids].map(id => {
@@ -688,6 +709,8 @@ export function mountFilterMenu({
     };
     function renderSuggestions() {
       popup.replaceChildren();
+      activeSuggestion = -1;
+      input.removeAttribute('aria-activedescendant');
       if (activeUserSearch !== input || document.activeElement !== input) {
         popup.hidden = true; input.setAttribute('aria-expanded', 'false'); return;
       }
@@ -699,11 +722,13 @@ export function mountFilterMenu({
       const selected = new Set(filter[field]);
       if (exact && selected.has(rowId(exact))) {
         const already = el('div', 'fm-suggestion fm-suggestion-disabled', `${rowName(exact) || (idSearch.showId ? rowId(exact) : 'Racer')} · Already selected`);
-        already.setAttribute('role', 'option'); already.setAttribute('aria-disabled', 'true'); popup.append(already);
+        already.setAttribute('role', 'option'); already.setAttribute('aria-disabled', 'true'); already.setAttribute('aria-selected', 'false'); popup.append(already);
       }
       const candidates = userCandidates(search, selected);
-      for (const candidate of candidates) {
+      for (const [candidateIndex, candidate] of candidates.entries()) {
         const option = button('', 'fm-suggestion'); option.setAttribute('role', 'option');
+        option.id = `${popup.id}-option-${candidateIndex}`;
+        option.setAttribute('aria-selected', 'false');
         const person = el('span', 'fm-suggestion-person');
         const nativePreview = String(safeCall(() => renderRacer(candidate.row), '') || '');
         if (nativePreview) {
@@ -729,7 +754,7 @@ export function mountFilterMenu({
           filter[field] = [...new Set([...filter[field], candidate.id])].slice(0, MAX_LIST);
           suggestionStatus.textContent = `${candidate.name} selected.`;
           scheduleRuleNotice(null, true);
-          input.value = ''; popup.hidden = true; input.setAttribute('aria-expanded', 'false'); refreshSelected(); input.focus();
+          input.value = ''; popup.hidden = true; input.setAttribute('aria-expanded', 'false'); clearActiveSuggestion(); refreshSelected(); input.focus();
         });
         popup.append(option);
       }
@@ -751,15 +776,25 @@ export function mountFilterMenu({
     });
     input.addEventListener('blur', () => setTimeout(() => {
       if (activeUserSearch === input && document.activeElement !== input && !popup.contains(document.activeElement)) {
-        activeUserSearch = null; popup.hidden = true; input.setAttribute('aria-expanded', 'false');
+        activeUserSearch = null; popup.hidden = true; input.setAttribute('aria-expanded', 'false'); clearActiveSuggestion();
       }
     }, 100));
     popup.addEventListener('pointerdown', event => { if (event.target.closest?.('button')) event.preventDefault(); });
     input.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && !popup.hidden) { popup.hidden = true; input.setAttribute('aria-expanded', 'false'); }
+      if (event.key === 'Escape' && !popup.hidden) {
+        event.preventDefault();
+        popup.hidden = true; input.setAttribute('aria-expanded', 'false'); clearActiveSuggestion();
+      }
+      if (!popup.hidden && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+        event.preventDefault();
+        setActiveSuggestion(activeSuggestion < 0
+          ? event.key === 'ArrowDown' ? 0 : popup.querySelectorAll('button[role="option"]').length - 1
+          : activeSuggestion + (event.key === 'ArrowDown' ? 1 : -1));
+      }
       if (event.key === 'Enter' && !popup.hidden) {
-        const first = [...popup.querySelectorAll('button')].find(item => !item.disabled);
-        if (first) { event.preventDefault(); first.click(); }
+        const options = [...popup.querySelectorAll('button[role="option"]')];
+        const selected = options[activeSuggestion] || options.find(item => !item.disabled);
+        if (selected) { event.preventDefault(); selected.click(); }
       }
     });
     refreshSelected();
@@ -1199,6 +1234,7 @@ export function mountFilterMenu({
       if (popup && !popup.hidden) {
         popup.hidden = true;
         input?.setAttribute('aria-expanded', 'false');
+        input?.removeAttribute('aria-activedescendant');
       }
     }
   }

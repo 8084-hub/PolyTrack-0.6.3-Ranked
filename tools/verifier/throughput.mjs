@@ -1,7 +1,7 @@
 import {decode} from './firestore.mjs';
 
 export const DRAIN_LIMITS = Object.freeze({rounds:4, requests:400, reserveRequests:128,
-  admissionMs:360000, minimumRoundMs:30000, finishReserveMs:60000});
+  minimumFinalRoundRequests:51, admissionMs:360000, minimumRoundMs:30000, finishReserveMs:60000});
 export class VerificationBudgetError extends Error {
   constructor() { super('verification_request_budget'); this.code='VERIFICATION_REQUEST_BUDGET'; }
 }
@@ -33,7 +33,9 @@ export async function drainVerification({runRound,requests,now=()=>performance.n
   const started=now(), rounds=[];
   let longestRound=0, stop='round_limit', interruptedRound=false;
   for(let index=0;index<DRAIN_LIMITS.rounds;index++) {
-    if(index && DRAIN_LIMITS.requests-requests()<DRAIN_LIMITS.reserveRequests) {stop='request_reserve';break;}
+    const remainingRequests = DRAIN_LIMITS.requests - requests();
+    if(index && remainingRequests < DRAIN_LIMITS.reserveRequests &&
+      remainingRequests < DRAIN_LIMITS.minimumFinalRoundRequests) {stop='request_reserve';break;}
     if(index && now()-started+Math.max(longestRound,DRAIN_LIMITS.minimumRoundMs)+DRAIN_LIMITS.finishReserveMs>DRAIN_LIMITS.admissionMs) {
       stop='time_reserve';break;
     }

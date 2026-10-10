@@ -30,8 +30,8 @@ test('freshness sidecar stays outside the leaderboard and avoids native controls
         <div class="pages">Leaderboard pages</div><div class="button-wrapper"><button class="back">Back</button><button>Filter</button></div>
       </section></main>
       <div id="polytrackTrackFreshness" class="polytrack-track-freshness" data-source="snapshot">
-          <strong>1.25x Weight · 84 Players</strong><span>Snapshot data</span>
-          <span>Standings age: 2d ago</span><span>Live refresh unlocks in 14:00 · finish saved</span>
+          <strong><b class="track-data-weight">1.25x Weight</b><b class="track-data-players">84 Players</b></strong><span class="track-data-source">Snapshot</span>
+          <span class="track-data-age">Snapshot 2h old</span><span class="track-data-update">Track updated 2d ago</span><span class="track-data-unlock">Live refresh unlocks in 14:00 · finish saved</span>
       </div></body></html>`);
     await page.addStyleTag({ content: rankedCss });
     await page.addStyleTag({ content: css });
@@ -59,7 +59,7 @@ test('freshness sidecar stays outside the leaderboard and avoids native controls
         assert.ok(result.panel.left >= -1 && result.panel.right <= width + 1, `panel stays in viewport at ${label}`);
         assert.equal(result.overlapsPages, false, `panel avoids leaderboard pages at ${label}`);
         assert.equal(result.overlapsBack, false, `panel and native Back control do not overlap at ${label}`);
-        assert.ok(result.panel.width <= (height <= 500 && width >= 700 ? 420 : 360), `sidecar stays within the readable desktop width at ${label}`);
+        assert.ok(result.panel.width <= Math.min(width-20,height <= 500 && width >= 700 ? 420 : 360*scale)+1, `sidecar respects UI scaling at ${label}`);
         assert.ok(result.panelScroll <= result.panelClient + 2, `sidecar has no clipped content at ${label}`);
         assert.ok(result.countdown.top >= result.panel.top && result.countdown.bottom <= result.panel.bottom,
           `lock countdown remains fully visible at ${label}`);
@@ -96,9 +96,9 @@ test('source states and locked refresh styling are present and interaction-neutr
   assert.match(css, /clip-path:\s*polygon\(0 0, 100% 0, calc\(100% - 7px\) 100%, 0 100%\)/);
   assert.match(css, /box-shadow:\s*0 8px 24px rgba\(0, 0, 0, \.3\)/);
   assert.match(css, /width:\s*fit-content !important/);
-  assert.match(css, /max-width:\s*min\(360px, calc\(100vw - 20px\)\) !important/);
-  assert.match(css, /font-size:\s*clamp\(13px, calc\(14px \* var\(--sq-ui-scale, 1\)\), 15px\) !important/);
-  assert.match(patchSource, /const ageLine=`Standings age: \$\{snapshotAt\?ageLabel\(snapshotAt\):'unknown'\}`/);
+  assert.match(css, /max-width:\s*min\(calc\(360px \* var\(--sq-ui-scale, 1\)\), calc\(100vw - 20px\)\) !important/);
+  assert.match(css, /font-size:\s*max\(13px, calc\(14px \* var\(--sq-ui-scale, 1\)\)\) !important/);
+  assert.match(patchSource, /Snapshot \$\{old\(capturedAt\)\}/);
   assert.doesNotMatch(patchSource, /const bannerHtml=.*snapshotCaptureLabel\(\)/);
   assert.match(patchSource, /const bannerHtml=.*\$\{escapeHtml\(ageLine\)\}.*\$\{policy\?/);
   assert.match(css, /border-radius:\s*0/);

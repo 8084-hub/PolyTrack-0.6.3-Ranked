@@ -81,6 +81,36 @@ test('server achievement normalization keeps only bounded allowlisted proof summ
   assert.equal('ledger' in normalized.beatOwner, false);
 });
 
+test('Casual RP normalization rejects legacy fixed awards and accepts only scoring model 1', () => {
+  const context = vm.createContext({
+    SERVER_COSMETIC_UNLOCK_IDS: new Set(),
+    cleanUserId: value => String(value || '').trim().toLowerCase(),
+    normalizeCarColorId: value => value,
+    extractCarId: () => '',
+    normalizeFinishSummary: () => null,
+    fallbackMedals: () => ({}),
+    fallbackAverageFinish: () => 0,
+    fallbackPodiumRate: () => 0,
+    sanitizeProfileCosmetics: value => value || null,
+    __pt062NormalizeStyle: value => value,
+    __pt062GetRememberedStyle: () => '',
+    MIN_RANKED_TRACKS: 3,
+    TOTAL_TRACKS: 100
+  });
+  vm.runInContext(`${extract('safeServerInteger')};${extract('sanitizeServerAchievementProof')};${extract('sanitizeServerAchievements')};${extract('normalizeEntries')};`, context);
+  const [legacy, current] = context.normalizeEntries([
+    {userId: 'legacy', casualRp: 100, casualCompletionCount: 1,
+      serverAchievements: {casual: {count: 1, rp: 100, pointsPerTrack: 100}}},
+    {userId: 'current', casualRp: 55, casualCompletionCount: 1,
+      serverAchievements: {casual: {count: 1, rp: 55, scoringVersion: 1}}}
+  ]);
+  assert.equal(legacy.casualRp, null);
+  assert.equal(legacy.casualCompletionCount, 1);
+  assert.equal(legacy.serverAchievements.casual.scoringVersion, undefined);
+  assert.equal(current.casualRp, 55);
+  assert.equal(current.serverAchievements.casual.scoringVersion, 1);
+});
+
 test('source contract renders legacy Casual RP as unavailable and preserves exact metadata', () => {
   assert.match(source, /overallCategory==='casual'.*missingValue/s);
   assert.match(source, /visibleRank=overallCategory==='casual'&&missingValue\?null:rank/);

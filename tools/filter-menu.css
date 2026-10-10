@@ -80,6 +80,7 @@ body.pt-group-filter-menu-open { overflow: hidden; }
 .fm-suggestion { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 10px 12px; border: 0; border-bottom: 1px solid rgba(135, 167, 231, .2); color: var(--fm-ink); background: transparent; text-align: left; font: inherit; cursor: pointer; }
 .fm-suggestion-person { display: inline-flex; min-width: 0; align-items: center; gap: 10px; }
 .fm-suggestion:hover, .fm-suggestion:focus-visible { background: #192f58; }
+.fm-suggestion[aria-selected="true"] { background: #192f58; box-shadow: inset 3px 0 var(--fm-green); }
 .fm-suggestion-id { color: #8494b6; font-size: 10px; }
 .fm-suggestion-disabled { color: var(--fm-muted); cursor: not-allowed; padding: 10px 12px; }
 .fm-check-picker { margin-top: 14px; border: 1px solid rgba(135, 167, 231, .3); }

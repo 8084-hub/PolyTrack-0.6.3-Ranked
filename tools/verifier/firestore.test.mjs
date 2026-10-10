@@ -38,6 +38,25 @@ test('runQuery retries safely and uses bounded fallback delay when Retry-After i
   assert.deepEqual(waits, [250]);
 });
 
+test('Firestore runQuery array errors preserve only the safe status code', async () => {
+  const message = 'private backend detail: query requires an index. ' + 'x'.repeat(400);
+  let calls = 0;
+  const db = createFirestoreCaller({base: 'https://firestore.test', access: 'token',
+    fetchImpl: async () => {
+      calls++;
+      return response(400, [{error: {code: 9, status: 'FAILED_PRECONDITION', message}}]);
+    }});
+
+  await assert.rejects(db.call(':runQuery', {structuredQuery: {limit: 1}}), error => {
+    assert.equal(error.status, 400);
+    assert.equal(error.code, 'FAILED_PRECONDITION');
+    assert.equal(error.message, 'Firestore request failed: 400');
+    return true;
+  });
+  assert.equal(calls, 1);
+  assert.equal(db.requests(), 1);
+});
+
 test('Retry-After parser supports HTTP dates and clamps negative or excessive delays', () => {
   const now = Date.parse('2026-10-02T00:00:00Z');
   assert.equal(boundedRetryAfter(new Response(null, {headers: {'Retry-After': 'Wed, 21 Oct 2015 07:28:00 GMT'}}), now), 0);

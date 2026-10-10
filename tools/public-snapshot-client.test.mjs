@@ -141,12 +141,13 @@ test('recent boards stay cached while old boards are evicted at the entry limit'
   let calls=0;
   const id=n=>n.toString(16).padStart(64,'0');
   const read=createPublicSnapshotReader({baseUrl:'https://example.test/',fetchImpl:async url=>{
+    if(new URL(url).pathname.endsWith('/manifest.json')){calls++;return Response.json({schemaVersion:1,tracks:{}});}
     calls++;return Response.json({updatedAt:1,trackId:String(url).split('/').pop().replace('.json',''),entries:[]});
   }});
   for(let i=1;i<=128;i++)await read('track',id(i));
   await read('track',id(1));await read('track',id(129));
-  assert.equal(calls,129);await read('track',id(1));assert.equal(calls,129);
-  await read('track',id(2));assert.equal(calls,130);
+  assert.equal(calls,130);await read('track',id(1));assert.equal(calls,130);
+  await read('track',id(2));assert.equal(calls,131);
 });
 
 test('large replay cache releases old decoded payloads at its memory budget',async()=>{
@@ -168,6 +169,25 @@ test('packed cosmetic directory loads public designs and rejects invalid identit
   assert.equal((await fixture.read('cosmetic-directory')).entries[id].value.emblem2,'flag');
   const bad=await packedFixture({updatedAt:1,entries:{private:{value:{theme:'classic'}}}},'cosmetic-directory.json');
   assert.equal(await bad.read('cosmetic-directory'),null);
+});
+
+test('packed cosmetic directory accepts more than 2000 identities within the file byte limit',async()=>{
+  const entries=Object.fromEntries(Array.from({length:2001},(_,index)=>[(index+1).toString(16).padStart(64,'0'),{at:1,value:{theme:'crimson'}}]));
+  const fixture=await packedFixture({updatedAt:1,entries},'cosmetic-directory.json');
+  assert.equal(Object.keys((await fixture.read('cosmetic-directory')).entries).length,2001);
+});
+
+test('track reads expose manifest check times and cache the static manifest once',async()=>{
+  const ids=['a','b'].map(char=>char.repeat(64));let manifestReads=0,trackReads=0;
+  const read=createPublicSnapshotReader({baseUrl:'https://example.test/public-snapshots/',fetchImpl:async url=>{
+    const target=new URL(url);
+    if(target.pathname.endsWith('/manifest.json')){manifestReads++;return Response.json({schemaVersion:1,tracks:{[ids[0]]:{checkedAt:123},[ids[1]]:{checkedAt:456}}});}
+    trackReads++;const id=target.pathname.split('/').at(-1).replace('.json','');
+    return Response.json({trackId:id,updatedAt:50,entries:[]});
+  }});
+  assert.equal((await read('track',ids[0]))._snapshotCapturedAt,123);
+  assert.equal((await read('track',ids[1]))._snapshotCapturedAt,456);
+  assert.equal(manifestReads,1);assert.equal(trackReads,2);
 });
 
 test('packed snapshots reject bad checksums, traversal and dishonest decompressed length',async()=>{
@@ -201,10 +221,13 @@ test('event backups cannot substitute a different event identity',async()=>{
   assert.equal(await read('event','d_test'),null);
 });
 test('public backup shares requests and does not refetch on menu refresh',async()=>{
-  let calls=0;const id='a'.repeat(64);
-  const read=createPublicSnapshotReader({baseUrl:'https://example.test/public-snapshots/',fetchImpl:async()=>{calls++;return new Response(JSON.stringify({trackId:id,updatedAt:1,entries:[]}),{headers:{'content-type':'application/json'}});}});
+  let calls=0,manifestReads=0;const id='a'.repeat(64);
+  const read=createPublicSnapshotReader({baseUrl:'https://example.test/public-snapshots/',fetchImpl:async url=>{
+    calls++;if(new URL(url).pathname.endsWith('/manifest.json')){manifestReads++;return new Response(JSON.stringify({schemaVersion:1,tracks:{[id]:{checkedAt:123}}}),{headers:{'content-type':'application/json'}});}
+    return new Response(JSON.stringify({trackId:id,updatedAt:1,entries:[]}),{headers:{'content-type':'application/json'}});
+  }});
   const [a,b]=await Promise.all([read('track',id),read('track',id)]);
-  assert.equal(calls,1);assert.equal(a,b);assert.equal(a._publicBackup,true);await read('track',id);assert.equal(calls,1);
+  assert.equal(calls,2);assert.equal(manifestReads,1);assert.equal(a,b);assert.equal(a._publicBackup,true);assert.equal(a._snapshotCapturedAt,123);await read('track',id);assert.equal(calls,2);
 });
 test('missing backup has negative cooldown and invalid identifiers never fetch',async()=>{
   let calls=0;const read=createPublicSnapshotReader({baseUrl:'https://example.test/public-snapshots/',fetchImpl:async()=>{calls++;return new Response('',{status:404});}});

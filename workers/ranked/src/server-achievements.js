@@ -2,7 +2,8 @@ export const SERVER_ACHIEVEMENT_VERSION = 1;
 export const SERVER_ACHIEVEMENT_CATALOG = 'ranked-recognized-2026-09-20-v1';
 export const OWNER_PUBLIC_ID = '732873e979838acecbce2a663dc69122d6deca4634e999897d1cc5e677df660b';
 export const SPECIAL_ROLLING_HILLS_TRACK_ID = 'fb769ac2ea77e8f19a21a9dd3071742f2342bd49c41e4748d7e8c7903d4f0778';
-export const CASUAL_RP_PER_TRACK = 100;
+export const CASUAL_RP_MIN_PER_TRACK = 10;
+export const CASUAL_RP_MAX_PER_TRACK = 100;
 
 export const BEAT_OWNER_STAGES = Object.freeze([
   Object.freeze({ threshold: 1, id: 'beat-owner-1', cosmeticId: 'emblem:target' }),
@@ -12,6 +13,15 @@ export const BEAT_OWNER_STAGES = Object.freeze([
 const text = (value, max) => String(value || '').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, max);
 const positiveInteger = value => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : 0;
 const physicsVerified = entry => entry?.integrityVerified === true && entry?.runVerified === true;
+
+// Each completed track contributes 10-100 points from the current verified-PB percentile.
+export function casualRpForPlacement(rank, fieldSize) {
+  if (!Number.isSafeInteger(rank) || !Number.isSafeInteger(fieldSize) || rank < 1 || fieldSize < rank) return null;
+  if (fieldSize === 1) return CASUAL_RP_MIN_PER_TRACK;
+  return CASUAL_RP_MIN_PER_TRACK + Math.round(
+    (CASUAL_RP_MAX_PER_TRACK - CASUAL_RP_MIN_PER_TRACK) * (fieldSize - rank) / (fieldSize - 1)
+  );
+}
 
 function encodeLedger(trackIds, catalog) {
   const bytes = new Uint8Array(Math.ceil(catalog.length / 8));
@@ -96,6 +106,7 @@ export function aggregateServerAchievements(entries, trackDocuments, priorById, 
   const eligibleTracks = new Set(catalog);
   const beatOwnerTracks = new Set((beatOwnerTrackIds || []).map(value => text(value, 80)).filter(value => eligibleTracks.has(value)));
   const completions = new Map();
+  const casualPlacements = new Map();
   const ownerBeats = new Map();
   const audit = { version: SERVER_ACHIEVEMENT_VERSION, inputTrackDocuments: 0, inputEntries: 0,
     physicsVerifiedEntries: 0, integrityOnlyRejected: 0, unverifiedRejected: 0,
@@ -107,6 +118,7 @@ export function aggregateServerAchievements(entries, trackDocuments, priorById, 
     audit.inputTrackDocuments += 1;
     const rows = Array.isArray(board?.entries) ? board.entries : [];
     const verified = [];
+    const verifiedByAccount = new Map();
     for (const entry of rows) {
       audit.inputEntries += 1;
       if (!physicsVerified(entry)) {
@@ -118,13 +130,25 @@ export function aggregateServerAchievements(entries, trackDocuments, priorById, 
       const timeMs = positiveInteger(entry.timeMs);
       if (!accountId || !timeMs) continue;
       audit.physicsVerifiedEntries += 1;
-      verified.push({ ...entry, accountId, timeMs });
+      const trustedEntry = { ...entry, accountId, timeMs };
+      verified.push(trustedEntry);
+      const previous = verifiedByAccount.get(accountId);
+      if (!previous || timeMs < previous.timeMs) verifiedByAccount.set(accountId, trustedEntry);
       if (eligibleTracks.has(trackId)) {
         const tracks = completions.get(accountId) || new Set();
         tracks.add(trackId);
         completions.set(accountId, tracks);
         audit.eligibleVerifiedCompletions += 1;
       }
+    }
+    const casualField = [...verifiedByAccount.values()].sort((left, right) => left.timeMs - right.timeMs || left.accountId.localeCompare(right.accountId));
+    if (eligibleTracks.has(trackId)) {
+      const fieldSize = casualField.length;
+      casualField.forEach((entry, index) => {
+        const placements = casualPlacements.get(entry.accountId) || new Map();
+        placements.set(trackId, board?.complete === true ? casualRpForPlacement(index + 1, fieldSize) : null);
+        casualPlacements.set(entry.accountId, placements);
+      });
     }
     if (!beatOwnerTracks.has(trackId)) continue;
     const target = verified.find(entry => entry.accountId === ownerPublicId);
@@ -146,7 +170,11 @@ export function aggregateServerAchievements(entries, trackDocuments, priorById, 
     const accountId = text(entry?.userId || entry?.accountId, 128);
     const previous = prior.get(accountId) || {};
     const casualTracks = priorLedger(previous, 'casual', catalog);
+    const legacyCasualUnknown = Number.isSafeInteger(previous.casualRp) && previous.casualRp > 0 && casualTracks.size === 0;
     for (const trackId of completions.get(accountId) || []) casualTracks.add(trackId);
+    const placements = casualPlacements.get(accountId) || new Map();
+    const casualRpKnown = !legacyCasualUnknown && [...casualTracks].every(trackId => Number.isSafeInteger(placements.get(trackId)));
+    const casualRp = casualRpKnown ? [...casualTracks].reduce((sum, trackId) => sum + placements.get(trackId), 0) : null;
 
     const beatenTracks = priorLedger(previous, 'beatOwner', catalog);
     const priorBeatCount = beatenTracks.size;
@@ -167,13 +195,13 @@ export function aggregateServerAchievements(entries, trackDocuments, priorById, 
     const casualCount = casualTracks.size;
     return {
       ...entry,
-      casualRp: casualCount * CASUAL_RP_PER_TRACK,
+      casualRp,
       casualCompletionCount: casualCount,
       cosmeticUnlocks,
       serverAchievements: {
         version: SERVER_ACHIEVEMENT_VERSION,
         catalog: SERVER_ACHIEVEMENT_CATALOG,
-        casual: { ledger: encodeLedger(casualTracks, catalog), count: casualCount, rp: casualCount * CASUAL_RP_PER_TRACK, pointsPerTrack: CASUAL_RP_PER_TRACK },
+        casual: { ledger: encodeLedger(casualTracks, catalog), count: casualCount, rp: casualRp, scoringVersion: 1 },
         beatOwner: { targetAccountId: ownerPublicId, ledger: encodeLedger(beatenTracks, catalog), count: beatenTracks.size, unlocks }
       }
     };

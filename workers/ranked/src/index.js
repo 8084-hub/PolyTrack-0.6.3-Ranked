@@ -1,3 +1,4 @@
+import { safePublicName } from './public-name-policy.js';
 import {kodubWeekly} from './kodub-weekly.js';
 import { eventWorkerHandler, eventWorkerMaintenance } from './events-worker.js';
 import {packPlannerResults, plannerDocumentBytes, PLANNER_BUNDLE_VERSION, PLANNER_PUBLICATION_VERSION} from './planner-results.js';
@@ -707,8 +708,8 @@ export function computeTrackEntries(rows, trackId, env = {}, verdicts = {}) {
       accountId,
       userId: accountId,
       trackId,
-      name: safeText(row.nickname || row.name || 'Racer', 24) || 'Racer',
-      nickname: safeText(row.nickname || row.name || 'Racer', 24) || 'Racer',
+      name: safePublicName(row.nickname || row.name || 'Racer', accountId),
+      nickname: safePublicName(row.nickname || row.name || 'Racer', accountId),
       countryCode: safeText(row.countryCode, 8).toUpperCase(),
       timeMs,
       frames: Math.max(1, Number(row.frames || row.raceTimeFrames || timeMs)),
@@ -1357,7 +1358,7 @@ async function notifyProfile(request, env, context, uid, body) {
   const results = await runQuery(env, COLLECTIONS.raceResults, { field: 'accountId', value: accountId }, 100);
   const identity = {
     accountId,
-    name: safeText(profile.data.nickname || profile.data.name || 'Racer', 24) || 'Racer',
+    name: safePublicName(profile.data.nickname || profile.data.name || 'Racer', accountId),
     countryCode: safeText(profile.data.countryCode, 8).toUpperCase(),
     carId: safeText(profile.data.carId, 64) || null,
     carColors: safeText(profile.data.carColors, 64) || null,
@@ -1514,8 +1515,8 @@ export async function updateTrackIdentity(env, trackId, identity) {
   const cosmetics = sanitizeProfileCosmetics(identity.profileCosmetics || {});
   entries[index] = {
     ...existing,
-    name: safeText(identity.name, 24) || 'Racer',
-    nickname: safeText(identity.name, 24) || 'Racer',
+    name: safePublicName(identity.name, accountId),
+    nickname: safePublicName(identity.name, accountId),
     countryCode: safeText(identity.countryCode, 8).toUpperCase(),
     carId: safeText(identity.carId, 32) || existing.carId || null,
     carColors: identity.carColors ?? existing.carColors ?? '',

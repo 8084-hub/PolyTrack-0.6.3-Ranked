@@ -566,6 +566,23 @@ test('only pre-verification recordings are public; rejected recordings disappear
   }
 });
 
+test('multiple pending attempts for one racer retain their exact replay until each resolves', async () => {
+  const f = fixture(); await f.start();
+  const slower = await f.submit(24000, 'slower');
+  f.advance(); const faster = await f.submit(22000, 'faster');
+  let snapshot = await f.service.snapshot('day1');
+  assert.deepEqual(snapshot.pendingPlaybacks.map(row => row.runId).sort(), [slower.runId, faster.runId].sort());
+  assert.equal((await f.service.playback('day1', slower.runId)).timeMs, 24000);
+  assert.equal((await f.service.playback('day1', faster.runId)).timeMs, 22000);
+
+  const jobs = await f.service.leaseJobs('day1');
+  const slowerJob = jobs.find(job => job.resultId === slower.runId);
+  await f.service.completeJob('day1', slowerJob, verdict(slowerJob, { status: 'mismatch' }));
+  snapshot = await f.service.snapshot('day1');
+  assert.deepEqual(snapshot.pendingPlaybacks.map(row => row.runId), [faster.runId]);
+  assert.equal((await f.service.playback('day1', faster.runId)).timeMs, 22000);
+});
+
 test('rejected and identity-inconsistent replay records fail closed', async () => {
   const rejected = fixture(); await rejected.start(); await rejected.submit();
   await rejected.service.processBatch('day1', async jobs => jobs.map(job => verdict(job, { status: 'mismatch' })));

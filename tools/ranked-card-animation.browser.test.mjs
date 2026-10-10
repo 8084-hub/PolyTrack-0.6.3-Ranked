@@ -36,13 +36,13 @@ test('Ranked never flashes before its last native card entrance, including hidde
       container.classList.remove('hidden');
       container.querySelectorAll('button:not(#injectedRankingsBtn)').forEach(el=>el.classList.add('button-spawn'));
       window.injectRankingsButton();
-      let nativeEnded=0,rankedStarted=0;
+      let nativeEnded=0,rankedStarted=0,nativeStarted=0;
       container.addEventListener('animationend',event=>{if(event.target.id!=='injectedRankingsBtn')nativeEnded=performance.now();});
-      container.addEventListener('animationstart',event=>{if(event.target.id==='injectedRankingsBtn')rankedStarted=performance.now();});
+      container.addEventListener('animationstart',event=>{if(event.target.id==='injectedRankingsBtn')rankedStarted=performance.now();else nativeStarted=performance.now();});
       const sample=()=>{
         const ranked=document.querySelector('#injectedRankingsBtn');
         const active=[...container.querySelectorAll('button:not(#injectedRankingsBtn)')].some(el=>el.getAnimations().some(animation=>animation.playState!=='finished'));
-        window.rankTest.push({active,visible:getComputedStyle(ranked).visibility!=='hidden',nativeEnded,rankedStarted});
+        window.rankTest.push({active,visible:getComputedStyle(ranked).visibility!=='hidden',nativeEnded,rankedStarted,nativeStarted});
         if(!ranked.classList.contains('ranked-ready'))requestAnimationFrame(sample);
       };
       sample();
@@ -50,9 +50,11 @@ test('Ranked never flashes before its last native card entrance, including hidde
     await page.waitForSelector('#injectedRankingsBtn.ranked-ready');
     const samples=await page.evaluate(()=>window.rankTest);
     assert.ok(samples.length>10,'sampled the full staggered entrance');
-    assert.equal(samples.some(row=>row.active&&row.visible),false,'Ranked stays hidden until native cards finish');
     const last=samples.at(-1);
-    assert.ok(last.rankedStarted>=last.nativeEnded,'Ranked entrance starts last');
+    assert.equal(samples.some(row=>row.visible&&row.nativeStarted===0),false,'Ranked never flashes before the native sequence');
+    assert.ok(last.rankedStarted>last.nativeStarted,'Ranked entrance starts after the final native entrance');
+    assert.ok(last.rankedStarted-last.nativeStarted<300,'Ranked follows the next beat, not a full 500ms animation later');
+    assert.ok(samples.some(row=>row.active&&row.visible),'Ranked overlaps the finishing native animations like the native stagger');
     await page.evaluate(()=>{
       const container=document.querySelector('.main-buttons-container'),button=document.querySelector('#injectedRankingsBtn');
       container.classList.add('hidden');window.syncRankingsButtonAnimation(button,container);

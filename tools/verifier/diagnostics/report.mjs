@@ -80,25 +80,32 @@ async function queueDocuments(db, {now, trackId, queueLimits, dueOnly}) {
         const document = await db.get(queueCollection, trackId);
         return document ? {...document, queueCollection, data: document.data || {}} : null;
       }));
-    return documents.filter(Boolean);
+    const queues = documents.filter(Boolean);
+    return {queues, sampled: {core: documents[0] ? 1 : 0, extra: documents[1] ? 1 : 0}, truncated: false};
   }
   const lanes = await Promise.all([
     [VERIFICATION_COLLECTION, queueLimits.core],
     [EXTRA_VERIFICATION_COLLECTION, queueLimits.extra]
   ].map(async ([queueCollection, limit]) => {
-    if (!limit) return [];
+    if (!limit) return {queues: [], sampled: 0, truncated: false};
     const structuredQuery = {
       from: [{collectionId: queueCollection}],
-      where: dueOnly ? {fieldFilter: {field: {fieldPath: 'notBefore'}, op: 'LESS_THAN_OR_EQUAL', value: {integerValue: String(now)}}} :
-        {fieldFilter: {field: {fieldPath: 'pending'}, op: 'EQUAL', value: {booleanValue: true}}},
-      orderBy: [{field: {fieldPath: 'notBefore'}, direction: 'ASCENDING'}, {field: {fieldPath: '__name__'}, direction: 'ASCENDING'}],
+      ...(dueOnly ? {where: {fieldFilter: {field: {fieldPath: 'notBefore'}, op: 'LESS_THAN_OR_EQUAL', value: {integerValue: String(now)}}}} : {}),
+      orderBy: [{field: {fieldPath: 'notBefore'}, direction: 'ASCENDING'}],
       limit
     };
     const rows = await db.call(':runQuery', {structuredQuery});
     if (!Array.isArray(rows)) throw Error('Unexpected verification queue response');
-    return rows.map(queryDocument).filter(Boolean).map(document => ({...document, queueCollection}));
+    const sampled = rows.map(queryDocument).filter(Boolean);
+    const queues = sampled.filter(document => document.data?.pending === true)
+      .map(document => ({...document, queueCollection}));
+    return {queues, sampled: sampled.length, truncated: sampled.length >= limit};
   }));
-  return lanes.flat();
+  return {
+    queues: lanes.flatMap(lane => lane.queues),
+    sampled: {core: lanes[0].sampled, extra: lanes[1].sampled},
+    truncated: lanes.some(lane => lane.truncated)
+  };
 }
 
 async function recentAuditDocuments(db, {trackId, historyLimit}) {
@@ -204,7 +211,8 @@ export async function createDiagnosticReport(db, {
   const queueLimits = trackId ? {core: 1, extra: 1, total: 2} : {
     core: Math.ceil(trackLimit / 2), extra: Math.floor(trackLimit / 2), total: trackLimit
   };
-  const queues = await queueDocuments(db, {now: at, trackId, queueLimits, dueOnly});
+  const queueScan = await queueDocuments(db, {now: at, trackId, queueLimits, dueOnly});
+  const queues = queueScan.queues;
   const selected = selectedSlots(queues, runLimit);
   const audits = historyLimit ? await recentAuditDocuments(db, {trackId, historyLimit}) : [];
   const eventDocuments = eventLimit ? await recentEventRuns(db, {trackId, eventLimit}) : [];
@@ -296,7 +304,7 @@ export async function createDiagnosticReport(db, {
   }
   return {
     generatedAt: new Date(at).toISOString(),
-    scope: {queueDocuments: queues.length, queueLimit: queueLimits.total, coreQueueLimit: queueLimits.core, extraQueueLimit: queueLimits.extra, coreQueueDocuments: queues.filter(queue => queue.queueCollection === VERIFICATION_COLLECTION).length, extraQueueDocuments: queues.filter(queue => queue.queueCollection === EXTRA_VERIFICATION_COLLECTION).length, runLimit, historyLimit, eventLimit, dueOnly, selectedRuns: rows.length, queueRuns: selected.slots.length, auditRecordsRead: audits.length, auditHistoryRuns: rows.filter(row => row.source === 'audit_history').length, eventRuns: eventDocuments.length, totalRunsSeen: selected.total, auditHistoryMayBeTruncated: historyLimit > 0 && audits.length >= historyLimit, eventHistoryMayBeTruncated: eventLimit > 0 && eventDocuments.length >= eventLimit, truncated: selected.truncated || (!trackId && (queues.filter(queue => queue.queueCollection === VERIFICATION_COLLECTION).length >= queueLimits.core || queues.filter(queue => queue.queueCollection === EXTRA_VERIFICATION_COLLECTION).length >= queueLimits.extra)) || historyLimit > 0 && audits.length >= historyLimit || eventLimit > 0 && eventDocuments.length >= eventLimit},
+    scope: {queueDocuments: queues.length, queueLimit: queueLimits.total, coreQueueLimit: queueLimits.core, extraQueueLimit: queueLimits.extra, coreQueueDocuments: queues.filter(queue => queue.queueCollection === VERIFICATION_COLLECTION).length, extraQueueDocuments: queues.filter(queue => queue.queueCollection === EXTRA_VERIFICATION_COLLECTION).length, coreQueueSampledDocuments: queueScan.sampled.core, extraQueueSampledDocuments: queueScan.sampled.extra, runLimit, historyLimit, eventLimit, dueOnly, selectedRuns: rows.length, queueRuns: selected.slots.length, auditRecordsRead: audits.length, auditHistoryRuns: rows.filter(row => row.source === 'audit_history').length, eventRuns: eventDocuments.length, totalRunsSeen: selected.total, auditHistoryMayBeTruncated: historyLimit > 0 && audits.length >= historyLimit, eventHistoryMayBeTruncated: eventLimit > 0 && eventDocuments.length >= eventLimit, truncated: selected.truncated || queueScan.truncated || historyLimit > 0 && audits.length >= historyLimit || eventLimit > 0 && eventDocuments.length >= eventLimit},
     engine: {geometrySchema: geometry.schemaVersion, trustedTrackCount: trustedTracks.size},
     scheduler: schedulerDiagnosis(lastRun),
     summary: {

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
     <meta name="robots" content="index, follow, max-image-preview:large">
     <meta name="theme-color" content="#202d60">
-    <meta name="polytrack-snapshot" content="./public-snapshots9/">
+    <meta name="polytrack-snapshot" content="./public-snapshots10/">
 
     <title>PolyTrack 0.6.3 | Static Ranked Community Edition</title>
 
@@ -33,17 +33,32 @@
     <link rel="preload" href="./forced_square.woff2" as="font" type="font/woff2" crossorigin="anonymous">
     <link rel="preload" href="./images/logo.svg" as="image" type="image/svg+xml">
     <link rel="preload" href="./images/discord.svg" as="image" type="image/svg+xml">
-    <link rel="stylesheet" href="./events/events.css?v=100" data-event-css>
-    <link rel="stylesheet" href="./home-ui.css?v=100" data-home-ui-css>
-    <link rel="modulepreload" href="./events/client.mjs?v=100">
+    <link rel="stylesheet" href="./events/events.css?v=101" data-event-css>
+    <link rel="stylesheet" href="./home-ui.css?v=101" data-home-ui-css>
+    <link rel="modulepreload" href="./events/client.mjs?v=101">
     <link rel="modulepreload" href="./events/kodub-weekly.mjs">
     <link rel="manifest" href="./manifest.json">
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-QXB7CHLEDT"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
+      const analyticsSafeUrl = value => {
+        try {
+          const url = new URL(value);
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+          return url.origin + url.pathname;
+        } catch {
+          return '';
+        }
+      };
+      const analyticsPageLocation = analyticsSafeUrl(location.href) || location.origin + location.pathname;
+      const analyticsPageReferrer = analyticsSafeUrl(document.referrer);
       gtag('js', new Date());
-      gtag('config', 'G-QXB7CHLEDT', {cookie_domain: location.hostname});
+      gtag('config', 'G-QXB7CHLEDT', {
+        cookie_domain: location.hostname,
+        page_location: analyticsPageLocation,
+        page_referrer: analyticsPageReferrer
+      });
     </script>
     <script type="application/ld+json">
       {"@context":"https://schema.org","@type":"VideoGame","name":"PolyTrack 0.6.3 Community Ranked","url":"https://staticquasar931.github.io/PolyTrack-0.6.3-Ranked/","description":"A community PolyTrack edition with saved personal bests, Extra Tracks, daily and weekly events, and customizable leaderboards.","genre":["Racing","Time trial"],"gamePlatform":["Web browser","Windows","Android","iOS"],"creator":{"@type":"Organization","name":"Kodub"},"contributor":{"@type":"Person","name":"StaticQuasar931"},"isAccessibleForFree":true}
@@ -95,7 +110,7 @@
       window.POLYTRACK_RANKED_BROKER_URL='https://polytrack-ranked-worker.staticquasar931.workers.dev';
     </script>
     <script defer="defer" src="./error_screen.bundle.js"></script>
-    <script defer="defer" src="./polytrack_062_patch.js?v=100"></script>
+    <script defer="defer" src="./polytrack_062_patch.js?v=101"></script>
     <script defer="defer" src="./main.bundle.js"></script>
   </head>
 

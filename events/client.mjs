@@ -35,7 +35,18 @@ const write=(key,value)=>localStorage.setItem(key,JSON.stringify(value));
 const cacheWrite=(key,value)=>{try{write(key,value);}catch{/* Cache storage is optional; never discard a successful cloud read. */}};
 const eventName=kind=>kind==='kodub'?'Kodub weekly':kind==='weekly'?'Weekly':kind==='daily'?'Daily':'Event';
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const EVENT_RECORD_HASH=/^[a-f0-9]{64}$/,EVENT_RECORD_LIMIT=200;
+const EVENT_RECORD_HASH=/^[a-f0-9]{64}$/,EVENT_RECORD_LIMIT=200,EVENT_PENDING_LIMIT=512,EVENT_TIME_LIMIT=300000;
+export function eventPendingRows(pending){
+  if(!Array.isArray(pending)||pending.length>EVENT_PENDING_LIMIT)return [];
+  const byAccount=new Map(),runIds=new Set();
+  for(const row of pending){
+    if(!EVENT_RECORD_HASH.test(row?.accountId||'')||!EVENT_RECORD_HASH.test(row.runId||'')||runIds.has(row.runId)||!Number.isSafeInteger(row.timeMs)||row.timeMs<=0||row.timeMs>EVENT_TIME_LIMIT||row.verificationStatus!=='waiting'||row.pending!==true||row.verified!==false||row.eventRpEligible!==false||row.source!=='pending-event-playback')continue;
+    runIds.add(row.runId);
+    const prior=byAccount.get(row.accountId);
+    if(!prior||row.timeMs<prior.timeMs)byAccount.set(row.accountId,{...row,pending:true,rank:null,rp:0});
+  }
+  return [...byAccount.values()];
+}
 export function readEventPlacementSettings(storage=globalThis.localStorage){
   try{return {enabled:storage?.getItem('polytrack-0.6.2-pb-podiums')!=='0',policy:storage?.getItem('polytrack-0.6.2-pb-podiums-verified-only')==='1'?'verified':'all'};}
   catch{return {enabled:true,policy:'all'};}
@@ -55,11 +66,11 @@ export function eventRecordPlacement({board,period,accountId,timeMs,policy='all'
   const byAccount=new Map(published.map(row=>[row.accountId,row]));
   if(policy!=='verified'){
     const pending=board.pendingPlaybacks??[];
-    if(!Array.isArray(pending)||pending.length>limit)return null;
-    const pendingAccounts=new Set(),runIds=new Set();
+    if(!Array.isArray(pending)||pending.length>EVENT_PENDING_LIMIT)return null;
+    const runIds=new Set();
     for(const row of pending){
-      if(!EVENT_RECORD_HASH.test(row?.accountId||'')||pendingAccounts.has(row.accountId)||!EVENT_RECORD_HASH.test(row.runId||'')||runIds.has(row.runId)||!Number.isSafeInteger(row.timeMs)||row.timeMs<=0||row.verificationStatus!=='waiting'||row.pending!==true||row.verified!==false||row.eventRpEligible!==false||row.source!=='pending-event-playback')return null;
-      pendingAccounts.add(row.accountId);runIds.add(row.runId);const prior=byAccount.get(row.accountId);
+      if(!EVENT_RECORD_HASH.test(row?.accountId||'')||!EVENT_RECORD_HASH.test(row.runId||'')||runIds.has(row.runId)||!Number.isSafeInteger(row.timeMs)||row.timeMs<=0||row.timeMs>EVENT_TIME_LIMIT||row.verificationStatus!=='waiting'||row.pending!==true||row.verified!==false||row.eventRpEligible!==false||row.source!=='pending-event-playback')return null;
+      runIds.add(row.runId);const prior=byAccount.get(row.accountId);
       if(!prior||row.timeMs<prior.timeMs)byAccount.set(row.accountId,{accountId:row.accountId,timeMs:row.timeMs,pending:true});
     }
   }
@@ -645,13 +656,12 @@ export function installEvents(bridge){
     const validBoard=board?.period?.id===period.id&&board.period.trackId===period.trackId&&Array.isArray(board.entries);
     const entries=validBoard?board.entries:[];
     const rows=entries.map(row=>({...row,pending:false}));
-    const pending=validBoard?(board.pendingPlaybacks||board.playbacks):null;
-    for(const replay of (Array.isArray(pending)?pending:[])){
-      if(!isHash(replay?.accountId)||replay.verificationStatus!=='waiting'||replay.pending===false||replay.verified===true||replay.eventRpEligible===true||replay.source&&replay.source!=='pending-event-playback'||!isHash(replay.runId)||!Number.isSafeInteger(replay.timeMs)||replay.timeMs<=0)continue;
+    const pending=validBoard?eventPendingRows(board.pendingPlaybacks):[];
+    for(const replay of pending){
       const at=rows.findIndex(row=>row.accountId===replay.accountId);
       if(at>=0&&rows[at].timeMs<=replay.timeMs)continue;
       if(at>=0)rows.splice(at,1);
-      rows.push({...replay,pending:true,rank:null,rp:0});
+      rows.push(replay);
     }
     const local=localBest(period),receipt=ownReceipts.get(period.id+'_'+accountId);
     const remote=receipt&&['waiting','verified'].includes(receipt.status)&&Number.isSafeInteger(receipt.timeMs)&&receipt.timeMs>0?receipt:null;
@@ -776,9 +786,10 @@ export function installEvents(bridge){
     view.signature=signature;
     const styles=rows.map(row=>cachedCarStyle(row,period));
     view.board.querySelector('h3').textContent=eventName(period.kind)+' event · '+periodName(period);
-    const sourceLabel=rows.some(row=>row.pending)?'Mixed data':board?._publicBackup?'Snapshot data':board?.saved?'Cached data':'Fresh data';
+    const waitingCount=rows.filter(row=>row.pending).length,verifiedCount=rows.length-waitingCount;
+    const sourceLabel=board?._publicBackup?'Snapshot data: frozen, not all available':rows.some(row=>row.pending)?'Mixed data':board?.saved?'Cached data':'Fresh data';
     view.board.querySelector('h3').title=sourceLabel;
-    view.board.querySelector('.total-players').textContent=rows.length+(rows.length===1?' racer':' racers')+' · '+sourceLabel+(view.onlyVerified?' · verified only':'')+(filterResult?.active?' - personal filters':'');
+    view.board.querySelector('.total-players').textContent=rows.length+(rows.length===1?' racer':' racers')+' · '+sourceLabel+(board?._publicBackup?` · ${verifiedCount} verified, ${waitingCount} waiting`:waitingCount?` · ${waitingCount} waiting`:'')+(view.onlyVerified?' · verified only':'')+(filterResult?.active?' - personal filters':'');
     const count=Math.max(1,Math.ceil(rows.length/20));view.page=Math.min(view.page,count-1);
      const container=view.board.querySelector('.container');view.carObserver?.disconnect();view.deferredCarRows.clear();container.replaceChildren();
     for(const [index,row] of rows.slice(view.page*20,view.page*20+20).entries()){

@@ -27,6 +27,8 @@ export async function buildProfileSnapshotResults(directory){
       const finish=Object.fromEntries(fields.filter(key=>row[key]!==undefined).map(key=>[key,row[key]]));
       finish.trackId=trackId;finish.fieldSize=Math.max(Number(row.rank)||0,Number(row.fieldSize)||board.entries.length);
       finish.cachedAt=Number(board.updatedAt)||0;finish.complete=board.complete===true;
+      const checkedAt=Number(manifest?.tracks?.[trackId]?.checkedAt);
+      if(Number.isSafeInteger(checkedAt)&&checkedAt>0)finish.snapshotCapturedAt=checkedAt;
       results.set(trackId,finish);
     }
   }
@@ -50,10 +52,15 @@ export async function buildProfileSnapshotResults(directory){
   let resultCount=0;const cosmeticEntries={};let cosmeticUpdatedAt=0;
   for(const [accountId,results]of racers){
     const finishes=[...results.values()].sort((a,b)=>a.trackId.localeCompare(b.trackId));resultCount+=finishes.length;
+    const publicStatus=published.get(accountId);
+    const publicProfile=await optional(path.join(directory,'profiles',accountId+'.json'))||
+      (publicStatus?{accountId}:null);
+    if(publicProfile&&publicStatus)for(const key of ['profileCosmetics','cosmeticUnlocks','serverAchievements','badges','rankTier','rankSince'])
+      if(!Object.hasOwn(publicProfile,key)&&Object.hasOwn(publicStatus,key))publicProfile[key]=publicStatus[key];
     const value={accountId,updatedAt:Math.max(Number(overall?.updatedAt)||0,...finishes.map(row=>Number(row.cachedAt)||0)),
       capturedAt:summary?.capturedAt||null,results:finishes,expectedEligibleTracks:Number(published.get(accountId)?.raceCount)||0,
       coverage:{boardsPresent:boards,boardsKnown:Number(manifest?.trackIdsKnown)||boards,allTracksCaptured:boards>=Number(manifest?.trackIdsKnown||Infinity)},
-      publicProfile:await optional(path.join(directory,'profiles',accountId+'.json'))};
+      publicProfile};
     if(value.publicProfile?.profileCosmetics){const at=Number(value.publicProfile.updatedAt)||0;cosmeticEntries[accountId]={at,value:value.publicProfile.profileCosmetics};cosmeticUpdatedAt=Math.max(cosmeticUpdatedAt,at);}
     const body=JSON.stringify(value)+'\n';if(Buffer.byteLength(body)>2*1024*1024)throw Error('Profile results exceed client limit');
     await fs.writeFile(path.join(output,accountId+'.json'),body);

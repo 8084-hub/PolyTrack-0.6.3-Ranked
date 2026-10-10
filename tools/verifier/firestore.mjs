@@ -5,8 +5,9 @@ export async function firestoreFailure(response) {
   const error = new Error('Firestore request failed: ' + response.status);
   error.status = response.status;
   const body = await response.json().catch(() => null);
-  const code = body?.error?.status;
-  if (['ABORTED', 'FAILED_PRECONDITION', 'ALREADY_EXISTS'].includes(code)) error.code = code;
+  const apiError = Array.isArray(body) ? body.find(item => item?.error && typeof item.error === 'object')?.error : body?.error;
+  const code = typeof apiError?.status === 'string' && /^[A-Z0-9_]{1,64}$/.test(apiError.status) ? apiError.status : null;
+  if (code) error.code = code;
   return error;
 }
 

@@ -22,7 +22,8 @@ const nativeTimeFormatter=nativeBundle.slice(timeStart+7,timeEnd).trim();
 const nativeCss=JSON.parse(nativeBundle.match(/"\.leaderboard-ui \{(?:\\.|[^"\\])*"/)[0]);
 function section(start,end){const a=patch.indexOf(start),b=patch.indexOf(end,a+start.length);assert(a>=0&&b>a,'production source boundary exists');return patch.slice(a,b).trim();}
 function functionSource(name){
- const start=patch.indexOf(`  function ${name}(`);assert(start>=0,`production function ${name} exists`);
+ const starts=[patch.indexOf(`  function ${name}(`),patch.indexOf(`  async function ${name}(`)].filter(index=>index>=0);
+ const start=starts.length?Math.min(...starts):-1;assert(start>=0,`production function ${name} exists`);
  const open=patch.indexOf('{',start);assert(open>start,`production function ${name} has a body`);
  let depth=0,quote='',escaped=false,lineComment=false,blockComment=false;
  for(let i=open;i<patch.length;i++){
@@ -38,7 +39,7 @@ function functionSource(name){
  }
  assert.fail(`production function ${name} has an unterminated body`);
 }
-const focus=section('  function focusTrackFromRanked(','  function trackSummaryLine(');
+const focus=section('  async function focusTrackFromRanked(', '  function trackSummaryLine(');
 const entry=section('  function ensureEventEntryContents(){','  function extraTrackIds(){');
 const QUEUE='polytrack-062-events-v1-queue';
 const id='a'.repeat(64);
@@ -358,7 +359,7 @@ test('cold event rows supply exact cars and refreshed directory names',async t=>
  });await enter(p);await p.waitForFunction(()=>renderCalls.length===1);
  assert.deepEqual(await p.evaluate(()=>renderCalls),['row-style']);
  assert.match(await p.locator('.sq-event-board').innerText(),/Refreshed racer/);
- assert.equal(await p.locator('.sq-event-board .total-players').innerText(),'1 racer');
+ assert.equal(await p.locator('.sq-event-board .total-players').innerText(),'1 racer · Fresh data');
 });
 
 test('event car falls back to an account-matched persisted style and native renderer',async t=>{

@@ -55,6 +55,10 @@ test('bounded report joins queue, canonical, audit and published place without r
   const report = await createDiagnosticReport(db, {now: 10000, trackLimit: 4, runLimit: 8});
   assert.deepEqual(calls.filter(call => call.body.structuredQuery.from[0].collectionId === VERIFICATION_COLLECTION || call.body.structuredQuery.from[0].collectionId === EXTRA_VERIFICATION_COLLECTION)
     .map(call => [call.body.structuredQuery.from[0].collectionId, call.body.structuredQuery.limit]), [[VERIFICATION_COLLECTION, 2], [EXTRA_VERIFICATION_COLLECTION, 2]]);
+  for (const call of calls.filter(call => [VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION].includes(call.body.structuredQuery.from[0].collectionId))) {
+    assert.deepEqual(call.body.structuredQuery.orderBy, [{field: {fieldPath: 'notBefore'}, direction: 'ASCENDING'}]);
+    assert.ok(!call.body.structuredQuery.where || call.body.structuredQuery.where.fieldFilter.field.fieldPath === 'notBefore');
+  }
   assert.equal(calls.length, 4);
   assert.equal(report.scope.queueLimit, 4);
   assert.equal(report.scope.coreQueueLimit + report.scope.extraQueueLimit, report.scope.queueLimit);
@@ -121,6 +125,50 @@ test('recent audit history includes a verified run after its queue slot is gone'
   assert.equal(report.runs[0].source, 'audit_history');
   assert.equal(report.runs[0].submissionTimestampSource, 'pbAt');
   assert.equal(report.runs[0].verificationLatencyMs, 5000);
+});
+
+test('bounded queue scan uses the notBefore index and filters pending locally', async () => {
+  const queries = [];
+  const db = {
+    call: async (_path, body) => {
+      const query = body.structuredQuery;
+      queries.push(query);
+      assert.deepEqual(query.orderBy, [{field: {fieldPath: 'notBefore'}, direction: 'ASCENDING'}]);
+      assert.equal(query.limit, 1);
+      assert.ok(!query.where, 'default bounded scan avoids a pending/notBefore composite index');
+      const collection = query.from[0].collectionId;
+      const row = collection === VERIFICATION_COLLECTION ? {trackId: 'completed', pending: false, notBefore: 1, slots: {}} :
+        {trackId: 'pending', pending: true, notBefore: 2, slots: {}};
+      return [{document: {name: `queues/${row.trackId}`, fields: encode(row).mapValue.fields}}];
+    },
+    get: async () => null
+  };
+  const report = await createDiagnosticReport(db, {now: 100, trackLimit: 2, runLimit: 1, historyLimit: 0, eventLimit: 0});
+
+  assert.equal(queries.length, 2);
+  assert.equal(report.scope.coreQueueDocuments, 0);
+  assert.equal(report.scope.extraQueueDocuments, 1);
+  assert.equal(report.scope.coreQueueSampledDocuments, 1);
+  assert.equal(report.scope.extraQueueSampledDocuments, 1);
+  assert.equal(report.scope.truncated, true, 'local filtering must not conceal that the bounded sample hit its cap');
+});
+
+test('due-only queue scan uses the verifier due gate with the same single-field ordering', async () => {
+  const now = 12345;
+  const queries = [];
+  const db = {
+    call: async (_path, body) => {
+      const query = body.structuredQuery;
+      queries.push(query);
+      assert.deepEqual(query.where, {fieldFilter: {field: {fieldPath: 'notBefore'}, op: 'LESS_THAN_OR_EQUAL', value: {integerValue: String(now)}}});
+      assert.deepEqual(query.orderBy, [{field: {fieldPath: 'notBefore'}, direction: 'ASCENDING'}]);
+      return [];
+    },
+    get: async () => null
+  };
+  const report = await createDiagnosticReport(db, {now, trackLimit: 2, historyLimit: 0, eventLimit: 0, dueOnly: true});
+  assert.equal(queries.length, 2);
+  assert.equal(report.scope.dueOnly, true);
 });
 
 test('bounded event run visibility reports received-to-proof latency and event place', async () => {

@@ -163,7 +163,7 @@ function pendingPlaybackEntry(run) {
 }
 function upsertPlayback(rows, candidate, limit) {
   const existing = Array.isArray(rows) ? rows : [];
-  return [...existing.filter(row => row.accountId !== candidate.accountId), candidate]
+  return [...existing.filter(row => row.runId !== candidate.runId), candidate]
     .sort((a, b) => a.timeMs - b.timeMs || a.accountId.localeCompare(b.accountId)).slice(0, limit);
 }
 function visiblePendingPlaybacks(rows) {
@@ -372,7 +372,7 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
           slots: [...queue.slots, { runId, timeMs, previousTimeMs: eventPb?.timeMs ?? null, receivedAt, notBefore: receivedAt, attempts: 0, lease: null, leaseUntil: 0 }] });
         if (!receipt || timeMs < receipt.timeMs || clockRecovery) await tx.set(receiptPath,
           { ownerUid, accountId, periodId, attemptId, runId, timeMs, status: 'waiting', reason: '', updatedAt: stamp() });
-        const pendingPlaybacks = upsertPlayback(board?.pendingPlaybacks || board?.playbacks, pendingPlaybackEntry(run), p.capacity.entrants);
+        const pendingPlaybacks = upsertPlayback(board?.pendingPlaybacks || board?.playbacks, pendingPlaybackEntry(run), L.queued);
         await tx.set(livePath, { ...(board || {}), period: publicEventPeriod(p), entries: board?.entries || [], pendingPlaybacks,
           racerCount: queue.entrants + (quota ? 0 : 1), archived: false, updatedAt: stamp() });
         if (inboxDocument) await tx.set(cursorPath, { receivedAt: cursorReceipt, attemptId, status: 'waiting', runId });
@@ -570,7 +570,7 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
         let entries;
         if (eventImproved) entries = eventLeaderboard(p, [...(board?.entries || []).filter(e => e.accountId !== run.accountId), run]);
         const priorPending = board?.pendingPlaybacks || board?.playbacks;
-        const pendingPlaybacks = status === 'waiting' ? upsertPlayback(priorPending, pendingPlaybackEntry(run), p.capacity.entrants) :
+        const pendingPlaybacks = status === 'waiting' ? upsertPlayback(priorPending, pendingPlaybackEntry(run), L.queued) :
           visiblePendingPlaybacks(priorPending).filter(row => row.runId !== run.runId);
         if (canonicalImproved) {
           const profilePath = path(C.profiles, run.accountId), profile = await tx.get(profilePath);

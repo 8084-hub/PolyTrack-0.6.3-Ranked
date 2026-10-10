@@ -4,7 +4,7 @@ import fs from 'node:fs';
 
 const patch=fs.readFileSync(new URL('../polytrack_062_patch.js',import.meta.url),'utf8');
 const start=patch.indexOf('  async function openKodubWeeklyFromEvents(');
-const end=patch.indexOf('  function focusTrackFromRanked(',start);
+const end=patch.indexOf('  async function focusTrackFromRanked(',start);
 const source=patch.slice(start,end).trim();
 function fixture({available=true,visible=false}={}){
   let clicks=0,waits=0,closed=0;

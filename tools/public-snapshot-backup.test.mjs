@@ -105,7 +105,7 @@ test('overall public projection omits private and unrelated account fields when 
     overridePodium: true, ownerUid: 'private'};
   const result = publicOverallBackup({...overall, entries: [{...overall.entries[0], profileCosmetics: cosmetics,
     cosmeticUnlocks: ['stripe:overdrive', 'nameColor:aurora', 'future_unlock:variant-v2'],
-    serverAchievements: {casual: {count: 12, rp: 1200, pointsPerTrack: 100, ledger: 'private-ledger', privateProof: 'private'},
+    serverAchievements: {casual: {count: 12, rp: 1200, pointsPerTrack: 100, scoringVersion: 1, ledger: 'private-ledger', privateProof: 'private'},
       beatOwner: {targetAccountId: 'b'.repeat(64), count: 1,
         unlocks: [{cosmeticId: 'emblem:target', unlockedAt: 44, sourceSignature: 'private-proof'}], privateProof: 'private'}},
     accountCreatedAt: 1, totalPlaytimeMs: 2, latestPbAt: 3, groupCode: '123456', groupCodeUpdatedAt: 4}]});
@@ -123,7 +123,7 @@ test('overall public projection omits private and unrelated account fields when 
   assert.deepEqual(result.snapshot.entries[0].serverAchievements.beatOwner.unlocks,
     [{cosmeticId: 'emblem:target', unlockedAt: 44}]);
   assert.deepEqual(result.snapshot.entries[0].serverAchievements.casual,
-    {count: 12, rp: 1200, pointsPerTrack: 100});
+    {count: 12, rp: 1200, pointsPerTrack: 100, scoringVersion: 1});
   assert.equal(JSON.stringify(result.snapshot.entries[0]).includes('private-proof'), false);
   assert.equal(JSON.stringify(result.snapshot.entries[0]).includes('private-ledger'), false);
   assert.equal(result.snapshot.authorityAudit, undefined);
@@ -177,6 +177,41 @@ test('event snapshots omit pending playback, replay payloads, signatures, and qu
     complete: true, sourceSignature: 'private', entries: [{accountId: 'racer', rp: 4, rank: 1, replayHash: 'private'}]},
   'permanent-rolling-hills');
   assert.equal(permanent.entries[0].rp, 4); assert.equal(permanent.entries[0].replayHash, undefined);
+});
+
+test('event snapshots preserve bounded waiting rows without upgrading their status', () => {
+  const pendingPlaybacks = ['b', 'c', 'd'].map((account, index) => ({accountId: account.repeat(64), runId: (index + 10).toString(16).padStart(64, '0'),
+    timeMs: 23000 + index, name: `Waiting ${index}`, carStyle: 'public-style', submittedAt: 150,
+    verificationStatus: 'waiting', pending: true, verified: false, eventRpEligible: false, source: 'pending-event-playback',
+    periodId: period.id, trackId, replay: 'must-not-export', replayHash: 'private', ownerUid: 'private'}));
+  const live = {period, updatedAt: 180, archived: false, racerCount: 5, entries: [], pendingPlaybacks};
+  const snapshot = publicEventBackup(live, period.id);
+  assert.equal(snapshot.entries.length, 0);assert.equal(snapshot.racerCount, 5);assert.equal(snapshot.pendingPlaybacks.length, 3);
+  assert.deepEqual(Object.keys(snapshot.pendingPlaybacks[0]).sort(),
+    ['accountId', 'carStyle', 'eventRpEligible', 'name', 'pending', 'runId', 'source', 'submittedAt', 'timeMs', 'verificationStatus', 'verified'].sort());
+  assert.equal(snapshot.pendingPlaybacks[0].verified, false);assert.equal(snapshot.pendingPlaybacks[0].eventRpEligible, false);
+  const restored = publicEventBackup(JSON.parse(JSON.stringify(snapshot)), period.id);
+  assert.deepEqual(restored.pendingPlaybacks, snapshot.pendingPlaybacks);assert.equal(restored.racerCount, 5);
+});
+
+test('event snapshots omit the entire pending array on invalid binding, status, duplicate runs, overflow, or archive', () => {
+  const row = {accountId: 'b'.repeat(64), runId: 'c'.repeat(64), timeMs: 23000, name: 'Waiting racer', carStyle: '', submittedAt: 150,
+    verificationStatus: 'waiting', pending: true, verified: false, eventRpEligible: false, source: 'pending-event-playback'};
+  const snapshot = pendingPlaybacks => publicEventBackup({period, updatedAt: 180, archived: false, racerCount: 5, entries: [], pendingPlaybacks}, period.id);
+  for (const invalid of [
+    {...row, periodId: 'weekly_other'}, {...row, trackId: 'd'.repeat(64)}, {...row, accountId: 'not-an-account'},
+    {...row, runId: 'not-a-run'}, {...row, verificationStatus: 'verified'}, {...row, pending: false},
+    {...row, verified: true}, {...row, eventRpEligible: true}, {...row, submittedAt: period.endsAt}
+  ]) assert.equal(snapshot([row, invalid]).pendingPlaybacks, undefined);
+  const sameAccount = snapshot([row, {...row, runId: 'e'.repeat(64), timeMs: row.timeMs + 1}]);
+  assert.equal(sameAccount.pendingPlaybacks.length, 2, 'distinct pending runs from one account are retained');
+  assert.deepEqual(sameAccount.pendingPlaybacks.map(pending => pending.runId), [row.runId, 'e'.repeat(64)]);
+  assert.equal(snapshot([row, {...row, accountId: 'f'.repeat(64)}]).pendingPlaybacks, undefined, 'duplicate run rejects the full list');
+  const tooMany = Array.from({length: 513}, (_, index) => ({...row,
+    accountId: index.toString(16).padStart(64, '0'), runId: (index + 1000).toString(16).padStart(64, '0')}));
+  assert.equal(snapshot(tooMany).pendingPlaybacks, undefined);
+  const archived = publicEventBackup({period, updatedAt: 180, archived: true, racerCount: 5, entries: [], pendingPlaybacks: [row]}, period.id);
+  assert.equal(archived.pendingPlaybacks, undefined);assert.equal(archived.racerCount, 5);
 });
 
 test('event replay backup requires exact public entry binding and valid content hash', () => {
@@ -304,6 +339,7 @@ test('bounded export keeps prior tracks, exports permanent event, and continues 
   assert.equal(manifest.overall.updatedAt, overall.updatedAt);
   assert.deepEqual(manifest.trackSummaryMismatches, [trackId]);
   assert.equal(manifest.tracks[trackId].path, `tracks/${trackId}.json`);
+  assert.equal(manifest.tracks[trackId].checkedAt, 1000000000);
   assert.equal(manifest.tracks[oldTrack].path, `tracks/${oldTrack}.json`);
   assert.equal(manifest.permanentRollingHills.path, 'events/permanent-rolling-hills.json');
   assert.equal(manifest.eventReplays[`event-replays/${period.id}/${replayAccount}.json`].replayHash, replayHash);
@@ -315,6 +351,8 @@ test('bounded export keeps prior tracks, exports permanent event, and continues 
   calls.length = 0;
   await runPublicSnapshotBackup({fetchImpl, directory, now: 1000000001, trackIds: [trackId], log: () => {}});
   assert.equal(calls.filter(url => url.includes('/v1/snapshot/track')).length, 0);
+  const unchangedManifest = JSON.parse(await fs.readFile(path.join(directory, 'manifest.json'), 'utf8'));
+  assert.equal(unchangedManifest.tracks[trackId].checkedAt, 1000000000);
   assert.ok(calls.length < firstCount);
 });
 

@@ -28,3 +28,11 @@ test('a racer improving a published time while waiting counts only once',()=>{
  data.board.pendingPlaybacks=[{accountId:b,timeMs:18000,runId:'e'.repeat(64),verificationStatus:'waiting',pending:true,verified:false,eventRpEligible:false,source:'pending-event-playback'}];
  assert.deepEqual(eventFinishPlace(data),{rank:2,fieldSize:2,provisional:true,saved:false});
 });
+
+test('multiple waiting attempts from one racer count once at their best time',()=>{
+ const pending=(accountId,timeMs,runId)=>({accountId,timeMs,runId,verificationStatus:'waiting',pending:true,verified:false,eventRpEligible:false,source:'pending-event-playback'});
+ const data=input([{accountId:b,timeMs:19000}]);
+ data.board.pendingPlaybacks=[pending(c,18000,'e'.repeat(64)),pending(c,17000,'f'.repeat(64))];
+ assert.deepEqual(eventFinishPlace(data),{rank:3,fieldSize:3,provisional:true,saved:false});
+ assert.equal(eventFinishPlace({...data,board:{...data.board,pendingPlaybacks:Array.from({length:513},(_,i)=>pending(c,17000, i.toString(16).padStart(64,'0')))}}),null);
+});

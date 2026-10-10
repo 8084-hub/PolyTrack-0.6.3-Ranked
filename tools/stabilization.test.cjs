@@ -69,7 +69,8 @@ test('PB is persisted before attempting Firestore',()=>{
 });
 function overallContext({firestoreData=null,workerData=null,offline=false,failFirestore=false}={}) {
  const saved={entries:[{userId:'a',rank:1},{userId:'b',rank:2}],trackSummaries:[{trackId:'saved'}],fetchedAt:1,serverUpdatedAt:1,signature:'saved'};
- const ctx={Date,console,overallCloudRetryAt:0,overallCloudCheckedAt:0,noteFirebaseQuota:()=>{},readOverallSnapshotCache:()=>saved,TOTAL_TRACKS:78,OVERALL_REFRESH_CHECK_MS:120000,overallTrackSummariesCache:[],overallLoadState:{},
+ // These refresh/fallback cases model an established, unlocked account; age-gate behavior is tested separately.
+ const ctx={Date,console,overallCloudRetryAt:0,overallCloudCheckedAt:0,publicSnapshotRetryAt:0,noteFirebaseQuota:()=>{},readOverallSnapshotCache:()=>saved,TOTAL_TRACKS:78,OVERALL_REFRESH_CHECK_MS:120000,overallTrackSummariesCache:[],overallLoadState:{},snapshotOnlyForNewAccount:()=>false,
  fetchRankedSnapshot:async()=>{if(workerData)return workerData;throw Error('blocked')},
  db:async()=>{if(failFirestore)throw Error('quota');return {collection:()=>({doc:()=>({get:async()=>({data:()=>firestoreData,metadata:{fromCache:offline}})})})}},
  expandRankedResults:async data=>run('decodeRankedResults')(data),normalizeEntries:x=>x,annotateOverallMovement:x=>x,writeOverallSnapshotCache:(rows,meta)=>{ctx.written={rows,meta}},log:()=>{},isLocalApiCapableHost:()=>false,
@@ -207,14 +208,15 @@ test('PB reconciliation never treats an offline cached response as cloud confirm
  const body=extract('reconcileLocalPersonalBestsToCloud');assert.match(body,/source:'server'/);assert.match(body,/doc.metadata\?\.fromCache/);
 });
 function receiptContext(rows,cloud){
- let store={};let reads=0;const ctx={window:{firebase:{auth:()=>({currentUser:{uid:"test-owner"}})}},cloudOwnerConflicts:new Map(),assertCloudOwner:()=>{},Date,JSON,Map,cleanUserId:x=>x,canonicalRaceTimeMs:x=>Number(x?.timeMs)||0,
- LOCAL_PB_RECONCILE_STATE_KEY:'receipts',firebaseQuotaPaused:()=>false,noteFirebaseQuota:()=>{},localPbReconcilePromise:null,localBestRowsForAccount:()=>rows,
+ let store={};let reads=0;const ctx={window:{firebase:{auth:()=>({currentUser:{uid:"test-owner"}})}},cloudOwnerConflicts:new Map(),localPbReconcilePromises:new Map(),activeRankedAccountId:()=> 'a',LOCAL_PB_RECONCILE_BATCH_SIZE:16,assertCloudOwner:()=>{},Date,JSON,Map,cleanUserId:x=>x,canonicalRaceTimeMs:x=>Number(x?.timeMs)||0,
+ LOCAL_PB_RECONCILE_STATE_KEY:'receipts',FIREBASE_QUOTA_PAUSE_KEY:'quota',LOCAL_PB_RECONCILE_BACKOFF_MS:60000,firebaseQuotaPaused:()=>false,noteFirebaseQuota:()=>{},localPbReconcilePromise:null,localBestRowsForAccount:()=>rows,
+ scheduleLocalPbCloudReconcile:()=>{},localPbHasAvailableReplay:()=>false,
  readJsonStorage:()=>store,writeJsonStorage:(_key,value)=>{store=value},COLLECTIONS:{raceResults:'pb'},log:()=>{},
  db:async()=>({collection:()=>({doc:id=>({get:async()=>{reads++;return {exists:Boolean(cloud[id]),data:()=>cloud[id]}}})})}),
  addLocalRaceRow:row=>{const index=rows.findIndex(x=>x.trackId===row.trackId);rows[index]=row},
  readRecordingStore:()=>[],safeRecordingId:x=>x,normalizeReplayPayloadString:x=>x,
  safePositiveInt:x=>x,getDefaultCarStyle:()=>'',getLastKnownName:()=>'',overallLoadState:{},OVERALL_PB_DIRTY_KEY:'dirty'};
- vm.createContext(ctx);for(const name of ['localPbSyncSignature','rememberConfirmedLocalPb','reconcileLocalPersonalBestsToCloud'])vm.runInContext(extract(name),ctx);
+ vm.createContext(ctx);for(const name of ['localPbSyncSignature','rememberConfirmedLocalPb','isCurrentLocalPbReconcileIdentity','localPbReconcileBatch','localPbReconcileFingerprintIfConfirmed','localPbReconcileContinuationDelay','runLocalPbReconcileBatch','reconcileLocalPersonalBestsToCloud'])vm.runInContext(extract(name),ctx);
  return {ctx,reads:()=>reads,store:()=>store};
 }
 test('confirmed PB receipts avoid all startup document reads',async()=>{

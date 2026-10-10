@@ -36,10 +36,26 @@ test('slow rounds stop before predicted time plus finish reserve exceeds admissi
 });
 
 test('request reserve avoids starting another round near quota',async()=>{
-  let used=0;
+  let used=0,calls=0;
   const result=await drainVerification({now:()=>0,requests:()=>used,log:quiet,
-    runRound:async()=>{used=300;return round();}});
+    runRound:async()=>{calls++;used=351;return round();}});
+  assert.equal(calls,1);
   assert.equal(result.rounds,1);assert.equal(result.stop,'request_reserve');
+});
+
+test('adaptive final round uses a smaller bounded request remainder without exceeding the cap',async()=>{
+  let used=0,calls=0;
+  const result=await drainVerification({now:()=>0,requests:()=>used,log:quiet,runRound:async()=>{
+    calls++;
+    used=calls===1?310:370;
+    return round({processed:1,verified:1});
+  }});
+  assert.equal(calls,2);
+  assert.equal(result.rounds,2);
+  assert.equal(result.processed,2);
+  assert.equal(result.requests,370);
+  assert.ok(result.requests<=DRAIN_LIMITS.requests);
+  assert.equal(result.stop,'request_reserve');
 });
 
 test('request guard covers reads, queries and commits without automatic retries or extra calls',async()=>{
@@ -216,7 +232,7 @@ test('real selection and atomic publisher drain fresh tracks within actual reque
     if(path===':runQuery') {
       const q=body.structuredQuery;
       if(q.from[0].collectionId!==VERIFICATION_COLLECTION)return [];
-      assert.equal(q.limit,8);
+      assert.ok(Number.isInteger(q.limit)&&q.limit>=1&&q.limit<=8);
       const due=Number(q.where.fieldFilter.value.integerValue);
       return [...docs].filter(([key,doc])=>key.startsWith(VERIFICATION_COLLECTION+'/')&&doc.data.notBefore<=due)
         .sort((a,b)=>a[1].data.notBefore-b[1].data.notBefore||a[0].localeCompare(b[0]))
@@ -233,13 +249,13 @@ test('real selection and atomic publisher drain fresh tracks within actual reque
     validateEngine:async()=>{},connectDatabase:async()=>db,log:quiet,
     verifyNormal:async(_,jobs)=>{nativeCalls++;return jobs.map(job=>({...job,status:'verified',
       reason:'native_exact_finish',engineDigest:VERIFIER_ENGINE_DIGEST}));}});
-  assert.equal(result.processed,43);assert.equal(result.verified,43);assert.equal(nativeCalls,3);
-  assert.equal(result.stop,'request_reserve');assert.ok(result.requests<=DRAIN_LIMITS.requests);
+  assert.ok(result.processed>43);assert.equal(result.processed,result.verified);assert.equal(nativeCalls,4);
+  assert.equal(result.stop,'round_limit');assert.ok(result.requests<=DRAIN_LIMITS.requests);
   const slots=[...docs].filter(([key])=>key.startsWith(VERIFICATION_COLLECTION+'/')).flatMap(([,doc])=>Object.values(doc.data.slots));
-  assert.equal(slots.filter(s=>s.status==='verified').length,43);
-  assert.equal(slots.filter(s=>s.status==='waiting').length,21);
+  assert.equal(slots.filter(s=>s.status==='verified').length,result.processed);
+  assert.equal(slots.filter(s=>s.status==='waiting').length,64-result.processed);
   assert.equal(JSON.stringify([...docs].filter(([key])=>key.startsWith('0.6.2_race_results/'))),canonicalBefore);
-  t.diagnostic(JSON.stringify({processed:result.processed,requests:result.requests,stop:result.stop,remainingWaiting:21}));
+  t.diagnostic(JSON.stringify({processed:result.processed,requests:result.requests,stop:result.stop,remainingWaiting:64-result.processed}));
 });
 
 test('normal simulation starts only for jobs whose worst-case publication fits remaining quota',async()=>{

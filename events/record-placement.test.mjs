@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {eventOrdinal,eventPlacementPresentation,eventRecordPlacement,eventTrackName,readEventPlacementSettings} from './client.mjs';
+import {eventOrdinal,eventPendingRows,eventPlacementPresentation,eventRecordPlacement,eventTrackName,readEventPlacementSettings} from './client.mjs';
 
 const account=n=>n.toString(16).padStart(64,'0');
 const period={id:'daily-fixture',trackId:'a'.repeat(64),entrantLimit:5};
@@ -50,6 +50,21 @@ test('pending placement fails closed for malformed, legacy, duplicate, or over-b
   assert.equal(place(board(entries,[own,{...waiting(4,1200),runId:own.runId}])),null);
   assert.equal(place({...board(entries,[own]),pendingPlaybacks:Array.from({length:6},(_,i)=>waiting(i+10,1200+i,i+50))}),null);
   assert.equal(place({...board(entries,[own]),updatedAt:'10'}),null);
+});
+
+test('multiple waiting attempts from one racer count as one racer using their best time',()=>{
+  const first=waiting(3,1300,103),best=waiting(3,1100,104),other=waiting(4,1200,105);
+  const snapshot=board([verified(1,1000,1),verified(2,1400,2)],[first,best,other]);
+  assert.deepEqual(eventRecordPlacement({board:snapshot,period,accountId:account(3),timeMs:1100,policy:'all'}),{rank:2,fieldSize:null,knownFieldSize:4,provisional:true,policy:'all'});
+  assert.equal(eventRecordPlacement({board:{...snapshot,pendingPlaybacks:[first,{...best,runId:first.runId}]},period,accountId:account(3),timeMs:1100,policy:'all'}),null);
+  assert.equal(eventRecordPlacement({board:{...snapshot,pendingPlaybacks:[{...best,timeMs:300001}]},period,accountId:account(3),timeMs:1100,policy:'all'}),null);
+});
+
+test('normal event rows consume strict pending snapshots once per racer within the serializer bound',()=>{
+  const slower=waiting(3,1300,103),faster=waiting(3,1100,104),other=waiting(4,1200,105);
+  assert.deepEqual(eventPendingRows([slower,faster,other]).map(row=>[row.accountId,row.timeMs,row.pending,row.rp]),[[account(3),1100,true,0],[account(4),1200,true,0]]);
+  assert.equal(eventPendingRows([faster,{...other,verified:true}]).length,1);
+  assert.deepEqual(eventPendingRows(Array.from({length:513},(_,i)=>waiting(3,1100,i+1000))),[]);
 });
 
 test('public archive track names win before catalog and generic labels',()=>{

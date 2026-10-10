@@ -1,6 +1,6 @@
 // Public, same-origin backups never replace the authoritative PB submission path.
 export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now,packed=false}){
-  const pending=new Map(),saved=new Map(),retryAt=new Map();
+  const pending=new Map(),saved=new Map(),retryAt=new Map();let manifestValue=null;
   let packageBase=new URL(baseUrl),indexRequest=null,pointerRecoveryAttempted=false,pointerRecoveryRequest=null;
   async function packageIndex(){
     if(!indexRequest){
@@ -75,7 +75,7 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     }
   }
   return async function read(kind,id='',accountId=''){
-    const path=kind==='snapshot-meta'?'public-export-summary.json':kind==='cosmetic-directory'?'cosmetic-directory.json':kind==='overall'?'overall.json':kind==='overall-results'?'overall-results.json':kind==='event-totals'?'event-totals.json':
+    const path=kind==='snapshot-meta'?'public-export-summary.json':kind==='manifest'?'manifest.json':kind==='cosmetic-directory'?'cosmetic-directory.json':kind==='overall'?'overall.json':kind==='overall-results'?'overall-results.json':kind==='event-totals'?'event-totals.json':
       kind==='track'&&/^[a-f0-9]{64}$/.test(id)?`tracks/${id}.json`:
       kind==='event'&&/^[A-Za-z0-9_-]{1,64}$/.test(id)?`events/${id}.json`:
       kind==='archive-month'&&/^\d{4}-(0[1-9]|1[0-2])$/.test(id)?`archives/${id}.json`:
@@ -84,6 +84,7 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
       kind==='recording'&&/^\d{1,16}$/.test(String(id))&&Number.isSafeInteger(Number(id))&&Number(id)>0?`recordings/${id}.json`:
       kind==='event-replay'&&/^[A-Za-z0-9_-]{1,64}$/.test(id)&&/^[a-f0-9]{64}$/.test(accountId)?`event-replays/${id}/${accountId}.json`:null;
     if(!path)return null;
+    if(kind==='manifest'&&manifestValue)return {...manifestValue,_dataSource:'cached'};
     const cached=saved.get(path);
     if(cached&&(packed||now()-cached.checkedAt<600000)){saved.delete(path);saved.set(path,cached);return {...cached.value,_dataSource:'cached'};}
     if(pending.has(path))return pending.get(path);
@@ -99,20 +100,30 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
         }
         if(body.length>2*1024*1024)throw Error('Public backup exceeds size limit');
         const value=JSON.parse(body);
-        if(!value||typeof value!=='object'||Array.isArray(value)||(!['event-replay','snapshot-meta'].includes(kind)&&!Number.isFinite(value.updatedAt)))throw Error('Invalid public backup');
+        if(!value||typeof value!=='object'||Array.isArray(value)||(!['event-replay','snapshot-meta','manifest'].includes(kind)&&!Number.isFinite(value.updatedAt)))throw Error('Invalid public backup');
         if(kind==='snapshot-meta'&&(typeof value.capturedAt!=='string'||!Number.isFinite(Date.parse(value.capturedAt))||Date.parse(value.capturedAt)<=0))throw Error('Invalid snapshot capture date');
+        if(kind==='manifest'&&(value.schemaVersion!==1||!value.tracks||typeof value.tracks!=='object'||Array.isArray(value.tracks)))throw Error('Invalid public snapshot manifest');
         if(kind==='track'&&value.trackId!==id)throw Error('Public track identity mismatch');
         if(kind==='event'&&value.id!==id)throw Error('Public event identity mismatch');
         if(kind==='profile'&&value.accountId!==id)throw Error('Public profile identity mismatch');
-        if(kind==='cosmetic-directory'&&(!value.entries||typeof value.entries!=='object'||Array.isArray(value.entries)||Object.keys(value.entries).length>2000||Object.entries(value.entries).some(([id,row])=>!/^[a-f0-9]{64}$/.test(id)||!row?.value||typeof row.value!=='object'||Array.isArray(row.value))))throw Error('Invalid snapshot cosmetics');
+        if(kind==='cosmetic-directory'&&(!value.entries||typeof value.entries!=='object'||Array.isArray(value.entries)||Object.entries(value.entries).some(([id,row])=>!/^[a-f0-9]{64}$/.test(id)||!row?.value||typeof row.value!=='object'||Array.isArray(row.value))))throw Error('Invalid snapshot cosmetics');
         if(kind==='profile-results'&&(value.accountId!==id||!Array.isArray(value.results)||value.results.length>2000||value.results.some(row=>!/^[a-f0-9]{64}$/.test(row?.trackId||''))))throw Error('Public profile results identity mismatch');
         if(kind==='recording'&&(typeof value.recording!=='string'||value.recording.length>850000||!Number.isSafeInteger(value.frames)||value.frames<1))throw Error('Invalid public recording');
         if(kind==='archive-month'&&(!Array.isArray(value.periods)||value.periods.length>500||value.periods.some(p=>typeof p?.id!=='string'||!Number.isSafeInteger(p.startsAt)||new Date(p.startsAt).toISOString().slice(0,7)!==id)))throw Error('Invalid archive month');
         if(kind==='event-replay'&&(value.periodId!==id||value.accountId!==accountId||typeof value.replay!=='string'||value.replay.length>65536))throw Error('Public replay identity mismatch');
         const result={...value,_publicBackup:true,_dataSource:'snapshot'};
-        saved.delete(path);saved.set(path,{value:result,checkedAt:now(),bytes:body.length*2});retryAt.delete(path);
-        let bytes=0;for(const entry of saved.values())bytes+=entry.bytes;
-        while(saved.size>128||bytes>8*1024*1024){const oldest=saved.keys().next().value;bytes-=saved.get(oldest).bytes;saved.delete(oldest);}
+        if(kind==='track'){
+          const manifest=await read('manifest');
+          const checkedAt=manifest?.tracks?.[id]?.checkedAt;
+          if(Number.isSafeInteger(checkedAt)&&checkedAt>0)result._snapshotCapturedAt=checkedAt;
+        }
+        if(kind==='manifest')manifestValue=result;
+        else{
+          saved.delete(path);saved.set(path,{value:result,checkedAt:now(),bytes:body.length*2});
+          let bytes=0;for(const entry of saved.values())bytes+=entry.bytes;
+          while(saved.size>128||bytes>8*1024*1024){const oldest=saved.keys().next().value;bytes-=saved.get(oldest).bytes;saved.delete(oldest);}
+        }
+        retryAt.delete(path);
         return result;
       }catch{retryAt.set(path,now()+15*60000);if(retryAt.size>512)retryAt.delete(retryAt.keys().next().value);return cached?.value||null;}
     })();

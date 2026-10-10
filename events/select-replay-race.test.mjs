@@ -344,6 +344,15 @@ test('waiting replay selection requests exact run and isolates verified cache',a
  assert.equal(calls[1][2],null);
 });
 
+test('a pending replay with unavailable asset never appears loaded',async()=>{
+ const h=harness(),row={...racer('racer',1400,'Racer'),pending:true,runId:'a'.repeat(64)};
+ h.bridge.readReplay=async()=>payload(row);h.setPreparationError(Error('Published replay asset is unavailable.'));
+ await h.selectReplay(period,row);
+ assert.equal(h.selectedCount(),0);assert.equal(h.pendingCount(),0);
+ assert.match(h.messages.at(-1),/asset is unavailable/);
+ assert.doesNotMatch(h.messages.at(-1),/Replay ready/);
+});
+
 test('clicking the same event replay again unselects it without another download',async()=>{
  const h=harness(),row=racer('racer',1400,'Racer');
  const first=h.selectReplay(period,row);
