@@ -153,7 +153,7 @@ function integration(eventChecks,normalCount=16) {
     env:{FIREBASE_VERIFIER_SERVICE_ACCOUNT:'synthetic-secret-never-logged'},drain:true,clock:()=>0,log:quiet,
     validateEngine:async()=>{pins++;},connectDatabase:async()=>{connections++;return {
       call:async(path,body)=>{assert.equal(path,':runQuery');
-        if(body.structuredQuery.limit===8)order.push('query');else assert.equal(body.structuredQuery.limit,2);
+        if(body.structuredQuery.limit===8)order.push('query');else assert.ok([1,2].includes(body.structuredQuery.limit));
         return [];}};},
     selectNormal:async()=>({jobs:Array.from({length:normalCount},(_,i)=>({resultId:`round-${selected++}-job-${i}`})),
       canonicalAttempts:normalCount,selectionConflicts:0}),
@@ -265,7 +265,7 @@ test('normal simulation starts only for jobs whose worst-case publication fits r
     return {checked:0,consumed:0,rejected:false,archived:null,results:[]};
   };
   const result=await runVerifier(f.options);
-  assert.equal(result.processed,2);assert.equal(result.verified,2);
+  assert.equal(result.processed,1);assert.equal(result.verified,1);
   assert.equal(result.stop,'request_reserve');assert.equal(result.rounds,1);
-  assert.ok(f.order.includes('normal:2'));assert.ok(!f.order.includes('normal:16'));
+  assert.ok(f.order.includes('normal:1'));assert.ok(!f.order.includes('normal:16'));
 });

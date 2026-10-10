@@ -1,5 +1,10 @@
 # PolyTrack replay verification
 
+For administrative navigation, see [Database Guide](DATABASE-GUIDE.md).
+For the private suspicious-run inbox and bounded report, see
+[Replay Review](REPLAY-REVIEW.md). Ordinary verdicts remain in the audit history;
+they are not copied into the review inbox.
+
 ## What the check proves
 The trusted native physics engine replays the recorded controls on the exact track and checks the exact finish time. A replay checksum alone is never a verified run. This does not prove who drove the replay, rule out tool-assisted input, or make Community Ranked cheat-proof.
 

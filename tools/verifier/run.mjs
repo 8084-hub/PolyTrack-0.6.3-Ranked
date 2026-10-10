@@ -156,7 +156,7 @@ export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNorma
   let selectedJobs = [], canonicalAttempts = 0, selectionConflicts = 0;
   let normalQueueReturnedDocuments = 0;
   const normalCapacity = Math.min(borrowUnusedEvents ? TOTAL_JOB_LIMIT - events.checked : NORMAL_JOB_LIMIT,
-    db.remainingRequests ? Math.floor(db.remainingRequests() / 15) : TOTAL_JOB_LIMIT);
+    db.remainingRequests ? Math.floor(db.remainingRequests() / 18) : TOTAL_JOB_LIMIT);
   if (events.checked < TOTAL_JOB_LIMIT && normalCapacity > 0) {
     const candidateLimit = Math.min(QUEUE_CANDIDATE_LIMIT, normalCapacity);
     const dueDocs = async collection => {
@@ -188,8 +188,8 @@ export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNorma
   let jobs = selectedJobs.slice(0, NORMAL_JOB_LIMIT);
   // Events get their reserved work first; only unused slots can be borrowed.
   if(borrowUnusedEvents)jobs=selectedJobs.slice(0,TOTAL_JOB_LIMIT-events.checked);
-  // Each normal publication can make five requests on each of three conflict attempts.
-  if(db.remainingRequests)jobs=jobs.slice(0,Math.floor(db.remainingRequests()/15));
+  // Flagged publications can make six requests on each of three conflict attempts.
+  if(db.remainingRequests)jobs=jobs.slice(0,Math.floor(db.remainingRequests()/18));
   const eventSummary = {checked: events.checked, consumed: events.consumed,
     rejected: events.rejected, archived: events.archived, budgetDeferred:events.budgetDeferred===true};
   const idleCounts = {normalQueueReturnedDocuments,
@@ -213,7 +213,7 @@ export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNorma
   const totals = await publishNormal(db, jobs, results);
   const reasons = totals.reasons;
   log(JSON.stringify({processed: jobs.length, canonicalAttempts, selectionConflicts, ...idleCounts, ...totals, reasons, firestoreRequests: db.requests()}));
-  if(env.GITHUB_STEP_SUMMARY)fs.appendFileSync(env.GITHUB_STEP_SUMMARY,`## Replay verification\nProcessed: ${jobs.length}. Verified: ${totals.verified}. Corrected legacy times: ${totals.corrected}. Waiting: ${totals.unavailable}. Deferred conflicts: ${totals.deferred}. Review flags: ${totals.reviewFlagged||0} (advisory, not cheating verdicts).\n\n${Object.entries(reasons).map(([reason,count])=>'- '+reason+': '+count).join('\n')}\n`);
+  if(env.GITHUB_STEP_SUMMARY)fs.appendFileSync(env.GITHUB_STEP_SUMMARY,`## Replay verification\nProcessed: ${jobs.length}. Verified: ${totals.verified}. Corrected legacy times: ${totals.corrected}. Waiting: ${totals.unavailable}. Deferred conflicts: ${totals.deferred}. Review inbox additions: ${totals.reviewInboxAdded||0} (manual review, not cheating verdicts).\n\n${Object.entries(reasons).map(([reason,count])=>'- '+reason+': '+count).join('\n')}\n`);
   if(results.some(r=>r.reason==='engine_unavailable')){console.error('Verifier startup failed. Runs remain waiting; inspect the startup diagnostic.');process.exitCode=1;}
   return {processed:jobs.length,canonicalAttempts,selectionConflicts,...idleCounts,...totals,events:eventSummary,
     infrastructureFailure:eventFailure||results.some(infrastructure)};

@@ -23,8 +23,8 @@ test('small remaining publication reserve lowers each due-lane query bound', asy
 
   await runRound(db, options);
   assert.equal(queries.length, 2);
-  assert.deepEqual(queries.map(query => query.limit), [2, 2]);
-  assert.equal(queries.reduce((sum, query) => sum + query.limit, 0), 4);
+  assert.deepEqual(queries.map(query => query.limit), [1, 1]);
+  assert.equal(queries.reduce((sum, query) => sum + query.limit, 0), 2);
 });
 
 test('no runnable publication reserve skips both repeated queue scans', async () => {

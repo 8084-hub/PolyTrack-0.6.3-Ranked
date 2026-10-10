@@ -57,8 +57,8 @@ test('real decoded snapshot references flag other racers, never self',async()=>{
     const db={get:async(collection)=>{reads++;return collection===VERIFICATION_COLLECTION?{data:{slots:{[row.accountId]:{accountId:row.accountId,key:job.queueKey,status:'waiting'}}}}:collection==='0.6.2_race_results'?{data:row}:null;},
       write:(collection,id,data)=>({collection,id,data}),call:async(_,{writes:batch})=>{writes=batch;return {};}};
     const totals=await publishResults(db,[job],[result]);
-    assert.equal(reads,4,'existing queue, canonical, reconciliation, and audit reads only');
-    assert.equal(writes.length,3,'review evidence shares the existing atomic audit write');
+    assert.equal(reads,5,'only flagged runs add one review-inbox lookup');
+    assert.equal(writes.length,4,'only flagged runs add one review-inbox write');
     assert.equal(writes.find(w=>w.collection==='0.6.2_s1_verification_audit').data.needsReview,true);
     assert.equal(totals.reviewFlagged,1);
     const self={resultId:'self',status:'verified'};

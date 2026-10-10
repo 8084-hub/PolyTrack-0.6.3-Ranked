@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import {similarityEvidence} from './similarity.mjs';
+import {reviewInboxWrite} from './review-inbox.mjs';
 import {queueState, reconciledSlot, completedSlot} from './queue.mjs';
 import {VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION, verificationCollectionForTrack, verificationKey, legacyTimingFrames} from '../../workers/ranked/src/verification.js';
 
@@ -99,7 +100,7 @@ export async function selectJobs(db, docs, now = Date.now(), {jobLimit = NORMAL_
 }
 
 export async function publishResults(db, jobs, results) {
-  const totals = {verified: 0, mismatch: 0, unavailable: 0, superseded: 0, deferred: 0, corrected: 0, reviewFlagged:0, reasons: {}};
+  const totals = {verified: 0, mismatch: 0, unavailable: 0, superseded: 0, deferred: 0, corrected: 0, reviewFlagged:0, reviewInboxAdded:0, reasons: {}};
   const queueCache = new Map();
   let stateCacheLoaded = false, stateCache = null;
   for (const result of results) {
@@ -170,6 +171,7 @@ export async function publishResults(db, jobs, results) {
       }
       const auditId = crypto.createHash('sha256').update(publishedKey).digest('hex');
       const audit = await db.get('0.6.2_s1_verification_audit', auditId);
+      const reviewWrite = await reviewInboxWrite(db,auditId,job,publication,similarityEvidence(result));
       const nextQueueData = {...queue.data, ...queueState(slots)};
       const nextStateData = {...state?.data, pendingTrackIds, pendingResultIds, pendingFullRebuildTrackIds, forceFullRebuildAll};
       const writes = [
@@ -185,6 +187,7 @@ export async function publishResults(db, jobs, results) {
         writes.push({...db.write('0.6.2_race_results', job.resultId, {timeMs: frames, timingVersion: 2}, current),
           updateMask: {fieldPaths: ['timeMs', 'timingVersion']}});
       }
+      if(reviewWrite) writes.push(reviewWrite);
       try {
         const committed = await db.call(':commit', {writes});
         const queueUpdateTime = committed?.writeResults?.[0]?.updateTime;
@@ -200,6 +203,7 @@ export async function publishResults(db, jobs, results) {
           stateCacheLoaded = false;
         }
         totals[publication.status]++;
+        if(reviewWrite) totals.reviewInboxAdded++;
         if(publication.status==='verified' && similarityEvidence(result)) totals.reviewFlagged++;
         const reason = String(publication.reason || '').slice(0, 100);
         totals.reasons[reason] = (totals.reasons[reason] || 0) + 1;
