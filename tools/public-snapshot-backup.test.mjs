@@ -105,7 +105,7 @@ test('overall public projection omits private and unrelated account fields when 
     overridePodium: true, ownerUid: 'private'};
   const result = publicOverallBackup({...overall, entries: [{...overall.entries[0], profileCosmetics: cosmetics,
     cosmeticUnlocks: ['stripe:overdrive', 'nameColor:aurora', 'future_unlock:variant-v2'],
-    serverAchievements: {casual: {count: 12, rp: 1200, pointsPerTrack: 100, scoringVersion: 1, ledger: 'private-ledger', privateProof: 'private'},
+    serverAchievements: {casual: {count: 12, rp: 1234.5, pointsPerTrack: 100, scoringVersion: 2, ledger: 'private-ledger', privateProof: 'private'},
       beatOwner: {targetAccountId: 'b'.repeat(64), count: 1,
         unlocks: [{cosmeticId: 'emblem:target', unlockedAt: 44, sourceSignature: 'private-proof'}], privateProof: 'private'}},
     accountCreatedAt: 1, totalPlaytimeMs: 2, latestPbAt: 3, groupCode: '123456', groupCodeUpdatedAt: 4}]});
@@ -123,7 +123,7 @@ test('overall public projection omits private and unrelated account fields when 
   assert.deepEqual(result.snapshot.entries[0].serverAchievements.beatOwner.unlocks,
     [{cosmeticId: 'emblem:target', unlockedAt: 44}]);
   assert.deepEqual(result.snapshot.entries[0].serverAchievements.casual,
-    {count: 12, rp: 1200, pointsPerTrack: 100, scoringVersion: 1});
+    {count: 12, rp: 1234.5, scoringVersion: 2});
   assert.equal(JSON.stringify(result.snapshot.entries[0]).includes('private-proof'), false);
   assert.equal(JSON.stringify(result.snapshot.entries[0]).includes('private-ledger'), false);
   assert.equal(result.snapshot.authorityAudit, undefined);
@@ -136,6 +136,12 @@ test('overall projection drops malformed Casual summaries rather than manufactur
   const {snapshot} = publicOverallBackup({...overall, entries: [{...overall.entries[0],
     serverAchievements: {casual: {count: -1, rp: '1200', pointsPerTrack: 99, ledger: 'private'}}}]});
   assert.equal(snapshot.entries[0].serverAchievements, undefined);
+});
+
+test('overall projection does not publish legacy Casual scoring as version 2', () => {
+  const {snapshot} = publicOverallBackup({...overall, entries: [{...overall.entries[0],
+    serverAchievements: {casual: {count: 3, rp: 300, scoringVersion: 1}}}]});
+  assert.deepEqual(snapshot.entries[0].serverAchievements.casual, {count: 3});
 });
 
 test('inline planner bundle is split into a revision-bound optional results file', () => {

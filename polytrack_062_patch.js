@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=101',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=102',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='101';
+  const extraCatalogRevision='102';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -1149,7 +1149,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   const LEADERBOARD_USAGE_KEY='polytrack-0.6.2-leaderboard-arcade-v1';
   const PLAYTIME_KEY='polytrack-0.6.2-active-playtime-v1';
   const LEADERBOARD_LABELS={events:'Event RP',overall:'Overall RP',casual:'Casual RP',skill:'Best 10 skill',consistency:'All-track depth',pbs:'PBs set',playtime:'Active time',veterans:'Racing longest',rising:'Rising racers',wins:'Track wins',medals:'Podium points',tracks:'Tracks completed',weight:'Total track weight',average:'Average place',competitiveAverage:'Competitive average',podiumRate:'Podium rate',topTracks:'Top Tracks',official:'Official tracks',community:'Community tracks'};
-  const LEADERBOARD_INFO={events:'Lifetime points from verified event PBs. Higher is better. Event RP is separate from Overall RP.',overall:'Your combined Ranked score. Lower is better.',casual:'Casual RP rewards verified best placements: 10 to 100 points per recognized track. Higher is better. A worse attempt never replaces your PB; rivals improving can lower your total.',average:'Your literal average finishing place across every eligible Ranked result.',competitiveAverage:'Average place on recognized tracks with at least five racers. Custom and small-field tracks are excluded.',tracks:'Number of distinct Ranked tracks completed.',medals:'Podium points from recognized tracks with sufficiently populated fields.',rising:'Progress adjusted for how recently the racer joined and how many Ranked tracks they completed.',topTracks:'Tracks ordered by their current Ranked weight.',skill:'Weighted average of each racer’s best ten results. Lower is better.',consistency:'Weighted performance across all eligible results with weak outliers limited. Lower is better.',wins:'First-place finishes on recognized tracks with at least five racers.',podiumRate:'Eligible podium finishes divided by eligible tracks. At least three eligible tracks are required.',weight:'Combined weight of all eligible completed tracks.',pbs:'Accepted personal-best improvements saved to Ranked.',playtime:'Visible active play time saved with PB updates.',veterans:'Time since the racer’s earliest saved Ranked result.'};
+  const LEADERBOARD_INFO={events:'Lifetime points from verified event PBs. Higher is better. Event RP is separate from Overall RP.',overall:'Your combined Ranked score. Lower is better.',casual:'Casual RP adds a weighted award for each recognized track from your verified best placement: 10 to 100 base points scaled by its current published Overall RP track weight, including any Extra cap. Higher is better. A slower attempt cannot lower your best; rivals improving can lower your total.',average:'Your literal average finishing place across every eligible Ranked result.',competitiveAverage:'Average place on recognized tracks with at least five racers. Custom and small-field tracks are excluded.',tracks:'Number of distinct Ranked tracks completed.',medals:'Podium points from recognized tracks with sufficiently populated fields.',rising:'Progress adjusted for how recently the racer joined and how many Ranked tracks they completed.',topTracks:'Tracks ordered by their current Ranked weight.',skill:'Weighted average of each racer’s best ten results. Lower is better.',consistency:'Weighted performance across all eligible results with weak outliers limited. Lower is better.',wins:'First-place finishes on recognized tracks with at least five racers.',podiumRate:'Eligible podium finishes divided by eligible tracks. At least three eligible tracks are required.',weight:'Combined weight of all eligible completed tracks.',pbs:'Accepted personal-best improvements saved to Ranked.',playtime:'Visible active play time saved with PB updates.',veterans:'Time since the racer’s earliest saved Ranked result.'};
   const PROFILE_COSMETICS_KEY='polytrack-0.6.2-profile-cosmetics-v1';
   const PROFILE_COSMETIC_OPTIONS={
     theme:[['classic','PolyTrack blue',0],['cyan','Electric cyan',0],['ocean','Deep ocean',1],['ice','Ice blue',3],['mono','Monochrome','playtime:3600000'],['sunset','Sunset',5],['neon','Neon arcade',5],['forest','Forest',8],['ember','Ember',12],['crimson','Crimson',16],['podium','Champion','podium'],['beta','Beta neon','beta']],
@@ -1878,6 +1878,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   const localPbReconcilePromises = new Map();
   const localPbReconcileTimers = new Map();
   let placementPbRefreshTimer = 0;
+  let placementRenderTimer = 0;
   function readLocalRaceRows(){
     const rows=readJsonStorage(LOCAL_RACE_STORE_KEY,[]);
     return Array.isArray(rows)?rows:[];
@@ -1937,7 +1938,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function addLocalRaceRow(row){
     writeLocalRaceRows([row,...readLocalRaceRows()]);
     clearTimeout(placementPbRefreshTimer);
-    placementPbRefreshTimer=setTimeout(()=>{placementPbRefreshTimer=0;decoratePersonalBestPodiums();},200);
+    placementPbRefreshTimer=setTimeout(()=>{placementPbRefreshTimer=0;schedulePersonalBestPlacementRender();},200);
   }
 
   function enrichLegacyLeaderboardEntries(entries, accountId = typeof activeRankedAccountId === 'function' ? activeRankedAccountId() : ''){
@@ -2583,9 +2584,44 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null;
+  let placementSnapshotGeneration=-1;
+  const MAX_RETAINED_PLACEMENT_SNAPSHOTS=64;
+  const placementCompleteSnapshotCache=new Map();
   let provisionalPlacementGeneration=-1,provisionalPlacementAccount='',provisionalPlacementRows=new Map();
   let provisionalPlacementTrackGeneration=-1,provisionalPlacementSnapshots={};
   const provisionalPlacementCache=new Map();
+  function recordPlacementSnapshots(){
+    const current=trackSnapshotStore();
+    if(placementSnapshotGeneration!==trackCacheGeneration){
+      for(const [trackId,snapshot] of Object.entries(current)){
+        if(snapshot?.complete!==true||!Array.isArray(snapshot.entries))continue;
+        const previous=placementCompleteSnapshotCache.get(trackId);
+        const freshness=Math.max(0,Number(snapshot.serverUpdatedAt)||0,Number(snapshot.checkedAt)||0,Number(snapshot.fetchedAt)||0);
+        const previousFreshness=previous?Math.max(0,Number(previous.serverUpdatedAt)||0,Number(previous.checkedAt)||0,Number(previous.fetchedAt)||0):0;
+        if(!previous||freshness>=previousFreshness){
+          const fields=['accountId','userId','trackId','timeMs','recordTimeMs','timingVersion','numberOfFrames','frames','raceTimeFrames','status','runStatus','validationState','verificationStatus','runVerified','localPending'];
+          const entries=snapshot.entries.map(row=>{
+            const compact={};
+            for(const field of fields)if(row?.[field]!=null)compact[field]=row[field];
+            if(row?.time?.numberOfFrames!=null)compact.time={numberOfFrames:row.time.numberOfFrames};
+            return compact;
+          });
+          placementCompleteSnapshotCache.delete(trackId);
+          placementCompleteSnapshotCache.set(trackId,{entries,complete:true,totalEntries:snapshot.totalEntries,revision:snapshot.revision,sourceRevision:snapshot.sourceRevision,algorithmVersion:snapshot.algorithmVersion,schemaVersion:snapshot.schemaVersion,source:snapshot.source,fetchedAt:snapshot.fetchedAt,checkedAt:snapshot.checkedAt,serverUpdatedAt:snapshot.serverUpdatedAt,snapshotCapturedAt:snapshot.snapshotCapturedAt});
+          while(placementCompleteSnapshotCache.size>MAX_RETAINED_PLACEMENT_SNAPSHOTS)placementCompleteSnapshotCache.delete(placementCompleteSnapshotCache.keys().next().value);
+        }
+      }
+      placementSnapshotGeneration=trackCacheGeneration;
+    }
+    const snapshots={...current};
+    for(const [trackId,snapshot] of placementCompleteSnapshotCache){
+      const loaded=snapshots[trackId];
+      const loadedFreshness=loaded?.complete===true?Math.max(0,Number(loaded.serverUpdatedAt)||0,Number(loaded.checkedAt)||0,Number(loaded.fetchedAt)||0):0;
+      const retainedFreshness=Math.max(0,Number(snapshot.serverUpdatedAt)||0,Number(snapshot.checkedAt)||0,Number(snapshot.fetchedAt)||0);
+      if(loaded?.complete!==true||retainedFreshness>loadedFreshness)snapshots[trackId]=snapshot;
+    }
+    return snapshots;
+  }
   function estimateLocalRecordPlacement(trackId,timeMs,accountId){
     if(!trackId||!accountId||!Number.isSafeInteger(timeMs)||timeMs<=0)return null;
     if(provisionalPlacementGeneration!==localRaceGeneration||provisionalPlacementAccount!==accountId){
@@ -2596,12 +2632,12 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     }
     if(canonicalRaceTimeMs(provisionalPlacementRows.get(trackId))!==timeMs)return null;
     if(provisionalPlacementTrackGeneration!==trackCacheGeneration){
-      provisionalPlacementSnapshots=trackSnapshotStore();
+      provisionalPlacementSnapshots=recordPlacementSnapshots();
       provisionalPlacementTrackGeneration=trackCacheGeneration;
       provisionalPlacementCache.clear();
     }
     const snapshot=provisionalPlacementSnapshots[trackId];
-    if(!snapshot?.complete||!Array.isArray(snapshot.entries)||!snapshot.entries.length)return null;
+    if(snapshot?.complete!==true||!Array.isArray(snapshot.entries)||!snapshot.entries.length)return null;
     const cacheKey=`${trackId}|${timeMs}|${accountId}`;
     if(provisionalPlacementCache.has(cacheKey))return provisionalPlacementCache.get(cacheKey);
     const otherBest=new Map();
@@ -2627,7 +2663,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
           document,
           storage:localStorage,
           tracks:()=>TRACK_CATALOG,
-          readSnapshots:trackSnapshotStore,
+          readSnapshots:recordPlacementSnapshots,
           readAccountId:activeRankedAccountId,
           estimatePlacement:estimateLocalRecordPlacement,
           mapPlacement:(placement,trackId)=>{
@@ -2679,6 +2715,13 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       });
     }
     return recordPlacementUiPromise;
+  }
+  function schedulePersonalBestPlacementRender(){
+    if(placementRenderTimer)return;
+    placementRenderTimer=setTimeout(()=>{
+      placementRenderTimer=0;
+      decoratePersonalBestPodiums();
+    },100);
   }
   function decoratePersonalBestPodiums(){
     void ensureRecordPlacementUi().then((ui)=>ui.update()).catch((error)=>{
@@ -3614,6 +3657,11 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const number=Number(value);
     return Number.isSafeInteger(number)&&number>=(positive?1:0)?number:null;
   }
+  function safeServerNumber(value){
+    if(value===null||value===undefined||value==='')return null;
+    const number=Number(value);
+    return Number.isFinite(number)&&number>=0?number:null;
+  }
   function sanitizeServerAchievementProof(value){
     if(!value||typeof value!=='object'||!SERVER_COSMETIC_UNLOCK_IDS.has(value.cosmeticId))return null;
     const expected=value.cosmeticId==='emblem:target'?{id:'beat-owner-1',threshold:1}:{id:'beat-owner-3',threshold:3};
@@ -3633,8 +3681,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const sanitized={};
     if(casual&&typeof casual==='object'&&!Array.isArray(casual)){
       const count=safeServerInteger(casual.count);
-      const rp=safeServerInteger(casual.rp);
-      if(count!==null)sanitized.casual={count,...(rp!==null?{rp}:{}),...(casual.scoringVersion===1?{scoringVersion:1}:{})};
+      const rp=safeServerNumber(casual.rp);
+      if(count!==null)sanitized.casual={count,...(rp!==null?{rp}:{}),...(casual.scoringVersion===2?{scoringVersion:2}:{})};
     }
     if(beatOwner&&typeof beatOwner==='object'&&!Array.isArray(beatOwner)){
       const targetAccountId=cleanUserId(beatOwner.targetAccountId);
@@ -3655,8 +3703,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if (!Array.isArray(entries)) return [];
     return entries.map((entry, i) => {
       const casual=entry.serverAchievements?.casual;
-      const casualRp=casual?.scoringVersion===1?(Number.isSafeInteger(entry.casualRp)&&entry.casualRp>=0?entry.casualRp:
-        Number.isSafeInteger(casual?.rp)&&casual.rp>=0?casual.rp:null):null;
+      const casualRp=casual?.scoringVersion===2?(safeServerNumber(entry.casualRp)??safeServerNumber(casual?.rp)):null;
       const casualCompletionCount=Number.isSafeInteger(entry.casualCompletionCount)&&entry.casualCompletionCount>=0?entry.casualCompletionCount:
         Number.isSafeInteger(casual?.count)&&casual.count>=0?casual.count:null;
       return ({
@@ -4350,7 +4397,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function categoryContextMarkup(entry,races,officialCount,communityCount,medals){
     if(overallCategory==='overall')return movementMarkup(entry?.movement||0,snapshotCaptureTimestamp(entry?.rankSince),entry?.rank||0);
-    if(overallCategory==='casual')return `<span class="overall-move flat">${Number.isSafeInteger(entry?.casualRp)?'Verified best placements':'Casual total unavailable'}</span>`;
+    if(overallCategory==='casual')return `<span class="overall-move flat">${Number.isFinite(entry?.casualRp)&&entry.casualRp>=0?'Verified best placements':'Casual total unavailable'}</span>`;
     if(Number(entry?.categoryMovement||0)!==0)return movementMarkup(entry.categoryMovement,0,entry?.categoryRank||0).replace('A shared rank duration is not available yet.','Change since your previous check of this category.');
     if(overallCategory==='playtime')return '';
     const finishes=normalizedFinishSamples(entry).filter((finish)=>Number(finish.rank||0)>0&&Number(finish.fieldSize||0)>=2);
@@ -4498,8 +4545,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const categoryUnit=(entry.groupScore!==undefined&&overallCategory==='overall')?'GROUP RP':categoryUnits[overallCategory]||'RANK POINTS';
     const scoreTitles={overall:LEADERBOARD_INFO.overall,casual:LEADERBOARD_INFO.casual,medals:LEADERBOARD_INFO.medals,weight:rankedWeightTitle('',0,true),average:LEADERBOARD_INFO.average,competitiveAverage:LEADERBOARD_INFO.competitiveAverage,podiumRate:LEADERBOARD_INFO.podiumRate,pbs:LEADERBOARD_INFO.pbs,playtime:LEADERBOARD_INFO.playtime,rising:LEADERBOARD_INFO.rising,wins:LEADERBOARD_INFO.wins,skill:LEADERBOARD_INFO.skill,consistency:LEADERBOARD_INFO.consistency};
     const scoreTitle=(scoreTitles[overallCategory]||'Derived from the same complete Ranked snapshot.')+(['playtime','veterans'].includes(overallCategory)?` Exact duration: ${preciseDurationLabel(categoryValue)}.`:'');
-    const missingValue=(entry.groupScore===null&&overallCategory==='overall')||(overallCategory==='casual'&&(!Number.isSafeInteger(row?.casualRp)||row.casualRp<0||!Number.isSafeInteger(row?.casualCompletionCount)||row.casualCompletionCount<0))||(overallCategory==='average'&&Number(row?.averagePlacementVersion||0)<AVERAGE_PLACEMENT_VERSION)||(overallCategory==='competitiveAverage'&&(!(Number(row?.competitiveAverageEligibleTracks||0)>0)||row?.competitiveAveragePlacement==null))||(overallCategory==='playtime'&&categoryValue<=0);
-    const categoryDisplay=missingValue?'N/A':overallCategory==='casual'?String(categoryValue):overallCategory==='veterans'||overallCategory==='playtime'?durationLabel(categoryValue):overallCategory==='average'||overallCategory==='competitiveAverage'?Math.max(0,categoryValue).toFixed(2):['overall','skill','consistency','improved','rising'].includes(overallCategory)?formatRp(categoryValue):overallCategory==='weight'?categoryValue.toFixed(2):overallCategory==='podiumRate'?`${categoryValue.toFixed(1)}%`:String(categoryValue);
+    const missingValue=(entry.groupScore===null&&overallCategory==='overall')||(overallCategory==='casual'&&(!Number.isFinite(row?.casualRp)||row.casualRp<0||!Number.isSafeInteger(row?.casualCompletionCount)||row.casualCompletionCount<0))||(overallCategory==='average'&&Number(row?.averagePlacementVersion||0)<AVERAGE_PLACEMENT_VERSION)||(overallCategory==='competitiveAverage'&&(!(Number(row?.competitiveAverageEligibleTracks||0)>0)||row?.competitiveAveragePlacement==null))||(overallCategory==='playtime'&&categoryValue<=0);
+    const categoryDisplay=missingValue?'N/A':overallCategory==='casual'?formatRp(categoryValue):overallCategory==='veterans'||overallCategory==='playtime'?durationLabel(categoryValue):overallCategory==='average'||overallCategory==='competitiveAverage'?Math.max(0,categoryValue).toFixed(2):['overall','skill','consistency','improved','rising'].includes(overallCategory)?formatRp(categoryValue):overallCategory==='weight'?categoryValue.toFixed(2):overallCategory==='podiumRate'?`${categoryValue.toFixed(1)}%`:String(categoryValue);
     const customCount=Number(row?.customCount||0)||0;
     const participationMeta=compactParticipationMeta(row,races);
     const medalMeta=medalSummaryMarkup(medals,true);
@@ -4586,7 +4633,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=101',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=102',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -4606,8 +4653,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=101',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=101',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=101',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=102',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=102',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=102',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -4694,7 +4741,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(metric==='snapshot')return true;
     if(metric.startsWith('category:')){
       const category=metric.slice(9);
-      if(category==='casual')return rows.length>0&&rows.every(row=>Number.isSafeInteger(row?.casualRp)&&row.casualRp>=0&&Number.isSafeInteger(row?.casualCompletionCount)&&row.casualCompletionCount>=0);
+      if(category==='casual')return rows.length>0&&rows.every(row=>Number.isFinite(row?.casualRp)&&row.casualRp>=0&&Number.isSafeInteger(row?.casualCompletionCount)&&row.casualCompletionCount>=0);
       return FILTERABLE_RANKED_CATEGORIES.has(category);
     }
     if(metric==='rank')return rankedFilterSnapshotMeta.ranksExact===true&&rows.length>0&&rows.every(row=>Number.isSafeInteger(row?.rank)&&row.rank>0);
@@ -4971,7 +5018,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     else if(overallCategory==='rising') rows.sort((a,b)=>risingRacerScore(b)-risingRacerScore(a)||a.rank-b.rank);
     else if(overallCategory==='veterans') rows.sort((a,b)=>Number(a.accountCreatedAt||Infinity)-Number(b.accountCreatedAt||Infinity)||a.rank-b.rank);
     else if(overallCategory==='casual'){
-      const known=entry=>Number.isSafeInteger(entry?.casualRp)&&entry.casualRp>=0&&Number.isSafeInteger(entry?.casualCompletionCount)&&entry.casualCompletionCount>=0;
+      const known=entry=>Number.isFinite(entry?.casualRp)&&entry.casualRp>=0&&Number.isSafeInteger(entry?.casualCompletionCount)&&entry.casualCompletionCount>=0;
       rows.sort((a,b)=>Number(known(b))-Number(known(a))||(known(a)?b.casualRp-a.casualRp||b.casualCompletionCount-a.casualCompletionCount:0)||a.rank-b.rank);
       let casualRank=0;
       return rows.map(entry=>({...entry,globalRank:entry.rank,categoryRank:known(entry)?++casualRank:null,categoryMovement:0,categorySince:0}));
@@ -6104,7 +6151,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     }
   }
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=101').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=102').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
       void reader('snapshot-meta').then(meta=>{const at=Date.parse(meta?.capturedAt||'');if(Number.isFinite(at)&&at>0&&at<=Date.now())publicSnapshotCapturedAt=at;}).catch(()=>{});
@@ -7885,17 +7932,24 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
 
   function positionTrackFreshnessBanner(banner,leaderboard){
     const inset=8;
-    // CSS fits the text; measure that width rather than reserving an empty 360px box.
+    // CSS fits the text; measure the card instead of reserving its maximum width.
     banner.style.removeProperty('width');
-    const bannerRect=banner.getBoundingClientRect();
-    const width=bannerRect.width,left=bannerRect.left;
+    banner.style.removeProperty('bottom');
+    delete banner.dataset.layout;
     const pages=leaderboard.querySelector(':scope > .pages');
     const footer=leaderboard.querySelector(':scope > .button-wrapper');
+    const back=footer?.querySelector(':scope > .back');
+    let bannerRect=banner.getBoundingClientRect();
+    const backRect=back?.getBoundingClientRect();
+    const intersects=(a,b)=>a&&b&&a.left<b.right+inset&&a.right>b.left-inset&&a.top<b.bottom+inset&&a.bottom>b.top-inset;
+    const wouldCoverBack=intersects(bannerRect,backRect);
+    if(wouldCoverBack)banner.dataset.layout='vertical';
+    else delete banner.dataset.layout;
+    bannerRect=banner.getBoundingClientRect();
     const pagesRect=pages?.getBoundingClientRect();
     const footerRect=footer?.getBoundingClientRect();
-    const overlapsLeft=(rect)=>rect&&rect.left<left+width+inset&&rect.right>left-inset;
-    // Lift the fixed body sidecar above native pages and footer controls when they occupy its corner.
-    const collisionTop=overlapsLeft(footerRect)?Math.min(footerRect.top,pagesRect?.top??footerRect.top):null;
+    // Only move above native controls when the bottom-left card actually intersects them.
+    const collisionTop=intersects(bannerRect,footerRect)?Math.min(footerRect.top,pagesRect?.top??footerRect.top):intersects(bannerRect,pagesRect)?pagesRect.top:null;
     const bottom=collisionTop===null?inset:Math.max(inset,window.innerHeight-collisionTop+inset);
     const nextBottom=bottom+'px';
     banner.style.setProperty('--sq-track-data-room',Math.max(44,window.innerHeight-bottom-inset)+'px');
@@ -7925,14 +7979,14 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const ownId=activeRankedAccountId(),own=(cached?.entries||[]).find(row=>String(row.accountId||row.userId||'')===ownId);
     const mixed=cached?.source==='local'||localRaceRowsForTrack(state.trackId).some(row=>String(row.accountId||row.userId||'')===ownId&&canonicalRaceTimeMs(row)>0&&(!own||canonicalRaceTimeMs(row)<canonicalRaceTimeMs(own)));
     const presentation=trackFreshnessPresentation(state,cached,mixed,publicSnapshotCapturedAt);
-    const {source,baseSource,sourceLabel,ageLine,updateLine}=presentation;
+    const {source,baseSource,sourceLabel,sourceLine,updateLine}=presentation;
     if(banner.dataset.source!==source)banner.dataset.source=source;
     if(banner.dataset.baseSource!==baseSource)banner.dataset.baseSource=baseSource;
     banner.dataset.localPb=String(mixed);
     banner.dataset.refreshFailed=String(failed);
-    const second=state.status==='loading'?'Loading the selected track':`${sourceLabel}${failed?' · live refresh unavailable':''}`;
+    const second=state.status==='loading'?'Loading the selected track':`${sourceLine}${failed?' · live refresh unavailable':''}`;
     const policy=snapshotOnlyForNewAccount()?snapshotUnlockLabel():'';
-    const bannerHtml=`<strong><b class="track-data-weight">${fieldSize>=2?`${weight.toFixed(2)}x Weight`:'No Ranked weight'}</b><b class="track-data-players">${fieldSize} Player${fieldSize===1?'':'s'}</b></strong><span class="track-data-source">${escapeHtml(second)}</span><span class="track-data-age">${escapeHtml(ageLine)}</span><span class="track-data-update" title="Last published leaderboard change, not necessarily the last time someone raced.">${escapeHtml(updateLine)}</span>${policy?`<span class="track-data-unlock">${escapeHtml(policy)}</span>`:''}`;
+    const bannerHtml=`<strong><b class="track-data-weight">${fieldSize>=2?`${weight.toFixed(2)}x Weight`:'No Ranked weight'}</b><b class="track-data-players">${fieldSize} Player${fieldSize===1?'':'s'}</b></strong><span class="track-data-source">${escapeHtml(second)}</span><span class="track-data-update" title="Last published leaderboard change, not necessarily the last time someone raced.">${escapeHtml(updateLine)}</span>${policy?`<span class="track-data-unlock">${escapeHtml(policy)}</span>`:''}`;
     if(banner.innerHTML!==bannerHtml)banner.innerHTML=bannerHtml;
     positionTrackFreshnessBanner(banner,nativeLeaderboard);
     syncSnapshotRefreshControl(nativeLeaderboard.querySelector('button.refresh'));
@@ -7946,10 +8000,10 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const capturedAt=Number(cached?.snapshotCapturedAt||state.snapshotCapturedAt||0)||0;
     const checkedAt=Number(state.checkedAt||cached?.checkedAt||0)||0;
     const old=at=>`${durationLabel(Date.now()-at)} old`;
-    const ageLine=baseSource==='snapshot'?(capturedAt?`Snapshot ${old(capturedAt)}`:packageCapturedAt?`Snapshot package ${old(packageCapturedAt)}`:'Snapshot age unknown'):
-      checkedAt?`Cloud checked ${ageLabel(checkedAt)}`:baseSource==='local'?'Local PB saved on this device':'Cloud check time unknown';
+    const sourceLine=baseSource==='snapshot'?`${capturedAt?`Snapshot ${old(capturedAt)}`:packageCapturedAt?`Snapshot package ${old(packageCapturedAt)}`:'Snapshot age unknown'}${mixed?' + local PB':''}`:
+      `${sourceLabel}${checkedAt?` · checked ${ageLabel(checkedAt)}`:baseSource==='local'?' · saved on this device':' · check time unknown'}`;
     const updatedAt=Number(cached?.serverUpdatedAt||state.fetchedAt||0)||0;
-    return {source,baseSource,sourceLabel,ageLine,updateLine:updatedAt?`Track updated ${ageLabel(updatedAt)}`:'Track update time unknown'};
+    return {source,baseSource,sourceLabel,sourceLine,updateLine:updatedAt?`Track updated ${ageLabel(updatedAt)}`:'Track update time unknown'};
   }
 
 
@@ -8064,7 +8118,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=101',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:101,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=102',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:102,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);

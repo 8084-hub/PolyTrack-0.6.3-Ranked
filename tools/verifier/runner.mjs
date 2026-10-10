@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {similarityEvidence} from './similarity.mjs';
 import {queueState, reconciledSlot, completedSlot} from './queue.mjs';
 import {VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION, verificationCollectionForTrack, verificationKey, legacyTimingFrames} from '../../workers/ranked/src/verification.js';
 
@@ -98,7 +99,7 @@ export async function selectJobs(db, docs, now = Date.now(), {jobLimit = NORMAL_
 }
 
 export async function publishResults(db, jobs, results) {
-  const totals = {verified: 0, mismatch: 0, unavailable: 0, superseded: 0, deferred: 0, corrected: 0, reasons: {}};
+  const totals = {verified: 0, mismatch: 0, unavailable: 0, superseded: 0, deferred: 0, corrected: 0, reviewFlagged:0, reasons: {}};
   const queueCache = new Map();
   let stateCacheLoaded = false, stateCache = null;
   for (const result of results) {
@@ -176,6 +177,7 @@ export async function publishResults(db, jobs, results) {
         db.write('0.6.2_s1_worker_jobs', 'canonical_reconcile_v2', nextStateData, state),
         db.write('0.6.2_s1_verification_audit', auditId, {resultId: job.resultId,
           accountId: job.accountId, trackId: job.trackId, key: publishedKey, ...slots[job.accountId],
+          ...(similarityEvidence(result) && publication.status==='verified' ? {needsReview:true, reviewEvidence:similarityEvidence(result)} : {}),
           ...(correct ? {correctedFromKey: job.queueKey, correctedFromTimeMs: current.data.timeMs, correctedTimeMs: frames} : {})}, audit)
       ];
       if (correct) {
@@ -198,6 +200,7 @@ export async function publishResults(db, jobs, results) {
           stateCacheLoaded = false;
         }
         totals[publication.status]++;
+        if(publication.status==='verified' && similarityEvidence(result)) totals.reviewFlagged++;
         const reason = String(publication.reason || '').slice(0, 100);
         totals.reasons[reason] = (totals.reasons[reason] || 0) + 1;
         if (correct) totals.corrected++;

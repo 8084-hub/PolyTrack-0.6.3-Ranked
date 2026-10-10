@@ -18,13 +18,14 @@ vm.runInContext(helper,context);
 
 test('fresh snapshot and old track update are independent timestamps',()=>{
   const result=context.trackFreshnessPresentation({status:'snapshot',fetchedAt:now-240*3600000},{source:'public-backup',snapshotCapturedAt:now-2*3600000},false,now);
-  assert.equal(result.ageLine,'Snapshot 2h old');
+  assert.equal(result.sourceLine,'Snapshot 2h old');
   assert.equal(result.updateLine,'Track updated 240h ago');
   assert.equal(result.baseSource,'snapshot');
+  assert.equal(result.sourceLabel,'Snapshot');
 });
 test('fallback package age does not claim an unchanged track was just checked',()=>{
   const result=context.trackFreshnessPresentation({status:'snapshot',fetchedAt:now-240*3600000},null,false,now-3600000);
-  assert.equal(result.ageLine,'Snapshot package 1h old');
+  assert.equal(result.sourceLine,'Snapshot package 1h old');
   assert.equal(result.updateLine,'Track updated 240h ago');
 });
 test('mixed sources identify their actual base and failed refresh does not erase it',()=>{
@@ -37,6 +38,19 @@ test('mixed sources identify their actual base and failed refresh does not erase
 });
 test('unknown activity and capture times remain unknown rather than fabricated',()=>{
   const result=context.trackFreshnessPresentation({status:'snapshot'},null,false);
-  assert.equal(result.ageLine,'Snapshot age unknown');
+  assert.equal(result.sourceLine,'Snapshot age unknown');
   assert.equal(result.updateLine,'Track update time unknown');
+});
+
+test('snapshot capture age appears once alongside its source, separate from track update age',()=>{
+  const result=context.trackFreshnessPresentation({status:'snapshot',fetchedAt:now-72*3600000},{source:'public-backup',snapshotCapturedAt:now-9*3600000},false,now);
+  assert.equal(result.sourceLine,'Snapshot 9h old');
+  assert.equal(result.updateLine,'Track updated 72h ago');
+  assert.doesNotMatch(result.sourceLine,/track updated/i);
+});
+
+test('mixed snapshot source keeps local PB explicit without duplicating Snapshot',()=>{
+  const result=context.trackFreshnessPresentation({status:'snapshot',fetchedAt:now-72*3600000},{source:'public-backup',snapshotCapturedAt:now-9*3600000},true,now);
+  assert.equal(result.sourceLine,'Snapshot 9h old + local PB');
+  assert.equal(result.updateLine,'Track updated 72h ago');
 });

@@ -1,3 +1,5 @@
+import { EXTRA_TRACK_IDS } from './extra-track-ids.js';
+
 export const SERVER_ACHIEVEMENT_VERSION = 1;
 export const SERVER_ACHIEVEMENT_CATALOG = 'ranked-recognized-2026-09-20-v1';
 export const OWNER_PUBLIC_ID = '732873e979838acecbce2a663dc69122d6deca4634e999897d1cc5e677df660b';
@@ -14,13 +16,12 @@ const text = (value, max) => String(value || '').replace(/[<>\u0000-\u001f]/g, '
 const positiveInteger = value => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : 0;
 const physicsVerified = entry => entry?.integrityVerified === true && entry?.runVerified === true;
 
-// Each completed track contributes 10-100 points from the current verified-PB percentile.
-export function casualRpForPlacement(rank, fieldSize) {
-  if (!Number.isSafeInteger(rank) || !Number.isSafeInteger(fieldSize) || rank < 1 || fieldSize < rank) return null;
-  if (fieldSize === 1) return CASUAL_RP_MIN_PER_TRACK;
-  return CASUAL_RP_MIN_PER_TRACK + Math.round(
-    (CASUAL_RP_MAX_PER_TRACK - CASUAL_RP_MIN_PER_TRACK) * (fieldSize - rank) / (fieldSize - 1)
-  );
+// The base placement award is scaled by the same published weight used by Overall RP.
+export function casualRpForPlacement(rank, fieldSize, weight) {
+  if (!Number.isSafeInteger(rank) || !Number.isSafeInteger(fieldSize) || rank < 1 || fieldSize < rank ||
+      !Number.isFinite(weight) || weight < 0) return null;
+  const percentile = fieldSize === 1 ? 0 : (fieldSize - rank) / (fieldSize - 1);
+  return Number(((CASUAL_RP_MIN_PER_TRACK + (CASUAL_RP_MAX_PER_TRACK - CASUAL_RP_MIN_PER_TRACK) * percentile) * weight).toFixed(3));
 }
 
 function encodeLedger(trackIds, catalog) {
@@ -112,7 +113,17 @@ export function aggregateServerAchievements(entries, trackDocuments, priorById, 
     physicsVerifiedEntries: 0, integrityOnlyRejected: 0, unverifiedRejected: 0,
     eligibleVerifiedCompletions: 0, ownerTargets: 0, verifiedOwnerBeats: 0 };
 
-  for (const board of trackDocuments || []) {
+  const boards = trackDocuments || [];
+  const strongestNormalWeight = boards.reduce((strongest, board) => {
+    if (EXTRA_TRACK_IDS.has(text(board?.trackId, 80))) return strongest;
+    const weights = (Array.isArray(board?.entries) ? board.entries : [])
+      .filter(physicsVerified)
+      .map(entry => Number(entry.weight))
+      .filter(weight => Number.isFinite(weight) && weight > 0);
+    return weights.reduce((maximum, weight) => Math.max(maximum, weight), strongest);
+  }, 0);
+
+  for (const board of boards) {
     const trackId = text(board?.trackId, 80);
     if (!trackId) continue;
     audit.inputTrackDocuments += 1;
@@ -144,9 +155,15 @@ export function aggregateServerAchievements(entries, trackDocuments, priorById, 
     const casualField = [...verifiedByAccount.values()].sort((left, right) => left.timeMs - right.timeMs || left.accountId.localeCompare(right.accountId));
     if (eligibleTracks.has(trackId)) {
       const fieldSize = casualField.length;
+      let rank = 0;
       casualField.forEach((entry, index) => {
+        if (index === 0 || entry.timeMs !== casualField[index - 1].timeMs) rank = index + 1;
         const placements = casualPlacements.get(entry.accountId) || new Map();
-        placements.set(trackId, board?.complete === true ? casualRpForPlacement(index + 1, fieldSize) : null);
+        const publishedWeight = Number(entry.weight);
+        const extraCap = strongestNormalWeight > 0 ? strongestNormalWeight / 5 : 0.2;
+        const weight = EXTRA_TRACK_IDS.has(trackId) && Number.isFinite(publishedWeight)
+          ? Math.min(extraCap, publishedWeight) : publishedWeight;
+        placements.set(trackId, board?.complete === true ? casualRpForPlacement(rank, fieldSize, weight) : null);
         casualPlacements.set(entry.accountId, placements);
       });
     }
@@ -173,8 +190,8 @@ export function aggregateServerAchievements(entries, trackDocuments, priorById, 
     const legacyCasualUnknown = Number.isSafeInteger(previous.casualRp) && previous.casualRp > 0 && casualTracks.size === 0;
     for (const trackId of completions.get(accountId) || []) casualTracks.add(trackId);
     const placements = casualPlacements.get(accountId) || new Map();
-    const casualRpKnown = !legacyCasualUnknown && [...casualTracks].every(trackId => Number.isSafeInteger(placements.get(trackId)));
-    const casualRp = casualRpKnown ? [...casualTracks].reduce((sum, trackId) => sum + placements.get(trackId), 0) : null;
+    const casualRpKnown = !legacyCasualUnknown && [...casualTracks].every(trackId => Number.isFinite(placements.get(trackId)) && placements.get(trackId) >= 0);
+    const casualRp = casualRpKnown ? Number([...casualTracks].reduce((sum, trackId) => sum + placements.get(trackId), 0).toFixed(3)) : null;
 
     const beatenTracks = priorLedger(previous, 'beatOwner', catalog);
     const priorBeatCount = beatenTracks.size;
@@ -201,7 +218,7 @@ export function aggregateServerAchievements(entries, trackDocuments, priorById, 
       serverAchievements: {
         version: SERVER_ACHIEVEMENT_VERSION,
         catalog: SERVER_ACHIEVEMENT_CATALOG,
-        casual: { ledger: encodeLedger(casualTracks, catalog), count: casualCount, rp: casualRp, scoringVersion: 1 },
+        casual: { ledger: encodeLedger(casualTracks, catalog), count: casualCount, rp: casualRp, scoringVersion: 2 },
         beatOwner: { targetAccountId: ownerPublicId, ledger: encodeLedger(beatenTracks, catalog), count: beatenTracks.size, unlocks }
       }
     };

@@ -46,14 +46,15 @@ test('Casual RP ranks known values high to low and leaves legacy values unranked
   const rows = [
     { userId: 'legacy', rank: 1, casualRp: null, casualCompletionCount: null },
     { userId: 'zero', rank: 2, casualRp: 0, casualCompletionCount: 0 },
-    { userId: 'leader', rank: 3, casualRp: 300, casualCompletionCount: 3 }
+    { userId: 'leader', rank: 3, casualRp: 300, casualCompletionCount: 3 },
+    { userId: 'fractional', rank: 4, casualRp: 300.125, casualCompletionCount: 3 }
   ];
   const context = vm.createContext({ overallCategory: 'casual', overallEntriesCache: rows });
   vm.runInContext(`${extract('sortedOverallEntries')};`, context);
   const sorted = context.sortedOverallEntries();
-  assert.deepEqual(Array.from(sorted, row => row.userId), ['leader', 'zero', 'legacy']);
-  assert.deepEqual(Array.from(sorted, row => row.categoryRank), [1, 2, null]);
-  assert.deepEqual(Array.from(sorted, row => row.globalRank), [3, 2, 1]);
+  assert.deepEqual(Array.from(sorted, row => row.userId), ['fractional', 'leader', 'zero', 'legacy']);
+  assert.deepEqual(Array.from(sorted, row => row.categoryRank), [1, 2, 3, null]);
+  assert.deepEqual(Array.from(sorted, row => row.globalRank), [4, 3, 2, 1]);
 });
 
 test('server achievement normalization keeps only bounded allowlisted proof summaries', () => {
@@ -81,7 +82,7 @@ test('server achievement normalization keeps only bounded allowlisted proof summ
   assert.equal('ledger' in normalized.beatOwner, false);
 });
 
-test('Casual RP normalization rejects legacy fixed awards and accepts only scoring model 1', () => {
+test('Casual RP normalization rejects legacy model 1 and preserves fractional model 2 values', () => {
   const context = vm.createContext({
     SERVER_COSMETIC_UNLOCK_IDS: new Set(),
     cleanUserId: value => String(value || '').trim().toLowerCase(),
@@ -97,23 +98,35 @@ test('Casual RP normalization rejects legacy fixed awards and accepts only scori
     MIN_RANKED_TRACKS: 3,
     TOTAL_TRACKS: 100
   });
-  vm.runInContext(`${extract('safeServerInteger')};${extract('sanitizeServerAchievementProof')};${extract('sanitizeServerAchievements')};${extract('normalizeEntries')};`, context);
-  const [legacy, current] = context.normalizeEntries([
+  vm.runInContext(`${extract('safeServerInteger')};${extract('safeServerNumber')};${extract('sanitizeServerAchievementProof')};${extract('sanitizeServerAchievements')};${extract('normalizeEntries')};`, context);
+  const [legacy, oldModel, current] = context.normalizeEntries([
     {userId: 'legacy', casualRp: 100, casualCompletionCount: 1,
       serverAchievements: {casual: {count: 1, rp: 100, pointsPerTrack: 100}}},
-    {userId: 'current', casualRp: 55, casualCompletionCount: 1,
-      serverAchievements: {casual: {count: 1, rp: 55, scoringVersion: 1}}}
+    {userId: 'old-model', casualRp: 55, casualCompletionCount: 1,
+      serverAchievements: {casual: {count: 1, rp: 55, scoringVersion: 1}}},
+    {userId: 'current', casualRp: 55.125, casualCompletionCount: 1,
+      serverAchievements: {casual: {count: 1, rp: 55.125, scoringVersion: 2}}}
   ]);
   assert.equal(legacy.casualRp, null);
   assert.equal(legacy.casualCompletionCount, 1);
   assert.equal(legacy.serverAchievements.casual.scoringVersion, undefined);
-  assert.equal(current.casualRp, 55);
-  assert.equal(current.serverAchievements.casual.scoringVersion, 1);
+  assert.equal(oldModel.casualRp, null);
+  assert.equal(oldModel.serverAchievements.casual.scoringVersion, undefined);
+  assert.equal(current.casualRp, 55.125);
+  assert.equal(current.serverAchievements.casual.scoringVersion, 2);
+});
+
+test('fractional Casual RP uses the configured RP display precision', () => {
+  const context = vm.createContext({rpDecimals: () => 2});
+  vm.runInContext(`${extract('formatRp')};`, context);
+  assert.equal(context.formatRp(55.125), '55.13');
+  assert.match(source, /overallCategory==='casual'\?formatRp\(categoryValue\)/);
 });
 
 test('source contract renders legacy Casual RP as unavailable and preserves exact metadata', () => {
   assert.match(source, /overallCategory==='casual'.*missingValue/s);
   assert.match(source, /visibleRank=overallCategory==='casual'&&missingValue\?null:rank/);
+  assert.match(source, /Number\.isFinite\(row\?\.casualRp\)/);
   assert.match(source, /totalEntriesExact:meta\.totalEntriesExact===true/);
   assert.match(source, /publishedEntries===entryCount/);
   assert.match(source, /totalPlaytimeMs: Number\.isFinite\(entry\.totalPlaytimeMs\).*\?entry\.totalPlaytimeMs:null/);

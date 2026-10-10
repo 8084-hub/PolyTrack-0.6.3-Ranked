@@ -80,9 +80,8 @@ function projectOverallEntry(entry) {
     if (casual && typeof casual === 'object' && !Array.isArray(casual)) {
       projectedAchievements.casual = {
         ...(Number.isSafeInteger(casual.count) && casual.count >= 0 ? {count: casual.count} : {}),
-        ...(Number.isSafeInteger(casual.rp) && casual.rp >= 0 ? {rp: casual.rp} : {}),
-        ...(Number.isSafeInteger(casual.pointsPerTrack) && casual.pointsPerTrack === 100 ? {pointsPerTrack: 100} : {}),
-        ...(casual.scoringVersion === 1 ? {scoringVersion: 1} : {})
+        ...(casual.scoringVersion === 2 && Number.isFinite(casual.rp) && casual.rp >= 0 ? {rp: casual.rp} : {}),
+        ...(casual.scoringVersion === 2 ? {scoringVersion: 2} : {})
       };
       if (!Object.keys(projectedAchievements.casual).length) delete projectedAchievements.casual;
     }

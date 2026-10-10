@@ -6,6 +6,7 @@ import {connect, decode} from './firestore.mjs';
 import {QUEUE_CANDIDATE_LIMIT, prioritizeQueueDocuments, selectJobs, publishResults} from './runner.mjs';
 import {budgetDatabase, drainVerification, DRAIN_LIMITS} from './throughput.mjs';
 import {loadWeeklyTrustedTrack} from './weekly-track.mjs';
+import {createSimilarityReviewer} from './similarity.mjs';
 import {VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION, VERIFIER_ENGINE_DIGEST} from '../../workers/ranked/src/verification.js';
 import {EXTRA_TRACK_IDS} from '../../workers/ranked/src/extra-track-ids.js';
 export const NORMAL_JOB_LIMIT = 12;
@@ -115,7 +116,7 @@ export async function runVerifier({check = false, drain = false, borrowUnusedEve
       return {hasWork: null, deferred: true, reason: 'firestore_429'};
     }
   }
-  const roundOptions={env,log,eventRun,prioritizeNormal,selectNormal,verifyNormal,publishNormal,borrowUnusedEvents};
+  const roundOptions={env,log,eventRun,prioritizeNormal,selectNormal,verifyNormal,publishNormal,borrowUnusedEvents,reviewSimilarity:createSimilarityReviewer(root)};
   if (!drain) {
     try { return await runRound(db,roundOptions); }
     catch (error) {
@@ -145,7 +146,7 @@ export async function runVerifier({check = false, drain = false, borrowUnusedEve
   return summary;
 }
 
-export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNormal,verifyNormal,publishNormal,borrowUnusedEvents}) {
+export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNormal,verifyNormal,publishNormal,borrowUnusedEvents,reviewSimilarity}) {
   const now = Date.now();
   // Events must get their reservation before normal canonical reads/commits. Otherwise
   // normal selection can spend the request budget and strand both sources.
@@ -208,10 +209,11 @@ export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNorma
   const trustedTracks = loadWeeklyTrustedTrack(root, jobs);
   const results = await verifyNormal(root, jobs, trustedTracks);
   if (results.length !== jobs.length || new Set(results.map(r => r.resultId)).size !== jobs.length) throw Error('Incomplete verifier result set');
+  if(reviewSimilarity) await reviewSimilarity(jobs,results);
   const totals = await publishNormal(db, jobs, results);
   const reasons = totals.reasons;
   log(JSON.stringify({processed: jobs.length, canonicalAttempts, selectionConflicts, ...idleCounts, ...totals, reasons, firestoreRequests: db.requests()}));
-  if(env.GITHUB_STEP_SUMMARY)fs.appendFileSync(env.GITHUB_STEP_SUMMARY,`## Replay verification\nProcessed: ${jobs.length}. Verified: ${totals.verified}. Corrected legacy times: ${totals.corrected}. Waiting: ${totals.unavailable}. Deferred conflicts: ${totals.deferred}.\n\n${Object.entries(reasons).map(([reason,count])=>'- '+reason+': '+count).join('\n')}\n`);
+  if(env.GITHUB_STEP_SUMMARY)fs.appendFileSync(env.GITHUB_STEP_SUMMARY,`## Replay verification\nProcessed: ${jobs.length}. Verified: ${totals.verified}. Corrected legacy times: ${totals.corrected}. Waiting: ${totals.unavailable}. Deferred conflicts: ${totals.deferred}. Review flags: ${totals.reviewFlagged||0} (advisory, not cheating verdicts).\n\n${Object.entries(reasons).map(([reason,count])=>'- '+reason+': '+count).join('\n')}\n`);
   if(results.some(r=>r.reason==='engine_unavailable')){console.error('Verifier startup failed. Runs remain waiting; inspect the startup diagnostic.');process.exitCode=1;}
   return {processed:jobs.length,canonicalAttempts,selectionConflicts,...idleCounts,...totals,events:eventSummary,
     infrastructureFailure:eventFailure||results.some(infrastructure)};
