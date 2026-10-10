@@ -4,7 +4,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {connect, decode} from './firestore.mjs';
 import {QUEUE_CANDIDATE_LIMIT, prioritizeQueueDocuments, selectJobs, publishResults} from './runner.mjs';
-import {budgetDatabase, drainVerification, DRAIN_LIMITS} from './throughput.mjs';
+import {budgetDatabase, drainVerification, DRAIN_LIMITS, CATCH_UP_LIMITS} from './throughput.mjs';
 import {loadWeeklyTrustedTrack} from './weekly-track.mjs';
 import {createSimilarityReviewer} from './similarity.mjs';
 import {VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION, VERIFIER_ENGINE_DIGEST} from '../../workers/ranked/src/verification.js';
@@ -95,10 +95,13 @@ export async function checkForWork(db, {env = process.env, now = Date.now(), log
     queueSample};
 }
 
-export async function runVerifier({check = false, drain = false, borrowUnusedEvents = false, clock = () => performance.now(), env = process.env, connectDatabase = connect,
+export async function runVerifier({check = false, drain = false, catchUp = false, borrowUnusedEvents = false, clock = () => performance.now(), env = process.env, connectDatabase = connect,
   validateEngine = validateEnginePin, log = console.log, eventCheck = checkEvents,
   eventRun = runEvents, prioritizeNormal = prioritizeQueueDocuments, selectNormal = selectJobs,
   verifyNormal = simulate, publishNormal = publishResults} = {}) {
+  if (typeof catchUp !== 'boolean' || catchUp && (!drain || check)) throw Error('Catch-Up requires --drain without --check');
+  if (catchUp && env.GITHUB_EVENT_NAME !== 'workflow_dispatch') throw Error('Catch-Up requires a manually dispatched GitHub workflow');
+  const limits = catchUp ? CATCH_UP_LIMITS : DRAIN_LIMITS;
   // Preflight never loads or hashes physics assets. Actual processing still pins the engine first.
   if (!check) await validateEngine();
   const raw = env.FIREBASE_VERIFIER_SERVICE_ACCOUNT;
@@ -128,17 +131,19 @@ export async function runVerifier({check = false, drain = false, borrowUnusedEve
       return summary;
     }
   }
-  const bounded=budgetDatabase(db);
-  const summary=await drainVerification({requests:bounded.requests,now:clock,log,
+  const bounded=budgetDatabase(db,limits.requests,limits);
+  const summary=await drainVerification({requests:bounded.requests,now:clock,log,limits,
     runRound:()=>runRound(bounded,{...roundOptions,borrowUnusedEvents:true})});
+  summary.mode=catchUp?'catch-up':'normal';
   summary.firestoreHttpRequests=bounded.requests();
   summary.firestoreReturnedDocuments=bounded.returnedDocuments();
   summary.firestoreQueryCount=bounded.queryCount();
   summary.firestoreEmptyQueryMinimumReads=bounded.emptyQueryMinimumReads();
   summary.firestoreEstimatedDocumentReads=bounded.estimatedDocumentReads();
   if(env.GITHUB_STEP_SUMMARY)fs.appendFileSync(env.GITHUB_STEP_SUMMARY,
-    '\n## Bounded drain\n'+JSON.stringify(summary)+'\nLimits: '+DRAIN_LIMITS.rounds+
-    ' rounds, 64 total native attempts, '+DRAIN_LIMITS.requests+' Firestore HTTP requests. Returned documents, query count, empty-query minimum reads, and estimated document reads are separate counters; the estimate is not billed usage and excludes index-entry charges. '+
+    '\n## Bounded drain\n'+JSON.stringify(summary)+'\nMode: '+summary.mode+'. Limits: '+limits.rounds+
+    ' rounds, '+limits.rounds*TOTAL_JOB_LIMIT+' total native attempts, '+limits.requests+' Firestore HTTP requests. Returned documents, query count, empty-query minimum reads, and estimated document reads are separate counters; the estimate is not billed usage and excludes index-entry charges. '+
+    (catchUp?'Catch-Up spends a larger per-run budget to drain due work with one setup. It stops early on empty work, throttling, or infrastructure failure. It does not bypass verification limits or retry future-dated jobs. ':'')+
     'Time admission is measured, not a completion guarantee; the workflow step timeout remains the hard stop. '+
     'Interrupted-round publication counts are incomplete, not zero. `stop` explains why this invocation ended; a round is not a GitHub workflow run number. '+
     'Unknown or untrusted tracks remain unavailable rather than admitting user-supplied track data.\n'+
@@ -220,5 +225,5 @@ export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNorma
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await runVerifier({check: process.argv.includes('--check'), drain: process.argv.includes('--drain'), borrowUnusedEvents: true});
+  await runVerifier({check: process.argv.includes('--check'), drain: process.argv.includes('--drain'), catchUp: process.argv.includes('--catch-up'), borrowUnusedEvents: true});
 }

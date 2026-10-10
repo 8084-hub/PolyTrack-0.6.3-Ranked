@@ -2,13 +2,18 @@ import {decode} from './firestore.mjs';
 
 export const DRAIN_LIMITS = Object.freeze({rounds:4, requests:400, reserveRequests:128,
   minimumFinalRoundRequests:51, admissionMs:360000, minimumRoundMs:30000, finishReserveMs:60000});
+export const CATCH_UP_LIMITS = Object.freeze({...DRAIN_LIMITS, rounds:12, requests:1200, admissionMs:720000});
+function validateLimits(limits) {
+  if (limits !== DRAIN_LIMITS && limits !== CATCH_UP_LIMITS) throw Error('Invalid drain limits');
+}
 export class VerificationBudgetError extends Error {
   constructor() { super('verification_request_budget'); this.code='VERIFICATION_REQUEST_BUDGET'; }
 }
 
 // Counts HTTP requests, not billed document reads/writes. Never retries denied work.
-export function budgetDatabase(db, limit=DRAIN_LIMITS.requests) {
-  if (!Number.isInteger(limit) || limit<1 || limit>DRAIN_LIMITS.requests) throw Error('Invalid request budget');
+export function budgetDatabase(db, limit=DRAIN_LIMITS.requests, limits=DRAIN_LIMITS) {
+  validateLimits(limits);
+  if (!Number.isInteger(limit) || limit<1 || limit>limits.requests) throw Error('Invalid request budget');
   let used=0;
   const reserve=()=>{
     if (used>=limit) throw new VerificationBudgetError();
@@ -29,14 +34,15 @@ export function budgetDatabase(db, limit=DRAIN_LIMITS.requests) {
     }};
 }
 
-export async function drainVerification({runRound,requests,now=()=>performance.now(),log=console.log}) {
+export async function drainVerification({runRound,requests,now=()=>performance.now(),log=console.log,limits=DRAIN_LIMITS}) {
+  validateLimits(limits);
   const started=now(), rounds=[];
   let longestRound=0, stop='round_limit', interruptedRound=false;
-  for(let index=0;index<DRAIN_LIMITS.rounds;index++) {
-    const remainingRequests = DRAIN_LIMITS.requests - requests();
-    if(index && remainingRequests < DRAIN_LIMITS.reserveRequests &&
-      remainingRequests < DRAIN_LIMITS.minimumFinalRoundRequests) {stop='request_reserve';break;}
-    if(index && now()-started+Math.max(longestRound,DRAIN_LIMITS.minimumRoundMs)+DRAIN_LIMITS.finishReserveMs>DRAIN_LIMITS.admissionMs) {
+  for(let index=0;index<limits.rounds;index++) {
+    const remainingRequests = limits.requests - requests();
+    if(index && remainingRequests < limits.reserveRequests &&
+      remainingRequests < limits.minimumFinalRoundRequests) {stop='request_reserve';break;}
+    if(index && now()-started+Math.max(longestRound,limits.minimumRoundMs)+limits.finishReserveMs>limits.admissionMs) {
       stop='time_reserve';break;
     }
     const before=now();

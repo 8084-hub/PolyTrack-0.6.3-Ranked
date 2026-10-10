@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {budgetDatabase,drainVerification,DRAIN_LIMITS,VerificationBudgetError} from './throughput.mjs';
+import {budgetDatabase,drainVerification,DRAIN_LIMITS,CATCH_UP_LIMITS,VerificationBudgetError} from './throughput.mjs';
 import {runVerifier} from './run.mjs';
 import {encode} from './firestore.mjs';
 
@@ -172,6 +172,17 @@ test('drain reuses one authenticated pinned connection, rereads queue, and borro
   assert.equal('FIREBASE_VERIFIER_SERVICE_ACCOUNT'in f.options.env,false);
 });
 
+test('manual catch-up is wired through the real runner with one setup and preserved event quota',async()=>{
+  const f=integration(4);
+  f.options.catchUp=true;
+  f.options.env.GITHUB_EVENT_NAME='workflow_dispatch';
+  const result=await runVerifier(f.options);
+  assert.equal(result.mode,'catch-up');assert.equal(result.rounds,12);
+  assert.equal(result.processed,144);assert.equal(result.eventChecked,48);
+  assert.equal(f.connections,1);assert.equal(f.pins,1);
+  assert.deepEqual(f.order,Array.from({length:12},()=>['events','query','query','normal:12','publish']).flat());
+});
+
 test('sustained events get first chance and four reserved simulations on every round',async()=>{
   const f=integration(4);const result=await runVerifier(f.options);
   assert.equal(result.processed,48);assert.equal(result.eventChecked,16);
@@ -200,16 +211,60 @@ test('invalid event counts and incomplete native result sets cannot trigger norm
 test('workflow bounds drain wall time while preserving gates, permissions and native limits',()=>{
   const workflow=fs.readFileSync(new URL('../../.github/workflows/verify-runs.yml',import.meta.url),'utf8');
   const step=workflow.split('- name: Verify queued runs')[1];
-  assert.match(step,/timeout-minutes: 10/);assert.match(step,/run.mjs --drain/);
+  assert.match(step,/inputs.catch_up && 15 \|\| 10/);assert.match(step,/run.mjs --drain/);
   assert.match(step,/if: steps.queue.outputs.has_work == 'true'/);
   assert.match(workflow,/actions\/cache@[0-9a-f]{40}/);
   assert.match(workflow,/playwright-\$\{\{ hashFiles\('tools\/verifier\/package-lock\.json'\) \}\}/);
   assert.match(workflow,/npx playwright install --with-deps chromium/);
   assert.match(workflow,/chromiumSandbox:true/);
-  assert.match(workflow,/timeout-minutes: 15/);assert.match(workflow,/contents: read/);
+  assert.match(workflow,/inputs.catch_up && 25 \|\| 15/);assert.match(workflow,/contents: read/);
+  assert.match(workflow,/group: polytrack-run-verifier/);
+  assert.match(workflow,/cancel-in-progress: false/);
+  assert.match(workflow,/catch_up:[\s\S]*type: boolean[\s\S]*default: false/);
+  assert.match(step,/github.event_name == 'workflow_dispatch' && inputs.catch_up/);
   assert.match(workflow,/cache: npm/);assert.match(workflow,/cache-dependency-path: tools\/verifier\/package-lock\.json/);
   assert.equal(DRAIN_LIMITS.rounds*16,64);assert.equal(DRAIN_LIMITS.requests,400);
   assert.doesNotMatch(workflow,/--no-sandbox/);
+});
+
+test('catch-up keeps explicit round and request ceilings without changing normal limits',async()=>{
+  let calls=0;
+  const result=await drainVerification({limits:CATCH_UP_LIMITS,now:()=>0,requests:()=>calls*70,log:quiet,
+    runRound:async()=>{calls++;return round();}});
+  assert.equal(calls,12);assert.equal(result.processed,192);assert.equal(result.stop,'round_limit');
+  assert.equal(DRAIN_LIMITS.requests,400);assert.equal(DRAIN_LIMITS.rounds,4);
+  const db=budgetDatabase({call:async()=>[]},1200,CATCH_UP_LIMITS);
+  for(let i=0;i<1200;i++)await db.call(':runQuery',{});
+  await assert.rejects(db.call(':runQuery',{}),VerificationBudgetError);
+  assert.equal(db.requests(),1200);
+  assert.throws(()=>budgetDatabase({},1201,CATCH_UP_LIMITS),/budget/);
+  assert.throws(()=>budgetDatabase({},1200,{...CATCH_UP_LIMITS}),/limits/);
+});
+
+test('catch-up stops on empty work, throttle, infrastructure failures and time reserve',async()=>{
+  for(const [report,stop] of [[round({processed:0,canonicalAttempts:0}),'no_progress'],
+    [round({infrastructureFailure:true}),'infrastructure_failure']]){
+    let calls=0;
+    const result=await drainVerification({limits:CATCH_UP_LIMITS,now:()=>0,requests:()=>0,log:quiet,
+      runRound:async()=>{calls++;return report;}});
+    assert.equal(calls,1);assert.equal(result.stop,stop);
+  }
+  const error=Object.assign(Error('throttle'),{deferred:true,code:'FIRESTORE_READ_THROTTLED'});
+  const throttled=await drainVerification({limits:CATCH_UP_LIMITS,requests:()=>1,log:quiet,runRound:async()=>{throw error;}});
+  assert.equal(throttled.stop,'firestore_throttled');assert.equal(throttled.countsComplete,false);
+  let time=0;
+  const timed=await drainVerification({limits:CATCH_UP_LIMITS,now:()=>time,requests:()=>1,log:quiet,
+    runRound:async()=>{time+=400000;return round();}});
+  assert.equal(timed.rounds,1);assert.equal(timed.stop,'time_reserve');
+});
+
+test('catch-up rejects scheduled or ambiguous invocation before database access',async()=>{
+  for(const options of [{catchUp:true},{catchUp:true,drain:true,check:true},
+    {catchUp:'true',drain:true},{catchUp:true,drain:true,env:{}},
+    {catchUp:true,drain:true,env:{GITHUB_EVENT_NAME:'schedule'}}]){
+    await assert.rejects(runVerifier({...options,connectDatabase:()=>assert.fail('Must not connect'),
+      validateEngine:()=>assert.fail('Must reject before loading engine')}),/Catch-Up/);
+  }
 });
 
 import {pendingSlot,VERIFIER_ENGINE_DIGEST,VERIFICATION_COLLECTION} from '../../workers/ranked/src/verification.js';
