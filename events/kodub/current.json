@@ -1,14 +1,14 @@
 {
-  "serverTime": "2026-10-04T22:52:01.868Z",
+  "serverTime": "2026-10-11T23:28:24.766Z",
   "current": {
-    "trackId": "56cf2ebe98b63c81c03abd5c501f4a3272f676c183d9e34e8b2c4b8a82140306",
-    "name": "JEALOUSY",
-    "author": "Mask",
-    "lastModified": "2026-09-25T00:28:31.000Z",
+    "trackId": "bcc7ad7cd3f7fc536dd6b2e966df5136df78b1567a823b9c67a9ff65dfb5b3ff",
+    "name": "Velvoire",
+    "author": "Jurre",
+    "lastModified": "2026-10-09T22:42:56.000Z",
     "environment": 0,
-    "endTime": "2026-10-11T20:00:00.000Z",
-    "trackUrl": "assets/84129c91045797a07a0b2c5bb5337ca946c80b63ac68287b32704a81c4bf77ba.track",
-    "thumbnailUrl": "assets/c7361d9c29931334bd29ac7d786afe708df0c5e1114b0ab146c7b9b391e32ccf.webp",
-    "coverUrl": "assets/1abe03620132d16878e392aa436ecffe0dd83d2a31bcd6a640b6922a066a5a98.webp"
+    "endTime": "2026-10-18T20:00:00.000Z",
+    "trackUrl": "assets/df61cff5a4982b0303bffb0a3a346bc26a2b031d7b1bfec1683acd2b26ceff65.track",
+    "thumbnailUrl": "assets/c85a1753fc8131837197e2586fc11b4bae15f6bdbeb1f810dfba4a172c430105.webp",
+    "coverUrl": "assets/9fc4918b7ab0eae72fc1f1b39b098b543863cafd145b820f70c614bc5ad7d735.webp"
   }
 }
