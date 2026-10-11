@@ -8,6 +8,7 @@ export function reviewRecord(auditId, job, verdict, evidence) {
     category:evidence?'input_similarity':'verification_mismatch',
     status:'open', detectedAt:Number.isFinite(verdict.checkedAt)?verdict.checkedAt:Date.now(), addedAt:Date.now(), verdict:verdict.status,
     reason:String(verdict.reason || '').slice(0,100),
+    ...(evidence?.trackName ? {trackName:String(evidence.trackName).slice(0,100)} : {}),
     ...(evidence?{evidence}:{}),
     notice:'Needs manual review. This is not a cheating verdict.'
   };

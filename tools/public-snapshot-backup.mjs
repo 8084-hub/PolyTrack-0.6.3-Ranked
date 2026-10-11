@@ -30,11 +30,11 @@ const overallEntryFields = ['userId', 'name', 'countryCode', 'carId', 'carColors
   'competitiveAverageEligibleTracks', 'podiumEligibleTracks', 'podiumRate', 'trackWins', 'pbCount', 'bestTracks',
   'strongestTrack', 'worstTrack', 'improvementTrack', 'weightedResults', 'opportunityTracks', 'medals', 'bestTrackId',
   'bestTrackRank', 'bestTrackField', 'rankTier', 'rankModel', 'timingVersion', 'badges', 'rank', 'movement',
-  'movementAt', 'rankSince', 'scoreDelta'];
+  'movementAt', 'rankSince', 'scoreDelta', 'identityUpdatedAt'];
 const trackEntryFields = ['id', 'uploadId', 'replayHash', 'trackId', 'accountId', 'userId', 'name', 'nickname', 'countryCode',
   'carId', 'carColors', 'carStyle', 'profileCosmetics', 'timeMs', 'frames', 'raceTimeFrames', 'rankModel', 'timingVersion',
   'pbAt', 'createdAt', 'accountCreatedAt', 'totalPlaytimeMs', 'pbCount', 'rank', 'position', 'fieldSize', 'weight',
-  'competition', 'integrityVerified', 'runVerified', 'verified', 'validationState', 'verificationStatus', 'verifiedState', 'unranked'];
+  'competition', 'integrityVerified', 'runVerified', 'verified', 'validationState', 'verificationStatus', 'verifiedState', 'unranked', 'identityUpdatedAt'];
 const finishFields = ['trackId', 'rank', 'fieldSize', 'weight', 'placementCost', 'contribution', 'improvementValue',
   'timeMs', 'pbAt', 'type', 'competition', 'timingVersion'];
 const cosmeticFields = ['version', 'theme', 'accent', 'finish', 'plate', 'edge', 'stage', 'stageTint', 'stripe',

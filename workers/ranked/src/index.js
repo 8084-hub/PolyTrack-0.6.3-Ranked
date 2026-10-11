@@ -755,7 +755,7 @@ export function computeTrackEntries(rows, trackId, env = {}, verdicts = {}) {
       carId: safeText(row.carId, 64) || null,
       carColors: safeText(row.carColors, 64) || null,
       carStyle: safeText(row.carStyle, 256),
-      profileCosmetics: sanitizeProfileCosmetics(row.profileCosmetics),
+      ...(Object.prototype.hasOwnProperty.call(row, 'profileCosmetics') ? {profileCosmetics: sanitizeProfileCosmetics(row.profileCosmetics)} : {}),
       ...(typeof row.groupCode === 'string' && (/^\d{6}$/.test(row.groupCode) || row.groupCode === '') ? {groupCode: row.groupCode} : {}),
       ...(Number(row.groupCodeUpdatedAt) > 0 ? {groupCodeUpdatedAt: Number(row.groupCodeUpdatedAt)} : {}),
       pbCount: Math.max(0, Number(row.pbCount || 0)),
@@ -789,6 +789,29 @@ function rankTrustedTrackEntries(rows, trackId) {
   }));
 }
 
+function preservePublishedIdentity(entry, previous) {
+  const profileUpdatedAt = Number(previous?.identityUpdatedAt || 0);
+  const pbUpdatedAt = Number(entry?.pbAt || entry?.createdAt || 0);
+  if (!Number.isSafeInteger(profileUpdatedAt) || profileUpdatedAt <= 0 || profileUpdatedAt <= pbUpdatedAt) {
+    return previous?.profileCosmetics != null && entry?.profileCosmetics == null
+      ? {...entry, profileCosmetics: previous.profileCosmetics}
+      : entry;
+  }
+  return {
+    ...entry,
+    name: previous.name ?? entry.name,
+    nickname: previous.nickname ?? entry.nickname,
+    countryCode: previous.countryCode ?? entry.countryCode,
+    carId: previous.carId ?? entry.carId,
+    carColors: previous.carColors ?? entry.carColors,
+    carStyle: previous.carStyle ?? entry.carStyle,
+    profileCosmetics: previous.profileCosmetics ?? entry.profileCosmetics,
+    identityUpdatedAt: previous.identityUpdatedAt,
+    ...(Object.prototype.hasOwnProperty.call(previous, 'groupCode') ? {groupCode: previous.groupCode} : {}),
+    ...(Object.prototype.hasOwnProperty.call(previous, 'groupCodeUpdatedAt') ? {groupCodeUpdatedAt: previous.groupCodeUpdatedAt} : {})
+  };
+}
+
 async function persistTrackSnapshot(env, trackId, entries, prior = null) {
   const signatureInput = entries.map((entry) => [
     entry.accountId,
@@ -804,6 +827,7 @@ async function persistTrackSnapshot(env, trackId, entries, prior = null) {
     entry.carColors || '',
     entry.carStyle || '',
     JSON.stringify(entry.profileCosmetics || {}),
+    Number(entry.identityUpdatedAt || 0),
     ...(Number(entry.groupCodeUpdatedAt) > 0 ? [entry.groupCode || '', entry.groupCodeUpdatedAt] : entry.groupCode ? [entry.groupCode] : [])
   ].join(':')).join('|');
   const signature = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signatureInput)).then((bytes) => base64Url(new Uint8Array(bytes)));
@@ -875,13 +899,33 @@ export function computeOverall(trackDocuments, priorEntries = [], betaTesterIds 
       const weight = EXTRA_TRACK_IDS.has(trackId) ? Math.min(extraCap, Number(entry.weight || 0)) : Number(entry.weight || 0);
       if (!rank || weight <= 0) continue;
       const cost = placementCost(rank, fieldSize);
-      const user = users.get(accountId) || { userId: accountId, finishes: [], officialCount: 0, communityCount: 0, permanentCount: 0, customCount: 0, extraCount: 0, pbCount: 0, totalPlaytimeMs: 0, accountCreatedAt: 0, latestPbAt: 0, betaTester: false, groupCode: '', groupCodeUpdatedAt: 0 };
-      Object.assign(user, {
-        name: entry.name || user.name || 'Racer', countryCode: entry.countryCode || user.countryCode || '', carId: entry.carId || user.carId || null,
-        carColors: entry.carColors || user.carColors || null, carStyle: entry.carStyle || user.carStyle || '', profileCosmetics: sanitizeProfileCosmetics(entry.profileCosmetics || user.profileCosmetics),
-        groupCode: user.groupCode,
-        groupCodeUpdatedAt: user.groupCodeUpdatedAt
-      });
+      let user = users.get(accountId);
+      if (!user) {
+        const previous = prior.get(accountId);
+        const previousIdentityAt = Number(previous?.identityUpdatedAt || 0);
+        const previousPbAt = Number(previous?.latestPbAt || 0);
+        const previousOverlayIsFresh = previousIdentityAt > previousPbAt;
+        user = {userId:accountId,finishes:[],officialCount:0,communityCount:0,permanentCount:0,customCount:0,extraCount:0,pbCount:0,totalPlaytimeMs:0,accountCreatedAt:0,latestPbAt:0,
+          identitySourceAt:previousOverlayIsFresh?previousIdentityAt:-1,identityFromProfile:previousOverlayIsFresh,identityUpdatedAt:previousOverlayIsFresh?previousIdentityAt:0,
+          ...(previousOverlayIsFresh?{name:previous.name,countryCode:previous.countryCode,carId:previous.carId,carColors:previous.carColors,carStyle:previous.carStyle}:{}),
+          profileCosmetics:previous?.profileCosmetics,cosmeticsSourceAt:Object.prototype.hasOwnProperty.call(previous||{},'profileCosmetics')?previousIdentityAt:-1,
+          betaTester:false,groupCode:'',groupCodeUpdatedAt:0};
+      }
+      const pbAt = Number(entry.pbAt || entry.createdAt || 0);
+      const profileAt = Number(entry.identityUpdatedAt || 0);
+      const profileIsFresh = profileAt > pbAt;
+      const identityAt = profileIsFresh ? profileAt : pbAt;
+      if (identityAt > user.identitySourceAt || identityAt === user.identitySourceAt && !profileIsFresh && user.identityFromProfile) {
+        Object.assign(user, {
+          name:entry.name||'Racer',countryCode:entry.countryCode||'',carId:entry.carId||null,
+          carColors:entry.carColors||null,carStyle:entry.carStyle||'',
+          identitySourceAt:identityAt,identityFromProfile:profileIsFresh,identityUpdatedAt:profileIsFresh?profileAt:0
+        });
+      }
+      if (Object.prototype.hasOwnProperty.call(entry,'profileCosmetics') && profileAt >= user.cosmeticsSourceAt) {
+        user.profileCosmetics = sanitizeProfileCosmetics(entry.profileCosmetics);
+        user.cosmeticsSourceAt = profileAt;
+      }
       const groupCodeUpdatedAt = Number(entry.groupCodeUpdatedAt || 0);
       if (typeof entry.groupCode === 'string' && (/^\d{6}$/.test(entry.groupCode) || entry.groupCode === '')
         && (groupCodeUpdatedAt > user.groupCodeUpdatedAt || groupCodeUpdatedAt === user.groupCodeUpdatedAt && groupCodeUpdatedAt > 0)) {
@@ -925,7 +969,7 @@ export function computeOverall(trackDocuments, priorEntries = [], betaTesterIds 
     const primaryBest = byPlace[0] || {};
     const podiums = medals.gold + medals.silver + medals.bronze;
     return {
-      userId: user.userId, name: safeText(user.name, 24), countryCode: safeText(user.countryCode, 8).toUpperCase(), carId: user.carId, carColors: user.carColors, carStyle: user.carStyle, profileCosmetics: sanitizeProfileCosmetics(user.profileCosmetics), ...(user.groupCode ? {groupCode: user.groupCode} : {}), ...(user.groupCodeUpdatedAt ? {groupCodeUpdatedAt: user.groupCodeUpdatedAt} : {}),
+      userId: user.userId, name: safeText(user.name, 24), countryCode: safeText(user.countryCode, 8).toUpperCase(), carId: user.carId, carColors: user.carColors, carStyle: user.carStyle, profileCosmetics: sanitizeProfileCosmetics(user.profileCosmetics), ...(user.identityUpdatedAt ? {identityUpdatedAt: user.identityUpdatedAt} : {}), ...(user.groupCode ? {groupCode: user.groupCode} : {}), ...(user.groupCodeUpdatedAt ? {groupCodeUpdatedAt: user.groupCodeUpdatedAt} : {}),
       accountCreatedAt: user.accountCreatedAt, latestPbAt: user.latestPbAt, totalPlaytimeMs: user.totalPlaytimeMs, score, raceCount: played, eligibleTrackCount: played,
       provisional: played < MIN_RANKED_TRACKS, totalTracks: OFFICIAL_IDS.size + COMMUNITY_IDS.size + LEGACY_COMMUNITY_IDS.size, officialCount: user.officialCount, communityCount: user.communityCount, customCount: user.customCount, ...(user.extraCount ? { extraCount: user.extraCount } : {}),
       weightedTracks: Number(allWeight.toFixed(3)), skillCost: Number(skillCost.toFixed(3)), coverageCost: Number(coverageCost.toFixed(3)), consistencyCost: Number(consistencyCost.toFixed(3)),
@@ -998,6 +1042,15 @@ export async function rebuildTrack(env, trackId, identityOverride = null) {
   }
   const verdicts=await prepareVerification(env,trackId,rows,true);
   const entries = computeTrackEntries(rows, trackId, env, verdicts);
+  const previousByAccount = new Map((prior?.data?.entries || []).map(entry => [safeText(entry.accountId || entry.userId,128),entry]));
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (identityOverride?.accountId === entry.accountId) {
+      entry.identityUpdatedAt = Number(identityOverride.identityUpdatedAt || 0);
+    } else {
+      entries[index] = preservePublishedIdentity(entry,previousByAccount.get(entry.accountId));
+    }
+  }
   return persistTrackSnapshot(env, trackId, entries, prior);
 }
 
@@ -1018,6 +1071,7 @@ export async function mergeCanonicalResultIntoTrack(env, trackId, canonicalResul
   }
   const verdicts=await prepareVerification(env,trackId,[canonicalResult]);
   normalized=computeTrackEntries([{...canonicalResult,integrityVerified}],trackId,env,verdicts)[0];
+  normalized = preservePublishedIdentity(normalized, existing);
   const entries = rankTrustedTrackEntries([
     ...prior.data.entries.filter((entry) => safeText(entry.accountId || entry.userId, 128) !== normalized.accountId),
     normalized
@@ -1053,10 +1107,11 @@ export async function mergeCanonicalResultsIntoTrack(env, trackId, resultIds, ca
     const canonicalTime = raceTime(row), canonicalUpload = Number(row.uploadId || row.id || 0);
     if (current && (Number(current.timeMs) < canonicalTime ||
       Number(current.timeMs) === canonicalTime && Number(current.uploadId || 0) > canonicalUpload)) continue;
-    const normalized = computeTrackEntries([{...row, integrityVerified: integrity[index],
+    let normalized = computeTrackEntries([{...row, integrityVerified: integrity[index],
       validationState: integrity[index] ? 'integrity' : 'pending'}], trackId, env,
       {[accountId]: slots[accountId]})[0];
     if (!normalized) return {fallback: true};
+    normalized = preservePublishedIdentity(normalized, current);
     if (position === undefined) {
       entries.push(normalized);
       positions.set(accountId, entries.length - 1);
@@ -1455,7 +1510,8 @@ async function notifyProfile(request, env, context, uid, body) {
     carId: safeText(profile.data.carId, 64) || null,
     carColors: safeText(profile.data.carColors, 64) || null,
     carStyle: safeText(profile.data.carStyle, 256),
-    profileCosmetics: sanitizeProfileCosmetics(profile.data.profileCosmetics)
+    profileCosmetics: sanitizeProfileCosmetics(profile.data.profileCosmetics),
+    identityUpdatedAt: Math.max(Number(profile.data.identityUpdatedAt) || 0, Number(profile.data.profileUpdatedAt) || 0)
   };
   const groupTag = await readDocument(env, COLLECTIONS.groupTags, `account_${accountId}`);
   identity.groupCode = groupTag?.data?.groupCode || '';
@@ -1575,10 +1631,11 @@ async function updateProfileCosmetics(request, env, context, uid, body) {
   const entry = (Array.isArray(overall?.data?.entries) ? overall.data.entries : []).find((row) => safeText(row.userId || row.accountId, 128) === accountId) || {};
   const betaTester = Boolean(issuedBeta) || badge?.data?.betaTester === true || entry?.badges?.betaTester === true;
   if (!profileCosmeticsUnlocked(cosmetics, entry, betaTester)) return json(origin, env, 403, { error: 'cosmetic_locked' });
-  await writeDocument(env, COLLECTIONS.profiles, accountId, { ...profile.data, profileCosmetics: cosmetics, updatedAt: Date.now() }, profile.updateTime);
+  const identityUpdatedAt = Date.now();
+  await writeDocument(env, COLLECTIONS.profiles, accountId, { ...profile.data, profileCosmetics: cosmetics, identityUpdatedAt, updatedAt: identityUpdatedAt }, profile.updateTime);
   if (overall?.data && Array.isArray(overall.data.entries)) {
     const entries = overall.data.entries.map((row) => safeText(row.userId || row.accountId, 128) === accountId ? { ...row, profileCosmetics: cosmetics } : row);
-    await writeOverallSnapshot(env, overall, { ...overall.data, entries, identityUpdatedAt: Date.now() });
+    await writeOverallSnapshot(env, overall, { ...overall.data, entries: entries.map(row => safeText(row.userId || row.accountId, 128) === accountId ? {...row, identityUpdatedAt} : row) });
   }
   return notifyProfile(request, env, context, uid, { accountId });
 }
@@ -1618,7 +1675,8 @@ export async function updateTrackIdentity(env, trackId, identity) {
     carStyle: identity.carStyle ?? existing.carStyle ?? '',
     profileCosmetics: cosmetics,
     groupCode: /^\d{6}$/.test(identity.groupCode || '') ? identity.groupCode : '',
-    groupCodeUpdatedAt: Number(identity.groupCodeUpdatedAt || 0)
+    groupCodeUpdatedAt: Number(identity.groupCodeUpdatedAt || 0),
+    identityUpdatedAt: Number(identity.identityUpdatedAt || 0)
   };
   return persistTrackSnapshot(env, trackId, entries, prior);
 }
@@ -1659,10 +1717,11 @@ async function processCosmeticJobs(env) {
       await writeDocument(env, COLLECTIONS.cosmeticJobs, job.id, { ...job.data, active: false, error: 'cosmetic_locked', completedAt: Date.now() },job.updateTime);
       continue;
     }
-    await writeDocument(env, COLLECTIONS.profiles, accountId, { ...profile.data, profileCosmetics: cosmetics, updatedAt: Math.max(Number(profile.data.updatedAt || 0), Number(job.data.updatedAt || 0)) }, profile.updateTime);
+    const identityUpdatedAt = Number(profile.data.identityUpdatedAt || profile.data.profileUpdatedAt || job.data.updatedAt || Date.now());
+    await writeDocument(env, COLLECTIONS.profiles, accountId, { ...profile.data, profileCosmetics: cosmetics, identityUpdatedAt, updatedAt: Math.max(Number(profile.data.updatedAt || 0), identityUpdatedAt) }, profile.updateTime);
     if (overall?.data && Array.isArray(overall.data.entries)) {
-      const entries = overall.data.entries.map((row) => safeText(row.userId || row.accountId, 128) === accountId ? { ...row, profileCosmetics: cosmetics } : row);
-      await writeOverallSnapshot(env, overall, { ...overall.data, entries, identityUpdatedAt: Date.now() });
+      const entries = overall.data.entries.map((row) => safeText(row.userId || row.accountId, 128) === accountId ? { ...row, profileCosmetics: cosmetics, identityUpdatedAt } : row);
+      await writeOverallSnapshot(env, overall, { ...overall.data, entries });
     }
     const deferred = [];
     const origin = [...allowedOrigins(env)][0] || '';
@@ -1911,7 +1970,32 @@ async function unrankedExtraBoard(request, env, origin, uid, body) {
   return json(origin, env, 503, {error:'service_unavailable'});
 }
 
+function requestRouteCategory(request) {
+  const path = new URL(request.url).pathname;
+  if (path === '/v1/status') return 'public_status';
+  if (path === '/v1/snapshot/overall') return 'snapshot_overall';
+  if (path === '/v1/snapshot/track') return 'snapshot_track';
+  if (path === '/v1/pb/notify') return 'pb_notify';
+  if (path.startsWith('/v1/profile/')) return 'profile';
+  if (path.startsWith('/v1/events/')) return 'events';
+  if (path.startsWith('/v1/kodub-weekly')) return 'kodub_weekly';
+  if (path.startsWith('/v1/extra-tracks/')) return 'extra_tracks';
+  if (path.startsWith('/v1/admin/')) return 'admin';
+  return 'other';
+}
+
 export async function handleRequest(request, env, context = {}) {
+  const audit = {httpRequests:0,failedRequests:0,documentReadEstimate:0,collections:{}};
+  const auditedEnv = {...env,__FIRESTORE_READ_AUDIT:audit,__FIRESTORE_ROOT_ENV:env};
+  const routeCategory = requestRouteCategory(request);
+  try {
+    return await handleRequestInternal(request,auditedEnv,context);
+  } finally {
+    console.log('Ranked request Firestore reads',JSON.stringify({routeCategory,measurementScope:'request_synchronous',...audit,billingEstimateOnly:true}));
+  }
+}
+
+async function handleRequestInternal(request, env, context = {}) {
   const origin = request.headers.get('Origin') || '';
   if (!allowedOrigins(env).has(origin)) return json(origin, env, 403, { error: 'origin_not_allowed' });
   const path = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
@@ -2066,7 +2150,7 @@ export default {
         }
         catch (error) { console.error('Scheduled task failed', task.name, String(error?.message || error)); }
       }
-      await rebuildOverall(env, false);
+      if (!maintenance) await rebuildOverall(env, false);
     })().catch((error) => console.error('Scheduled Ranked work failed', String(error?.message || error)))
       .finally(()=>console.log('Ranked scheduled Firestore reads',JSON.stringify({cron:_event.cron,...readAudit,billingEstimateOnly:true}))));
   }

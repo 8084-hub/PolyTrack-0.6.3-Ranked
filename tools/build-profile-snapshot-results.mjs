@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {publicDisplayName} from './public-display-name.mjs';
 
 const ID=/^[a-f0-9]{64}$/;
 const fields=['trackId','rank','position','fieldSize','weight','competition','timeMs','frames','raceTimeFrames','timingVersion','pbAt','createdAt','updatedAt','runVerified','verified','verifiedState','integrityVerified','uploadId','replayHash'];
@@ -13,6 +14,20 @@ export async function buildProfileSnapshotResults(directory){
   const manifest=await optional(path.join(directory,'manifest.json'));
   const summary=await optional(path.join(directory,'public-export-summary.json'));
   const published=new Map((overall?.entries||[]).map(row=>[row.userId||row.accountId,row]));
+  const identities=new Map();
+  const identityFields=['name','nickname','countryCode','carStyle','carId','carColors','profileCosmetics'];
+  const cosmeticFields=['version','theme','accent','finish','plate','edge','stage','stageTint','stripe','stageEffect','emblem','emblem2','emblem3','emblemBackdrop','nameFont','nameSize','nameWeight','nameColor','baseSecondary','title','badge','favoriteTrackId','overridePodium'];
+  function rememberIdentity(accountId,row,updatedAt){
+    if(!ID.test(accountId||''))return;
+    const at=Math.max(0,Number(row?.identityUpdatedAt)||Number(row?.profileUpdatedAt)||Number(row?.updatedAt)||Number(updatedAt)||0);
+    const previous=identities.get(accountId)||{updatedAt:0};
+    const incoming=Object.fromEntries(identityFields.filter(key=>row?.[key]!==undefined).map(key=>[key,
+      ['name','nickname'].includes(key)?publicDisplayName(row[key]):key==='profileCosmetics'?
+        Object.fromEntries(cosmeticFields.filter(field=>['string','number','boolean'].includes(typeof row[key]?.[field])).map(field=>[field,row[key][field]])):row[key]]));
+    identities.set(accountId,at>=previous.updatedAt?{...previous,...incoming,updatedAt:at}:{...incoming,...previous});
+  }
+  // A board rebuild time is not a profile edit time.
+  for(const [id,row]of published)rememberIdentity(id,row,row.profileUpdatedAt||row.identityUpdatedAt||row.latestPbAt);
   const ensure=id=>{if(!ID.test(id||''))return null;if(!racers.has(id))racers.set(id,new Map());return racers.get(id);};
   for(const id of published.keys())ensure(id);
   for(const file of await names(path.join(directory,'profiles')))if(ID.test(file.replace(/\.json$/,'')))ensure(file.replace(/\.json$/,''));
@@ -23,6 +38,7 @@ export async function buildProfileSnapshotResults(directory){
     if(board?.trackId!==trackId||!Array.isArray(board.entries))throw Error('Invalid captured track board: '+trackId);
     boards++;
     for(const row of board.entries){
+      rememberIdentity(row.accountId||row.userId,row,Number(row.pbAt)||Number(row.createdAt)||0);
       const results=ensure(row.accountId||row.userId);if(!results||!(Number(row.timeMs)>0))continue;
       const finish=Object.fromEntries(fields.filter(key=>row[key]!==undefined).map(key=>[key,row[key]]));
       finish.trackId=trackId;finish.fieldSize=Math.max(Number(row.rank)||0,Number(row.fieldSize)||board.entries.length);
@@ -55,6 +71,7 @@ export async function buildProfileSnapshotResults(directory){
     const publicStatus=published.get(accountId);
     const publicProfile=await optional(path.join(directory,'profiles',accountId+'.json'))||
       (publicStatus?{accountId}:null);
+    if(publicProfile)rememberIdentity(accountId,publicProfile,0);
     if(publicProfile&&publicStatus)for(const key of ['profileCosmetics','cosmeticUnlocks','serverAchievements','badges','rankTier','rankSince'])
       if(!Object.hasOwn(publicProfile,key)&&Object.hasOwn(publicStatus,key))publicProfile[key]=publicStatus[key];
     const value={accountId,updatedAt:Math.max(Number(overall?.updatedAt)||0,...finishes.map(row=>Number(row.cachedAt)||0)),
@@ -68,5 +85,8 @@ export async function buildProfileSnapshotResults(directory){
   const cosmetics=JSON.stringify({updatedAt:cosmeticUpdatedAt,entries:cosmeticEntries})+'\n';
   if(Buffer.byteLength(cosmetics)>2*1024*1024)throw Error('Snapshot cosmetic directory exceeds client limit');
   await fs.writeFile(path.join(directory,'cosmetic-directory.json'),cosmetics);
+  const racerDirectory=JSON.stringify({updatedAt:Math.max(0,...[...identities.values()].map(row=>row.updatedAt)),entries:Object.fromEntries(identities)})+'\n';
+  if(Buffer.byteLength(racerDirectory)>2*1024*1024)throw Error('Snapshot racer directory exceeds client limit');
+  await fs.writeFile(path.join(directory,'racer-directory.json'),racerDirectory);
   return {profiles:racers.size,results:resultCount,boards};
 }

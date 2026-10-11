@@ -3,7 +3,7 @@ import {sameHashMap} from './engine-pin.cjs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {connect, decode} from './firestore.mjs';
-import {QUEUE_CANDIDATE_LIMIT, prioritizeQueueDocuments, selectJobs, publishResults, verifiedTrackCounts} from './runner.mjs';
+import {QUEUE_CANDIDATE_LIMIT, highestPriorityTrack, prioritizeQueueDocuments, selectJobs, publishResults, verifiedTrackCounts} from './runner.mjs';
 import {budgetDatabase, drainVerification, DRAIN_LIMITS, CATCH_UP_LIMITS} from './throughput.mjs';
 import {loadWeeklyTrustedTrack} from './weekly-track.mjs';
 import {createSimilarityReviewer} from './similarity.mjs';
@@ -161,14 +161,24 @@ export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNorma
   if (!Number.isInteger(events.checked) || events.checked<0 || events.checked>eventLimit) throw Error('Invalid event native count');
   let selectedJobs = [], canonicalAttempts = 0, selectionConflicts = 0;
   let normalQueueReturnedDocuments = 0;
-  const normalCapacity = Math.min(borrowUnusedEvents ? TOTAL_JOB_LIMIT - events.checked : NORMAL_JOB_LIMIT,
+  let normalCapacity = Math.min(borrowUnusedEvents ? TOTAL_JOB_LIMIT - events.checked : NORMAL_JOB_LIMIT,
     db.remainingRequests ? Math.floor(db.remainingRequests() / 18) : TOTAL_JOB_LIMIT);
   if (events.checked < TOTAL_JOB_LIMIT && normalCapacity > 0) {
-    const candidateLimit = Math.min(QUEUE_CANDIDATE_LIMIT, normalCapacity);
-    const dueDocs = async collection => {
-      const query = await db.call(':runQuery', {structuredQuery: {from: [{collectionId: collection}], where: {fieldFilter: {field: {fieldPath: 'notBefore'}, op: 'LESS_THAN_OR_EQUAL', value: {integerValue: String(now)}}}, orderBy: [{field: {fieldPath: 'notBefore'}, direction: 'ASCENDING'}, {field: {fieldPath: '__name__'}, direction: 'ASCENDING'}], limit: candidateLimit}});
+    const priorityCache = new Map();
+    const baseCandidateLimit=Math.min(QUEUE_CANDIDATE_LIMIT,normalCapacity);
+    let targetTrack=null;
+    if(prioritizeNormal===prioritizeQueueDocuments && baseCandidateLimit>=2 &&
+      (!db.remainingRequests || db.remainingRequests()>=54)) {
+      targetTrack=await highestPriorityTrack(db,priorityCache);
+      if(targetTrack && db.remainingRequests) normalCapacity=Math.min(normalCapacity,Math.floor((db.remainingRequests()-1)/18));
+      if(normalCapacity<2) targetTrack=null;
+    }
+    const candidateLimit=Math.min(QUEUE_CANDIDATE_LIMIT,normalCapacity);
+    const dueDocs = async (collection, targetedTrackId) => {
+      const broadLimit=Math.max(1,candidateLimit-(targetedTrackId?1:0));
+      const query = await db.call(':runQuery', {structuredQuery: {from: [{collectionId: collection}], where: {fieldFilter: {field: {fieldPath: 'notBefore'}, op: 'LESS_THAN_OR_EQUAL', value: {integerValue: String(now)}}}, orderBy: [{field: {fieldPath: 'notBefore'}, direction: 'ASCENDING'}, {field: {fieldPath: '__name__'}, direction: 'ASCENDING'}], limit: broadLimit}});
       if (!Array.isArray(query)) throw Error('Unexpected verification queue response');
-      return query.filter(x => x.document).map(x => {
+      const documents=query.filter(x => x.document).map(x => {
         const document = {...x.document, queueCollection: collection, data: decode({mapValue: {fields: x.document.fields || {}}})};
         const registered = EXTRA_TRACK_IDS.has(document.data.trackId);
         if (registered !== (collection === EXTRA_VERIFICATION_COLLECTION)) {
@@ -176,12 +186,21 @@ export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNorma
         }
         return document;
       });
+      if(targetedTrackId && !documents.some(document=>document.data.trackId===targetedTrackId)) {
+        const target=await db.get(collection,targetedTrackId);
+        if(target?.data?.trackId===targetedTrackId && Number(target.data.notBefore||0)<=now) {
+          const registered=EXTRA_TRACK_IDS.has(targetedTrackId);
+          if(registered!==(collection===EXTRA_VERIFICATION_COLLECTION)) throw Error('EXTRA_QUEUE_BACKFILL_REQUIRED: '+collection+'/'+targetedTrackId);
+          documents.push({...target,queueCollection:collection});
+        }
+      }
+      return documents;
     };
-    const coreDocs = await dueDocs(VERIFICATION_COLLECTION);
-    const extraDocs = await dueDocs(EXTRA_VERIFICATION_COLLECTION);
+    const priorityCollection=targetTrack?(EXTRA_TRACK_IDS.has(targetTrack)?EXTRA_VERIFICATION_COLLECTION:VERIFICATION_COLLECTION):null;
+    const coreDocs = await dueDocs(VERIFICATION_COLLECTION,priorityCollection===VERIFICATION_COLLECTION?targetTrack:null);
+    const extraDocs = await dueDocs(EXTRA_VERIFICATION_COLLECTION,priorityCollection===EXTRA_VERIFICATION_COLLECTION?targetTrack:null);
     normalQueueReturnedDocuments = coreDocs.length + extraDocs.length;
     const coreLimit = normalCapacity - Number(extraDocs.length > 0);
-    const priorityCache = new Map();
     const core = await selectNormal(db, await prioritizeNormal(db, coreDocs, now, priorityCache), now, {jobLimit: coreLimit, lookupLimit: coreLimit});
     // Extra runs have the last reservation, but can use every slot left idle by core tracks.
     const extraLimit = Math.max(0, Math.min(normalCapacity - core.jobs.length, normalCapacity - core.canonicalAttempts));

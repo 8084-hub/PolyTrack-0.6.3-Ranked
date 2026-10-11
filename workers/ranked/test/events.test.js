@@ -35,6 +35,18 @@ test('disabled periods do not wake verifier and malformed query fails closed', a
   assert.equal(calls.some(path => path.includes(C.queues)), false);
   await assert.rejects(inboxPage({ request: async () => null }), /Unexpected/);
 });
+
+test('event maintenance archives the oldest period after settlement without a manual route', async () => {
+  const at=p.endsAt+p.graceMs;
+  const periods=[{...p,archived:false},{...eventPeriod({...inputPeriod,id:'day0',startsAt:1000,endsAt:2000}),archived:false}];
+  const archived=[];
+  const runtime={now:()=>at,request:async route=>route===`/${C.catalog}/main`
+    ?{fields:eventEncode({periods}).mapValue.fields}:null,
+  service:{archivePeriod:async id=>{archived.push(id);return {archived:true,duplicate:false};}}};
+  assert.deepEqual(await cleanupEvents(runtime),{archived:true,duplicate:false});
+  assert.deepEqual(archived,['day0'],'one oldest closing period is archived per bounded maintenance pass');
+});
+
 test('UTC daily uses community and weekly uses official without overlap', () => {
   const at = Date.UTC(2026, 8, 13, 23, 59);
   const official = ['a', 'b', 'c'], all = ['z', 'x', 'a', 'b', 'c'];

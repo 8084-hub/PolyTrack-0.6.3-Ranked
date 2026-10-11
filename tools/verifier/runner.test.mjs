@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {publishResults, prioritizeQueueDocuments, verifiedTrackCounts} from './runner.mjs';
+import {publishResults, prioritizeQueueDocuments, verifiedControlReference, verifiedTrackCounts} from './runner.mjs';
 import {VERIFICATION_COLLECTION, VERIFIER_ENGINE_DIGEST, VERIFIER_VERSION, verificationKey} from '../../workers/ranked/src/verification.js';
 
 const TRACK='5803f9e963625804e3de3246d043dc7dde847aa32e991f7f7326b0453f1fa038';
@@ -8,13 +8,27 @@ const row={accountId:'racer',trackId:TRACK,timeMs:20000,raceTimeFrames:20000,fra
 const job={...row,resultId:`racer_${TRACK}`,queueKey:verificationKey(row),queueCollection:VERIFICATION_COLLECTION};
 const verified={resultId:job.resultId,status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,reason:''};
 
+test('verified control references require current engine and exact key bindings',()=>{
+ const key=JSON.stringify([VERIFIER_VERSION,VERIFIER_ENGINE_DIGEST,'other',TRACK,20000,1,7,'a'.repeat(64)]);
+ const slot={accountId:'other',resultId:`other_${TRACK}`,trackId:TRACK,status:'verified',key,
+  engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,
+  controlProof:{version:1,engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,key,
+   accountId:'other',trackId:TRACK,timeMs:20000,replayHash:'a'.repeat(64),signature:'b'.repeat(64),transitions:20,informative:true}};
+ assert.equal(verifiedControlReference(slot,TRACK).signature,'b'.repeat(64));
+ assert.equal(verifiedControlReference({...slot,engineDigest:'stale'},TRACK),null);
+ assert.equal(verifiedControlReference({...slot,controlProof:{...slot.controlProof,informative:false}},TRACK),null);
+ assert.equal(verifiedControlReference({...slot,controlProof:{...slot.controlProof,key:'mismatch'}},TRACK),null);
+});
+
 test('missing leaderboard metadata uses neutral track impact and names verified tracks',async()=>{
  const docs=['unknown-track', 'known-track'].map((trackId,index)=>({data:{trackId,notBefore:index}}));
  const prioritized=await prioritizeQueueDocuments({get:async()=>({data:{trackSummaries:[{trackId:'known-track',weight:0}]}})},docs,100);
  assert.equal(prioritized.find(doc=>doc.data.trackId==='unknown-track').priorityWeight,1);
  assert.equal(prioritized.find(doc=>doc.data.trackId==='known-track').priorityWeight,0);
- const named=verifiedTrackCounts({[TRACK]:6,'unknown-track':2});
+ const named=verifiedTrackCounts({[TRACK]:6,'unknown-track':2,'8afde3be59f8ec440e9969675babe4b27304fe6f26e97c6e8ab7b06f62616be4':3,'05c240fcc165ececc98db82a2218afee47e6c14947fc1e0df591c4c6d110493f':4});
  assert.deepEqual(named.find(track=>track.trackId===TRACK),{trackId:TRACK,trackName:'Summer 1',count:6});
+ assert.deepEqual(named.find(track=>track.trackId==='8afde3be59f8ec440e9969675babe4b27304fe6f26e97c6e8ab7b06f62616be4'),{trackId:'8afde3be59f8ec440e9969675babe4b27304fe6f26e97c6e8ab7b06f62616be4',trackName:'Sylvan Speedway',count:3});
+ assert.deepEqual(named.find(track=>track.trackId==='05c240fcc165ececc98db82a2218afee47e6c14947fc1e0df591c4c6d110493f'),{trackId:'05c240fcc165ececc98db82a2218afee47e6c14947fc1e0df591c4c6d110493f',trackName:'A10 Acrobatic',count:4});
  assert.deepEqual(named.find(track=>track.trackId==='unknown-track'),{trackId:'unknown-track',trackName:'unknown-track',count:2});
 });
 

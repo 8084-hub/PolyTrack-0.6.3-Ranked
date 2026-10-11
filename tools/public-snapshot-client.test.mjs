@@ -3,6 +3,15 @@ import assert from 'node:assert/strict';
 import {createPublicSnapshotReader} from './public-snapshot-client.mjs';
 import {encodeSnapshot} from './snapshot-package.mjs';
 import {createHash} from 'node:crypto';
+test('packed public racer directory is cached and rejects private fields',async()=>{
+  const id='a'.repeat(64);
+  const fixture=await packedFixture({updatedAt:10,entries:{[id]:{updatedAt:10,name:'Racer',carColors:'fff'}}},'racer-directory.json');
+  assert.equal((await fixture.read('racer-directory')).entries[id].name,'Racer');
+  assert.equal((await fixture.read('racer-directory'))._dataSource,'cached');
+  assert.equal(fixture.calls(),2);
+  const invalid=await packedFixture({updatedAt:10,entries:{[id]:{updatedAt:10,ownerUid:'private'}}},'racer-directory.json');
+  assert.equal(await invalid.read('racer-directory'),null);
+});
 
 async function packedFixture(value,logical='overall.json',change=()=>{}){
   const bytes=await encodeSnapshot(value),hash=createHash('sha256').update(bytes).digest('hex');

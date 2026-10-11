@@ -13,6 +13,9 @@ export const eventReceiptRetry = code => ['event_queue_capacity', 'event_replay_
 export async function cleanupEvents(runtime) {
   const doc = await runtime.request('/' + C.catalog + '/main');
   const periods = doc ? decode(doc).periods || [] : [], at = runtime.now();
+  const closing = periods.filter(p => !p.archived && at >= p.endsAt + p.graceMs)
+    .sort((a, b) => a.endsAt - b.endsAt || a.id.localeCompare(b.id))[0];
+  if (closing) return runtime.service.archivePeriod(closing.id);
   const target = periods.find(p => p.archived && (!p.cleaned ? at >= p.endsAt + p.graceMs + 7 * 86400000 :
     !p.extrasCleaned || at >= p.endsAt + L.retentionMs));
   if (target?.cleaned && !target.extrasCleaned) {

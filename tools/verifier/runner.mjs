@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import {similarityEvidence} from './similarity.mjs';
+import {similarityEvidence,verifiedControlProof} from './similarity.mjs';
 import {reviewInboxWrite} from './review-inbox.mjs';
 import {queueState, reconciledSlot, completedSlot} from './queue.mjs';
-import {VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION, verificationCollectionForTrack, verificationKey, legacyTimingFrames} from '../../workers/ranked/src/verification.js';
+import {VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION, VERIFIER_ENGINE_DIGEST, VERIFIER_VERSION, verificationCollectionForTrack, verificationKey, legacyTimingFrames} from '../../workers/ranked/src/verification.js';
 
 export const QUEUE_CANDIDATE_LIMIT = 8;
 export const TRACK_AGING_MS = 3600000;
@@ -12,13 +12,60 @@ const NORMAL_SELECTION_LIMIT = 16;
 const PER_TRACK_SELECTION_LIMIT = 8;
 let trackNames;
 
+export function verifiedControlReference(slot, trackId) {
+  const proof=slot?.controlProof;
+  let key;
+  try { key=JSON.parse(slot?.key); } catch { return null; }
+  if(slot.status!=='verified'||slot.trackId!==trackId||slot.engineDigest!==VERIFIER_ENGINE_DIGEST||
+    slot.verifierVersion!==VERIFIER_VERSION||!proof||proof.version!==1||proof.engineDigest!==VERIFIER_ENGINE_DIGEST||
+    proof.verifierVersion!==VERIFIER_VERSION||proof.key!==slot.key||proof.accountId!==slot.accountId||
+    proof.trackId!==trackId||!Number.isSafeInteger(proof.timeMs)||proof.timeMs<=0||
+    !/^[a-f0-9]{64}$/.test(proof.replayHash||'')||!/^[a-f0-9]{64}$/.test(proof.signature||'')||
+    !Number.isSafeInteger(proof.transitions)||proof.transitions<20||proof.informative!==true||
+    !Array.isArray(key)||key.length!==8||key[0]!==VERIFIER_VERSION||key[1]!==VERIFIER_ENGINE_DIGEST||
+    key[2]!==slot.accountId||key[3]!==trackId||key[4]!==proof.timeMs||key[7]!==proof.replayHash||
+    slot.resultId!==`${slot.accountId}_${trackId}`) return null;
+  return {accountId:proof.accountId,trackId,timeMs:proof.timeMs,replayHash:proof.replayHash,
+    signature:proof.signature,transitions:proof.transitions,informative:true};
+}
+
+async function overallPriority(db, cache) {
+  try {
+    const key=OVERALL_COLLECTION+'/main';
+    let pending;
+    if(cache instanceof Map) {
+      if(!cache.has(key)) cache.set(key,db.get(OVERALL_COLLECTION,'main').catch(()=>null));
+      pending=cache.get(key);
+    } else pending=db.get(OVERALL_COLLECTION,'main');
+    const overall=await pending;
+    return Array.isArray(overall?.data?.trackSummaries)?overall.data.trackSummaries:[];
+  } catch { return []; }
+}
+
+export async function highestPriorityTrack(db, cache) {
+  const rows=await overallPriority(db,cache);
+  return rows.map(row=>({trackId:String(row?.trackId||''),weight:Number(row?.weight)}))
+    .filter(row=>/^[A-Za-z0-9_-]{1,80}$/.test(row.trackId)&&Number.isFinite(row.weight)&&row.weight>=0)
+    .sort((a,b)=>b.weight-a.weight||a.trackId.localeCompare(b.trackId))[0]?.trackId||null;
+}
+
 export function verifiedTrackCounts(byTrack = {}) {
   if (!trackNames) {
+    trackNames = new Map();
+    for (const file of ['../../tracks/catalog.json', '../../extra-tracks/catalog.json']) {
+      try {
+        const catalog = JSON.parse(fs.readFileSync(new URL(file, import.meta.url), 'utf8'));
+        for (const track of Array.isArray(catalog)?catalog:catalog.tracks||[]) {
+          if (track.id) trackNames.set(track.id, track.name);
+          if (track.trackId) trackNames.set(track.trackId, track.name);
+        }
+      } catch { /* Geometry names remain available if a catalog cannot be read. */ }
+    }
     try {
       const geometry = JSON.parse(fs.readFileSync(new URL('./track-geometry.json', import.meta.url), 'utf8'));
-      trackNames = new Map((geometry.tracks || []).map(track => [String(track.id), String(track.name || '').split('/').at(-1).replace(/\.track$/i, '')
-        .replace(/([a-z])([0-9])/gi, '$1 $2').replace(/[-_]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())]));
-    } catch { trackNames = new Map(); }
+      for (const track of geometry.tracks || []) if (!trackNames.has(String(track.id))) trackNames.set(String(track.id), String(track.name || '').split('/').at(-1).replace(/\.track$/i, '')
+        .replace(/([a-z])([0-9])/gi, '$1 $2').replace(/[-_]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase()));
+    } catch { /* Unknown IDs fall back to their raw ID. */ }
   }
   return Object.entries(byTrack).filter(([, count]) => Number.isSafeInteger(count) && count > 0)
     .sort(([a], [b]) => (trackNames.get(a) || a).localeCompare(trackNames.get(b) || b) || a.localeCompare(b))
@@ -29,17 +76,10 @@ export async function prioritizeQueueDocuments(db, docs, now = Date.now(), cache
   if (!Array.isArray(docs) || docs.length < 2) return Array.isArray(docs) ? docs : [];
   const trackIds = docs.map(doc => String(doc.data?.trackId || ''));
   if (trackIds.some(trackId => !/^[A-Za-z0-9_-]{1,80}$/.test(trackId))) return docs;
-  let overall;
-  try {
-    if (cache instanceof Map) {
-      const key = OVERALL_COLLECTION + '/main';
-      if (!cache.has(key)) cache.set(key, db.get(OVERALL_COLLECTION, 'main').catch(() => null));
-      overall = await cache.get(key);
-    } else overall = await db.get(OVERALL_COLLECTION, 'main');
-  } catch { return docs; }
-  if (!overall?.data || !Array.isArray(overall.data.trackSummaries)) return docs;
+  const summaries=await overallPriority(db,cache);
+  if (!summaries.length) return docs;
   const weights = new Map(), records = new Map();
-  for (const row of overall.data.trackSummaries) {
+  for (const row of summaries) {
     const trackId = String(row?.trackId || ''), weight = Number(row?.weight);
     if (/^[A-Za-z0-9_-]{1,80}$/.test(trackId) && Number.isFinite(weight) && weight >= 0) {weights.set(trackId, weight);records.set(trackId, Number(row.recordMs || row.leader?.timeMs));}
   }
@@ -84,7 +124,7 @@ export function isConflict(error) {
 export async function selectJobs(db, docs, now = Date.now(), {jobLimit = NORMAL_SELECTION_LIMIT, lookupLimit = NORMAL_SELECTION_LIMIT, perTrackLimit = PER_TRACK_SELECTION_LIMIT} = {}) {
   let jobs = [];
   let canonicalAttempts = 0, selectionConflicts = 0;
-  const contexts=docs.map((source,index)=>{const slots={...source.data.slots},due=dueSlots(slots,now);return {doc:{...source,priorityFastestMs:Math.min(...due.map(schedulingTime))},index,slots,due,changed:false,attempts:0};});
+  const contexts=docs.map((source,index)=>{const slots={...source.data.slots},due=dueSlots(slots,now),controlReferences=Object.values(slots).map(slot=>verifiedControlReference(slot,source.data.trackId)).filter(Boolean);return {doc:{...source,priorityFastestMs:Math.min(...due.map(schedulingTime))},index,slots,due,controlReferences,changed:false,attempts:0};});
   const candidates=contexts.flatMap(context=>context.due.map(slot=>({context,slot,age:queuedAt(slot,context.doc,now),score:impact(slot,context.doc)})));
   const priority=[...candidates].sort((a,b)=>b.score-a.score||schedulingTime(a.slot)-schedulingTime(b.slot)||a.age-b.age||a.context.index-b.context.index||String(a.slot.accountId).localeCompare(String(b.slot.accountId)));
   const overdue=candidates.filter(c=>now-c.age>=TRACK_AGING_MS).sort((a,b)=>a.age-b.age||b.score-a.score);
@@ -102,7 +142,9 @@ export async function selectJobs(db, docs, now = Date.now(), {jobLimit = NORMAL_
     if(updated!==slot){context.slots[slot.accountId]=updated;context.changed=true;}
     if(!canonical||updated.reason==='canonical_missing')continue;
     const frames=legacyTimingFrames(canonical.data);
-    jobs.push({...canonical.data,resultId:slot.resultId,queueKey:updated.key,queueCollection,timeMs:frames??canonical.data.timeMs,
+    const timeMs=frames??canonical.data.timeMs;
+    const verifiedControlReferences=context.controlReferences.filter(reference=>reference.accountId!==slot.accountId&&reference.timeMs===timeMs);
+    jobs.push({...canonical.data,resultId:slot.resultId,queueKey:updated.key,queueCollection,timeMs,verifiedControlReferences,
       correctionCandidate:frames===null?null:{frames,originalTimeMs:canonical.data.timeMs}});
   }
   for(const context of contexts){
@@ -149,9 +191,17 @@ export async function publishResults(db, jobs, results) {
       const publishedKey = corrected ? verificationKey(corrected) : job.queueKey;
       const state = stateCacheLoaded ? stateCache : await db.get('0.6.2_s1_worker_jobs', 'canonical_reconcile_v2');
       if (!stateCacheLoaded) { stateCache = state; stateCacheLoaded = true; }
-      const {nativeReason: previousNativeReason, ...priorSlot} = queue.data.slots[job.accountId];
-      const slots = {...queue.data.slots, [job.accountId]: {...completedSlot(
-        {...priorSlot, key: publishedKey}, publication),
+      const {nativeReason: previousNativeReason,controlProof:previousControlProof,...priorSlot} = queue.data.slots[job.accountId];
+      const completed=completedSlot({...priorSlot, key: publishedKey}, publication);
+      const nativeControlProof=verifiedControlProof(result);
+      const controlProof=publication.status==='verified'&&result.status==='verified'&&nativeControlProof&&
+        result.engineDigest===VERIFIER_ENGINE_DIGEST&&result.verifierVersion===VERIFIER_VERSION&&
+        result.trackId===job.trackId&&result.timeMs===job.timeMs&&result.replayHash===job.replayHash ? {
+          ...nativeControlProof,accountId:job.accountId,trackId:job.trackId,timeMs:correct?frames:job.timeMs,
+          replayHash:current.data.replayHash,key:publishedKey,engineDigest:result.engineDigest,verifierVersion:result.verifierVersion,
+        } : null;
+      const slots = {...queue.data.slots, [job.accountId]: {...completed,
+        ...(controlProof?{controlProof}:{}),
         ...(unconfirmed ? {nativeReason: String(result.reason || '').slice(0, 100)} : {})}};
       let pendingResultIds = Object.fromEntries(Object.entries(state?.data?.pendingResultIds || {})
         .filter(([trackId, ids]) => /^[A-Za-z0-9_-]{1,80}$/.test(trackId) && Array.isArray(ids) && ids.length)
@@ -194,7 +244,7 @@ export async function publishResults(db, jobs, results) {
         db.write('0.6.2_s1_worker_jobs', 'canonical_reconcile_v2', nextStateData, state),
         db.write('0.6.2_s1_verification_audit', auditId, {resultId: job.resultId,
           accountId: job.accountId, trackId: job.trackId, key: publishedKey, ...slots[job.accountId],
-          ...(similarityEvidence(result) && publication.status==='verified' ? {needsReview:true, reviewEvidence:similarityEvidence(result)} : {}),
+          ...(similarityEvidence(result) ? {needsReview:true, reviewEvidence:similarityEvidence(result)} : {}),
           ...(correct ? {correctedFromKey: job.queueKey, correctedFromTimeMs: current.data.timeMs, correctedTimeMs: frames} : {})}, audit)
       ];
       if (correct) {
@@ -220,7 +270,7 @@ export async function publishResults(db, jobs, results) {
         totals[publication.status]++;
         if (publication.status === 'verified') totals.verifiedByTrack[job.trackId] = (totals.verifiedByTrack[job.trackId] || 0) + 1;
         if(reviewWrite) totals.reviewInboxAdded++;
-        if(publication.status==='verified' && similarityEvidence(result)) totals.reviewFlagged++;
+        if(similarityEvidence(result)) totals.reviewFlagged++;
         const reason = String(publication.reason || '').slice(0, 100);
         totals.reasons[reason] = (totals.reasons[reason] || 0) + 1;
         if (correct) totals.corrected++;

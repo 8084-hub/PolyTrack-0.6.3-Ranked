@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {runRound} from './run.mjs';
+import {prioritizeQueueDocuments} from './runner.mjs';
 import {VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION} from '../../workers/ranked/src/verification.js';
 import {EXTRA_TRACK_IDS} from '../../workers/ranked/src/extra-track-ids.js';
 
@@ -56,5 +57,25 @@ test('one round shares priority metadata between lanes but the next round reread
   await runRound(db, roundOptions);
   await runRound(db, roundOptions);
   assert.equal(overallReads, 2);
+});
+
+test('top-weight due track gets one targeted lookup inside the existing eight-document lane cap',async()=>{
+  const target='summer-priority-track';
+  const broad=Array.from({length:7},(_,i)=>({document:{fields:{trackId:{stringValue:`older-${i}`},notBefore:{integerValue:'0'},slots:{mapValue:{fields:{}}}}}}));
+  const queries=[];let targetReads=0,selected=[];
+  const db={remainingRequests:()=>400,call:async(_path,body)=>{queries.push(body.structuredQuery);return body.structuredQuery.from[0].collectionId===VERIFICATION_COLLECTION?broad:[];},
+    get:async(collection,id)=>{
+      if(collection==='0.6.2_s1_leaderboards_overall')return {data:{trackSummaries:[{trackId:target,weight:50},{trackId:'low-priority',weight:1}]}};
+      if(collection===VERIFICATION_COLLECTION&&id===target){targetReads++;return {data:{trackId:target,notBefore:0,slots:{}}};}
+      return null;
+    }};
+  const selectedOptions={...options,prioritizeNormal:prioritizeQueueDocuments,
+    selectNormal:async(_db,docs)=>{selected.push(...docs.map(doc=>doc.data.trackId));return {jobs:[],canonicalAttempts:0,selectionConflicts:0};}};
+  await runRound(db,selectedOptions);
+  assert.equal(queries[0].limit,7,'one broad candidate slot is exchanged for priority discovery');
+  assert.equal(queries[1].limit,8);
+  assert.equal(targetReads,1);
+  assert.ok(selected.includes(target));
+  assert.equal(selected.length,8,'the Core candidate count remains capped at eight');
 });
 

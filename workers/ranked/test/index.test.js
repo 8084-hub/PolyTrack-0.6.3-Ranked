@@ -776,6 +776,34 @@ test('average placement is the literal mean finishing place', () => {
   assert.equal(racer.averagePlacementVersion,2);
 });
 
+test('overall identity follows the freshest per-track identity and its matching marker',()=>{
+ const board=(trackId,name,pbAt,identityUpdatedAt=0)=>({trackId,entries:[
+  {accountId:'identity-racer',name,countryCode:name==='Newest Rename'?'NZ':'US',timeMs:20000,pbAt,identityUpdatedAt,weight:2,integrityVerified:true,runVerified:true},
+  {accountId:`opponent-${trackId}`,name:'Opponent',timeMs:21000,pbAt,weight:2,integrityVerified:true,runVerified:true}
+ ]});
+ const tracks=[board(TRACK,'Newest Rename',1000,2500),board(COMMUNITY_TRACK,'Stale Track Name',2000,1500)];
+ const racer=computeOverall(tracks).find(row=>row.userId==='identity-racer');
+ assert.equal(racer.name,'Newest Rename');
+ assert.equal(racer.countryCode,'NZ');
+ assert.equal(racer.identityUpdatedAt,2500);
+
+ const knownLook=sanitizeProfileCosmetics({version:5,theme:'forest',accent:'cyan'});
+ const prior={userId:'identity-racer',name:'Prior Explicit Rename',countryCode:'CA',profileCosmetics:knownLook,identityUpdatedAt:5000,latestPbAt:3000};
+ const retained=computeOverall(tracks,[prior]).find(row=>row.userId==='identity-racer');
+ assert.equal(retained.name,'Prior Explicit Rename');
+ assert.equal(retained.identityUpdatedAt,5000);
+
+ const newerPb=computeOverall([...tracks,board('new-track-id','Canonical New PB Name',6000,2500)],[prior]).find(row=>row.userId==='identity-racer');
+ assert.equal(newerPb.name,'Canonical New PB Name');
+ assert.equal(newerPb.identityUpdatedAt,undefined);
+ assert.deepEqual(newerPb.profileCosmetics,knownLook,'canonical rows without cosmetics retain the known published look');
+
+ const explicitDefault=board('default-design-track','Canonical After Design Reset',7000,6500);
+ explicitDefault.entries[0].profileCosmetics=sanitizeProfileCosmetics({version:5,theme:'classic'});
+ const reset=computeOverall([...tracks,explicitDefault],[prior]).find(row=>row.userId==='identity-racer');
+ assert.equal(reset.profileCosmetics.theme,'classic','an explicitly published default design still replaces the prior look');
+});
+
 test('competitive average excludes custom and fields smaller than five', () => {
   const populated = (trackId, racerRank, size = 5) => ({
     trackId,
@@ -982,6 +1010,38 @@ test('full track rebuild keeps its canonical scan bounded and still reconciles v
  assert.equal(queueRead,true);
  assert.ok(commits.flat().some(write=>write.update?.name.includes('/'+VERIFICATION_COLLECTION+'/'+COMMUNITY_TRACK)));
  assert.ok(commits.flat().some(write=>write.update?.name.includes('/0.6.2_s1_leaderboards_track/'+COMMUNITY_TRACK)));
+});
+
+test('full rebuild preserves fresh profile overlays per racer but lets newer canonical PB names win',async()=>{
+ const trackId=COMMUNITY_TRACK;
+ const canonical=validRun({accountId:'racer',trackId,timeMs:19000,pbAt:3000,createdAt:3000,name:'Canonical New Name',replay:'identity-rebuild'});
+ const otherCanonical=validRun({accountId:'other-racer',trackId,timeMs:19500,pbAt:5000,createdAt:5000,name:'Other Canonical'});
+ const previous=computeTrackEntries([canonical,otherCanonical],trackId);
+ Object.assign(previous.find(row=>row.accountId==='racer'),{name:'Profile New Name',nickname:'Profile New Name',carId:'profile-car',profileCosmetics:{theme:'fresh'},identityUpdatedAt:4000});
+ Object.assign(previous.find(row=>row.accountId==='other-racer'),{name:'Stale Profile Name',nickname:'Stale Profile Name',carId:'stale-car',profileCosmetics:{theme:'stale'},identityUpdatedAt:4500});
+ const snapshot={trackId,entries:previous,complete:true,totalEntries:2,revision:2,schemaVersion:6,algorithmVersion:'participation-v8-s1',signature:'old'};
+ const env={__TEST_FIRESTORE:async(path,init={})=>{
+  if(path===':runQuery')return [canonical,otherCanonical].map((row,index)=>({document:{
+   name:`projects/test/databases/(default)/documents/0.6.2_race_results/${row.accountId}_${trackId}`,
+   fields:wire(row).mapValue.fields,updateTime:`canonical-${index}`
+  }}));
+  if(path===':commit')return {};
+  if(path.includes('/'+VERIFICATION_COLLECTION+'/'+trackId))return {fields:wire({trackId,slots:{}}).mapValue.fields,updateTime:'queue-v1'};
+  if(path.includes('0.6.2_s1_leaderboards_track/'+trackId))return {fields:wire(snapshot).mapValue.fields,updateTime:'board-v1'};
+  if(path.includes('0.6.2_s1_release_meta/current'))return {fields:wire({revision:2,builtRevision:2}).mapValue.fields,updateTime:'meta-v1'};
+  return null;
+ }};
+ const result=await rebuildTrack(env,trackId);
+ const fresh=result.entries.find(row=>row.accountId==='racer');
+ const stale=result.entries.find(row=>row.accountId==='other-racer');
+ assert.equal(fresh.name,'Profile New Name');
+ assert.equal(fresh.carId,'profile-car');
+ assert.equal(fresh.profileCosmetics.theme,'fresh');
+ assert.equal(fresh.identityUpdatedAt,4000);
+ assert.equal(stale.name,'Other Canonical');
+ assert.equal(stale.carId,null);
+ assert.equal(stale.profileCosmetics.theme,'stale');
+ assert.equal(stale.identityUpdatedAt,undefined);
 });
 
 test('profile identity update changes one published row without querying canonical races or altering proof', async () => {
@@ -1487,9 +1547,14 @@ test('pending-only board changes do not alter the verified overall input', () =>
 });
 
 test('a pending-only PB publishes its track without reading or dirtying overall metadata', async () => {
-  const old=validRun({accountId:'pending',trackId:TRACK,timeMs:20000,runVerified:false});
-  const next={...old,timeMs:19000,raceTimeFrames:19000,uploadId:124};
+  const old=validRun({accountId:'pending',trackId:TRACK,timeMs:20000,runVerified:false,
+    name:'Current Name',nickname:'Current Name',countryCode:'CA',carId:'current-car',carColors:'blue',
+    carStyle:'current-style',profileCosmetics:{version:7,accent:'cyan'},groupCode:'123456',groupCodeUpdatedAt:42});
+  const next={...old,name:'Stale Name',nickname:'Stale Name',countryCode:'US',carId:'old-car',carColors:'red',
+    carStyle:'old-style',profileCosmetics:{version:7,accent:'white'},groupCode:'654321',groupCodeUpdatedAt:1,
+    timeMs:19000,raceTimeFrames:19000,uploadId:124};
   const entries=computeTrackEntries([old],TRACK);
+  entries[0].identityUpdatedAt=1_800_000_000_000;
   const calls=[],writes=[];
   const env={__TEST_FIRESTORE:async(path,init={})=>{
     calls.push(path);
@@ -1505,6 +1570,49 @@ test('a pending-only PB publishes its track without reading or dirtying overall 
   assert.equal(calls.includes(':runQuery'),false);
   assert.equal(writes.filter(write=>write.update.name.includes('s1_leaderboards_track')).length,1);
   assert.equal(writes.some(write=>write.update.name.includes('s1_release_meta')),false);
+  assert.equal(result.entries[0].timeMs,19000,'the new PB still publishes');
+  for(const key of ['name','nickname','countryCode','carId','carColors','carStyle','profileCosmetics','groupCode','groupCodeUpdatedAt'])
+    assert.deepEqual(result.entries[0][key],entries[0][key],`published profile overlay ${key} survives canonical PB data`);
+});
+
+test('canonical PB identity wins when there is no explicit published profile overlay', async () => {
+  const old=validRun({accountId:'pending',trackId:TRACK,timeMs:20000,runVerified:false,name:'Older Name'});
+  const next={...old,name:'Newer PB Name',timeMs:19000,raceTimeFrames:19000,uploadId:124};
+  const entries=computeTrackEntries([old],TRACK);
+  let saved;
+  const env={__TEST_FIRESTORE:async(path,init={})=>{
+    if(path===':commit'){
+      const write=JSON.parse(init.body).writes.find(row=>row.update?.name?.includes('s1_leaderboards_track/'));
+      if(write)saved=unwire({mapValue:{fields:write.update.fields}});return {};
+    }
+    if(path.includes('s1_leaderboards_track/'))return {fields:wire({trackId:TRACK,entries,complete:true,totalEntries:1,
+      revision:1,schemaVersion:6,algorithmVersion:'participation-v8-s1',signature:'old'}).mapValue.fields,updateTime:'v1'};
+    return null;
+  }};
+  await mergeCanonicalResultIntoTrack(env,TRACK,next,true);
+  assert.equal(saved.entries[0].name,'Newer PB Name');
+  assert.equal(saved.entries[0].identityUpdatedAt,undefined);
+});
+
+test('a PB timestamp newer than the published profile overlay supersedes that overlay', async () => {
+  const overlayAt=1_800_000_000_000;
+  const old=validRun({accountId:'pending',trackId:TRACK,timeMs:20000,runVerified:false,name:'Old Profile'});
+  const entries=computeTrackEntries([old],TRACK);
+  entries[0].identityUpdatedAt=overlayAt;
+  const next={...old,name:'Updated Profile',timeMs:19000,raceTimeFrames:19000,uploadId:124,pbAt:overlayAt+1};
+  let saved;
+  const env={__TEST_FIRESTORE:async(path,init={})=>{
+    if(path===':commit'){
+      const write=JSON.parse(init.body).writes.find(row=>row.update?.name?.includes('s1_leaderboards_track/'));
+      if(write)saved=unwire({mapValue:{fields:write.update.fields}});return {};
+    }
+    if(path.includes('s1_leaderboards_track/'))return {fields:wire({trackId:TRACK,entries,complete:true,totalEntries:1,
+      revision:1,schemaVersion:6,algorithmVersion:'participation-v8-s1',signature:'old'}).mapValue.fields,updateTime:'v1'};
+    return null;
+  }};
+  await mergeCanonicalResultIntoTrack(env,TRACK,next,true);
+  assert.equal(saved.entries[0].name,'Updated Profile');
+  assert.equal(saved.entries[0].identityUpdatedAt,undefined,'PB time is not copied into the profile overlay marker');
 });
 
 test('concurrent overall rebuilds share one source-board crawl and commit', async () => {
@@ -1887,6 +1995,16 @@ test('two-minute background repair skips off-window or invalid ticks before Fire
     assert.equal(calls,0);
     assert.equal(waitUntilCalled,false);
   }
+});
+
+test('no-work cosmetic maintenance does not perform a redundant overall metadata read', async () => {
+  const calls = [];
+  const env = {__TEST_FIRESTORE: async path => { calls.push(path); return []; }};
+  let completion;
+  rankedWorker.scheduled({cron:'2-59/5 * * * *',scheduledTime:Date.UTC(2026,9,3,0,15)},env,
+    {waitUntil:promise=>{completion=promise;}});
+  await completion;
+  assert.deepEqual(calls,[':runQuery'], 'an empty active-cosmetic query is the only Firestore read');
 });
 
 test('thirty-minute background repair still migrates legacy verification queues', async () => {

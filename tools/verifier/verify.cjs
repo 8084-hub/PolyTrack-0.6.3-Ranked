@@ -10,6 +10,7 @@ const { geometryDecision } = require('./geometry.cjs');
 const { partitionTrustedTracks } = require('./kodub-track.cjs');
 
 const VERIFIER_VERSION = 'polytrack-native-bounded-v1';
+const MAX_SESSION_RECOVERIES = 2;
 const trace = message => { if (process.env.VERIFIER_DEBUG === '1') process.stderr.write(`[verifier] ${message}\n`); };
 const verifierFingerprint = sha256(['verify.cjs', 'engine-pin.cjs', 'assets.cjs', 'replay.cjs', 'geometry.cjs', 'kodub-track.cjs', 'track-geometry.json'].map(name => name + '\n' + fs.readFileSync(path.join(__dirname, name), 'utf8').replace(/\r\n?/g, '\n')).join('\n'));
 
@@ -160,6 +161,29 @@ async function bounded(operation, session, wallMs, cpuMs) {
   }
 }
 
+async function runWithBoundedRecovery(indices, runJob, recover, onError, onDeferred, maxRecoveries = MAX_SESSION_RECOVERIES) {
+  let recoveries=0;
+  for(let position=0;position<indices.length;position++) {
+    const index=indices[position];
+    try { await runJob(index); }
+    catch(error) {
+      onError(index,error);
+      if(position===indices.length-1) continue;
+      if(recoveries>=maxRecoveries) {
+        for(const deferredIndex of indices.slice(position+1)) onDeferred(deferredIndex,'isolate_recovery_limit');
+        break;
+      }
+      recoveries++;
+      try { await recover(); }
+      catch {
+        for(const deferredIndex of indices.slice(position+1)) onDeferred(deferredIndex,'isolate_recovery_failed');
+        break;
+      }
+    }
+  }
+  return recoveries;
+}
+
 async function initialize(session, engine, origin, trustedTracks = []) {
   const context = await session.browser.newContext({ serviceWorkers: 'block', viewport: { width: 800, height: 600 } });
   session.context = context;
@@ -298,43 +322,52 @@ async function verifyBatch(root, jobs, trustedTracks) {
     if (!pending.length) return output;
     const { chromium } = require(process.env.VERIFIER_PLAYWRIGHT_MODULE || 'playwright');
     host = await serve(engine);
-    const server = await chromium.launchServer({
-      headless: true, timeout: wallMs, host: '127.0.0.1', env: browserEnvironment(),
-      chromiumSandbox: process.platform === 'linux',
-      executablePath: chromium.executablePath(),
-      ...(process.env.VERIFIER_CHROMIUM_PATH ? { executablePath: process.env.VERIFIER_CHROMIUM_PATH } : {}),
-    });
-    session = { server, dead: false };
-    trace('browser launched');
-    session.browser = await chromium.connect(server.wsEndpoint(), { timeout: wallMs });
-    trace('browser connected');
-    session.system = await session.browser.newBrowserCDPSession();
-    trace('CPU monitor connected');
-    const init = await bounded(() => initialize(session, engine, host.origin, trusted), session, wallMs, cpuMs);
-    const catalog = init.value;
+    const createSession = async () => {
+      const server = await chromium.launchServer({
+        headless: true, timeout: wallMs, host: '127.0.0.1', env: browserEnvironment(),
+        chromiumSandbox: process.platform === 'linux',
+        executablePath: chromium.executablePath(),
+        ...(process.env.VERIFIER_CHROMIUM_PATH ? { executablePath: process.env.VERIFIER_CHROMIUM_PATH } : {}),
+      });
+      const next={server,dead:false};
+      session=next;
+      trace('browser launched');
+      next.browser=await chromium.connect(server.wsEndpoint(),{timeout:wallMs});
+      trace('browser connected');
+      next.system=await next.browser.newBrowserCDPSession();
+      trace('CPU monitor connected');
+      return (await bounded(()=>initialize(next,engine,host.origin,trusted),next,wallMs,cpuMs)).value;
+    };
+    let catalog=await createSession();
     trace(`initialized ${catalog.size} trusted tracks`);
-    for (const index of pending) {
+    await runWithBoundedRecovery(pending,async index=>{
       const job = jobs[index];
       const track = catalog.get(job.trackId);
       if (!track || track.reason) {
         output[index] = verdict(job, 'unavailable', track?.reason || 'missing_trusted_track', engine, track);
-        continue;
+        return;
       }
-      if (session.dead) { output[index] = verdict(job, 'unavailable', 'isolate_terminated', engine, track); continue; }
+      if (session.dead) throw Object.assign(Error('isolate_terminated'),{reason:'isolate_terminated'});
       const started = performance.now();
-      try {
-        const result = await bounded(() => simulate(session, job), session, wallMs, cpuMs);
-        const native = session.pageErrors.length ? { status: 'unavailable', reason: 'page_error' } : result.value;
-        output[index] = verdict(job, native.status, native.reason, engine, track, {
-          deterministic: native.deterministic ?? null,
-          wallMs: Math.round(performance.now() - started), sampledCpuMs: Math.round(result.sampledCpuMs),
-        });
-      } catch (error) {
-        output[index] = verdict(job, 'unavailable', error.reason || 'native_engine_error', engine, track);
-        session.dead = true;
-        await terminate(session);
+      const result=await bounded(()=>simulate(session,job),session,wallMs,cpuMs);
+      const native=session.pageErrors.length?{status:'unavailable',reason:'page_error'}:result.value;
+      output[index]=verdict(job,native.status,native.reason,engine,track,{
+        deterministic:native.deterministic??null,
+        wallMs:Math.round(performance.now()-started),sampledCpuMs:Math.round(result.sampledCpuMs),
+      });
+    },async()=>{
+      if(session) {session.dead=true;await terminate(session);}
+      try { catalog=await createSession(); }
+      catch(error) {
+        if(session) {session.dead=true;await terminate(session).catch(()=>{});}
+        throw error;
       }
-    }
+      trace(`recovered verifier session (${catalog.size} trusted tracks)`);
+    },(index,error)=>{
+      const job=jobs[index],track=catalog.get(job.trackId);
+      output[index]=verdict(job,'unavailable',error.reason||'native_engine_error',engine,track);
+      if(session)session.dead=true;
+    },(index,reason)=>{output[index]=verdict(jobs[index],'unavailable',reason,engine,catalog.get(jobs[index].trackId));});
   } catch (error) {
     trace(`failure: ${error.message}`);
     console.error('[verifier startup]', String(error.message||error).replace(/https?:\/\/[^\s]+/g,'[url]').slice(0,1600));
@@ -358,4 +391,4 @@ async function verifyBatch(root, jobs, trustedTracks) {
 }
 
 module.exports = { verifyBatch, VERIFIER_VERSION, verifierFingerprint,
-  _internals: { bounded, terminate, initialize, browserEnvironment, waitForExit, verdict } };
+  _internals: { bounded, terminate, initialize, browserEnvironment, waitForExit, verdict, runWithBoundedRecovery, MAX_SESSION_RECOVERIES } };

@@ -6,6 +6,20 @@ import path from 'node:path';
 import {buildProfileSnapshotResults} from './build-profile-snapshot-results.mjs';
 
 const accountId='a'.repeat(64),trackId='b'.repeat(64);
+test('racer directory reuses newest public identity without replay or owner identifiers',async t=>{
+  const root=await fixture(t);await fs.mkdir(path.join(root,'profiles'));
+  await fs.writeFile(path.join(root,'overall.json'),JSON.stringify({updatedAt:100,entries:[{userId:accountId,name:'Old name',carColors:'old'}]}));
+  await fs.writeFile(path.join(root,'profiles',accountId+'.json'),JSON.stringify({accountId,updatedAt:200,name:'New name',carColors:'new',profileCosmetics:{version:7,theme:'cyan',ownerUid:'private'},ownerUid:'private',replay:'private'}));
+  await fs.writeFile(path.join(root,'tracks',trackId+'.json'),JSON.stringify({trackId,updatedAt:300,entries:[{accountId,name:'Oldest name',createdAt:50,timeMs:123}]}));
+  await buildProfileSnapshotResults(root);
+  const directory=JSON.parse(await fs.readFile(path.join(root,'racer-directory.json')));
+  assert.equal(directory.entries[accountId].name,'New name');
+  assert.equal(directory.entries[accountId].carColors,'new');
+  assert.equal(directory.entries[accountId].ownerUid,undefined);
+  assert.equal(directory.entries[accountId].replay,undefined);
+  assert.equal(directory.entries[accountId].profileCosmetics.ownerUid,undefined);
+  assert.equal(directory.updatedAt,200);
+});
 async function fixture(t){const root=await fs.mkdtemp(path.join(os.tmpdir(),'profile-results-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));await fs.mkdir(path.join(root,'tracks'));await fs.writeFile(path.join(root,'overall.json'),JSON.stringify({updatedAt:100,entries:[{userId:accountId,raceCount:1}]}));return root;}
 test('all saved board results are indexed without replays or private identity fields',async t=>{
   const root=await fixture(t);

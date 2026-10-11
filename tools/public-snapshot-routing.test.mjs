@@ -26,7 +26,7 @@ test('new-account snapshot protection needs fifteen minutes and a saved finish, 
   let now=Date.UTC(2026,9,7),accountId='a'.repeat(64),cached=null,local=[];const storage=new Map();
   const create=()=>{
     const context=vm.createContext({Date:{now:()=>now},activeRankedAccountId:()=>accountId,
-      readOverallSnapshotCache:()=>cached,readLocalRaceRows:()=>local,canonicalRaceTimeMs:row=>row.timeMs||0,localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)}});
+      readOverallSnapshotCache:()=>cached,readLocalRaceRows:()=>local,canonicalRaceTimeMs:row=>row.timeMs||0,snapshotRacerDirectoryEntries:{},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)}});
     vm.runInContext(section('  const NEW_ACCOUNT_SNAPSHOT_MS=', '  let publicSnapshotReaderPromise='),context);return context;
   };
   let context=create();assert.equal(context.snapshotOnlyForNewAccount(),true);
@@ -43,10 +43,101 @@ test('new-account snapshot protection needs fifteen minutes and a saved finish, 
   accountId='b'.repeat(64);assert.equal(context.snapshotOnlyForNewAccount(),true);
   cached={entries:[{accountId,accountCreatedAt:now-86400000}]};assert.equal(context.snapshotOnlyForNewAccount(),false);
 });
+test('older racer-directory identities unlock bounded live refresh without a local finish',()=>{
+  const now=Date.UTC(2026,9,7),accountId='c'.repeat(64);
+  const context=vm.createContext({Date:{now:()=>now},activeRankedAccountId:()=>accountId,readOverallSnapshotCache:()=>null,
+    readLocalRaceRows:()=>[],canonicalRaceTimeMs:()=>0,snapshotRacerDirectoryEntries:{[accountId]:{updatedAt:now-900000}},
+    localStorage:{getItem:()=>String(now-900000),setItem:()=>{}}});
+  vm.runInContext(section('  const NEW_ACCOUNT_SNAPSHOT_MS=', '  let publicSnapshotReaderPromise='),context);
+  assert.equal(context.snapshotOnlyForNewAccount(),false);
+});
+
+test('snapshot racer-directory overlays overall identity only when profile metadata is newer',()=>{
+  const id='d'.repeat(64),directory={updatedAt:300,name:'Natsujo',nickname:'Natsujo',countryCode:'JP',carStyle:'style-v2',carId:'car-2',carColors:'ffffff00000000000000',profileCosmetics:{theme:'classic'}};
+  const context=vm.createContext({snapshotRacerDirectoryEntries:{[id]:directory},cleanUserId:value=>String(value||''),
+    getLastKnownName:()=>'',__pt062GetRememberedStyle:()=>'',PROFILE_COSMETICS_KEY:'local-profile-cosmetics',readJsonStorage:()=>null,activeRankedAccountId:()=>''});
+  vm.runInContext(section('  function snapshotRacerDirectoryIdentity(', '  function hasExplicitProfileCosmetics('),context);
+  const [row]=context.overlaySnapshotRacerDirectory([{userId:id,name:'Unknown',countryCode:'',carStyle:'',carId:'',carColors:''}]);
+  assert.equal(row.name,'Natsujo');assert.equal(row.countryCode,'JP');assert.equal(row.carStyle,'style-v2');assert.equal(row.carId,'car-2');
+
+  const live=[{userId:id,name:'Current live name',identityUpdatedAt:400}];
+  assert.equal(context.overlaySnapshotRacerDirectory(live)[0].name,'Current live name');
+  const newerDirectory={...directory,updatedAt:500};context.snapshotRacerDirectoryEntries[id]=newerDirectory;
+  const [updated]=context.overlaySnapshotRacerDirectory(live);
+  assert.equal(updated.name,'Natsujo');assert.equal(updated.identityUpdatedAt,500);
+  assert.equal(context.snapshotRacerDirectoryIdentity(id,0,600),null);
+  const pbNewer=[{userId:id,name:'Latest canonical PB name',identityUpdatedAt:0,pbAt:900}];
+  assert.equal(context.overlaySnapshotRacerDirectory(pbNewer)[0].name,'Latest canonical PB name');
+});
+
+test('native per-track identity uses a newer directory profile but preserves fresher cached live identity',()=>{
+  const id='e'.repeat(64),rows=[{userId:id,name:'Cached live profile',identityUpdatedAt:700,carStyle:'live-style'}];
+  const context=vm.createContext({overallEntriesCache:rows,readOverallSnapshotCache:()=>null,cleanUserId:value=>String(value||''),
+    snapshotRacerDirectoryEntries:{[id]:{updatedAt:600,name:'Old directory name',carStyle:'old-style'}},
+    snapshotCosmeticEntries:{},activeRankedAccountId:()=>'',readJsonStorage:()=>null,PROFILE_COSMETICS_KEY:'profile',
+    rankedIdentityIndex:null,rankedIdentityIndexSource:null});
+  vm.runInContext(section('  function snapshotRacerDirectoryIdentity(', '  function hasExplicitProfileCosmetics('),context);
+  vm.runInContext(section('  function rankedIdentityRows(){', '  function decorateNativeLeaderboardIdentity('),context);
+  const preserved=context.rankedIdentityForRacer({userId:id,name:'Track cached name',identityUpdatedAt:700,carStyle:'track-style'});
+  assert.equal(preserved.name,'Cached live profile');assert.equal(preserved.carStyle,'live-style');
+  context.snapshotRacerDirectoryEntries[id]={updatedAt:800,name:'Natsujo',carStyle:'directory-style',countryCode:'JP',profileCosmetics:{theme:'classic'}};
+  const hydrated=context.rankedIdentityForRacer({userId:id,name:'Track cached name',identityUpdatedAt:700});
+  assert.equal(hydrated.name,'Natsujo');assert.equal(hydrated.carStyle,'directory-style');assert.equal(hydrated.countryCode,'JP');
+  assert.equal(hydrated.profileCosmetics.theme,'classic');assert.equal(hydrated.identityUpdatedAt,800);
+  const latestPb=context.rankedIdentityForRacer({userId:id,name:'Latest canonical PB name',identityUpdatedAt:0,pbAt:900});
+  assert.equal(latestPb.name,'Latest canonical PB name');assert.equal(latestPb.carStyle,'live-style');
+});
+
+test('canonical display names choose the freshest row identity over older live and directory caches',()=>{
+  const id='g'.repeat(64),context=vm.createContext({cleanUserId:value=>String(value||''),safeDisplayName:value=>String(value||''),
+    overallEntriesCache:[{userId:id,name:'Cached live name',identityUpdatedAt:700}],
+    readOverallSnapshotCache:()=>({entries:[{userId:id,name:'Older disk name',identityUpdatedAt:650}]}),
+    snapshotRacerDirectoryEntries:{[id]:{updatedAt:800,name:'Directory name'}},getLastKnownName:()=> 'Stale remembered name',setLastKnownName:()=>{}});
+  vm.runInContext(section('  function snapshotRacerDirectoryIdentity(', '  function hasExplicitProfileCosmetics('),context);
+  vm.runInContext(section('  function rowIdentityFreshness(', '  function overlaySnapshotRacerDirectory('),context);
+  vm.runInContext(section('  function canonicalDisplayName(', '  const sdkScriptLoads='),context);
+  assert.equal(context.canonicalDisplayName(id,'Newest canonical PB',900),'Newest canonical PB');
+  assert.equal(context.canonicalDisplayName(id,'Older track label',600),'Directory name');
+  context.readOverallSnapshotCache=()=>({entries:[{userId:id,name:'Newest cached profile',identityUpdatedAt:950}]});
+  assert.equal(context.canonicalDisplayName(id,'Older track label',600),'Newest cached profile');
+});
+
+test('cached track rows return immediately and start at most one bounded background refresh',async()=>{
+  let refreshes=0,now=100000;
+  const cached={entries:[{userId:'f'.repeat(64)}],fetchedAt:0,serverUpdatedAt:10};
+  const context=vm.createContext({Date:{now:()=>now},unrankedExtraTrackIds:new Set(),readTrackSnapshotCache:()=>cached,TRACK_REFRESH_MS:100,
+    trackSnapshotMetadataIsNewer:()=>false,selectCachedTrackState:()=>{},trackEntryRequests:new Map(),trackCacheBackgroundRefreshAt:new Map(),loadTrackEntries:async()=>{refreshes++;return cached.entries;}});
+  vm.runInContext(section('  async function getTrackEntries(', '  function trackSnapshotMetadataIsNewer('),context);
+  const first=await context.getTrackEntries('track',10);
+  const second=await context.getTrackEntries('track',10);
+  assert.equal(first.length,1);assert.equal(second.length,1);assert.equal(refreshes,1);
+  const force=await context.getTrackEntries('track',10,true);
+  assert.equal(force.length,1);assert.equal(refreshes,2);
+});
+
+test('selecting a cached track advances generation and rejects an older response from banner state',()=>{
+  const context=vm.createContext({document:{documentElement:{classList:{remove:()=>{}}}},TRACK_REFRESH_MS:60000,
+    setTimeout:()=>{},updateTrackFreshnessBanner:()=>{}});
+  vm.runInContext('let currentTrackLoadState={trackId:"old-track",status:"loading"};let trackLoadGeneration=4;',context);
+  vm.runInContext(section('  function selectCachedTrackState(', '  async function getTrackEntries('),context);
+  vm.runInContext(section('  function setTrackLoadStateForGeneration(', '  async function getTrackEntries('),context);
+  const result=vm.runInContext(`(()=>{const oldGeneration=trackLoadGeneration;selectCachedTrackState('new-track',{serverUpdatedAt:700,fetchedAt:650,checkedAt:640});const rejected=setTrackLoadStateForGeneration(oldGeneration,{trackId:'old-track',status:'stale',fetchedAt:999});return {state:currentTrackLoadState,rejected,generation:trackLoadGeneration};})()`,context);
+  assert.equal(result.state.trackId,'new-track');assert.equal(result.state.status,'cache');
+  assert.equal(result.state.fetchedAt,700);assert.equal(result.state.checkedAt,640);
+  assert.equal(result.rejected,false);assert.equal(result.generation,5);
+});
+
+test('newer published track metadata bypasses an apparently fresh local cache',()=>{
+  const context=vm.createContext({snapshotTrackStatistics:{track:{updatedAt:500}}});
+  vm.runInContext(section('  function trackSnapshotMetadataIsNewer(', '  async function loadTrackEntries('),context);
+  assert.equal(context.trackSnapshotMetadataIsNewer('track',{serverUpdatedAt:400,fetchedAt:Date.now()}),true);
+  assert.equal(context.trackSnapshotMetadataIsNewer('track',{serverUpdatedAt:500}),false);
+  assert.equal(context.trackSnapshotMetadataIsNewer('track',{serverUpdatedAt:600}),false);
+});
 test('idle visitors and another account saved runs never unlock live standings',()=>{
   let now=Date.UTC(2026,9,7),rows=[];
   const context=vm.createContext({Date:{now:()=>now},activeRankedAccountId:()=> 'self',readOverallSnapshotCache:()=>null,
-    readLocalRaceRows:()=>rows,canonicalRaceTimeMs:row=>row.timeMs||0,localStorage:{getItem:()=>null,setItem:()=>{}}});
+    readLocalRaceRows:()=>rows,canonicalRaceTimeMs:row=>row.timeMs||0,snapshotRacerDirectoryEntries:{},localStorage:{getItem:()=>null,setItem:()=>{}}});
   vm.runInContext(section('  const NEW_ACCOUNT_SNAPSHOT_MS=', '  let publicSnapshotReaderPromise='),context);
   assert.equal(context.snapshotOnlyForNewAccount(),true);now+=86400000;
   assert.equal(context.snapshotOnlyForNewAccount(),true);
@@ -57,7 +148,7 @@ test('idle visitors and another account saved runs never unlock live standings',
 test('new-account gate tolerates blocked storage and rejects future timestamps',()=>{
   const now=Date.UTC(2026,9,7);
   for(const storage of [{getItem:()=>String(now+86400000),setItem:()=>{}},{getItem:()=>{throw Error('blocked');},setItem:()=>{throw Error('blocked');}}]){
-    const context=vm.createContext({Date:{now:()=>now},activeRankedAccountId:()=>'',readOverallSnapshotCache:()=>null,readLocalRaceRows:()=>[],canonicalRaceTimeMs:()=>0,localStorage:storage});
+    const context=vm.createContext({Date:{now:()=>now},activeRankedAccountId:()=>'',readOverallSnapshotCache:()=>null,readLocalRaceRows:()=>[],canonicalRaceTimeMs:()=>0,snapshotRacerDirectoryEntries:{},localStorage:storage});
     vm.runInContext(section('  const NEW_ACCOUNT_SNAPSHOT_MS=', '  let publicSnapshotReaderPromise='),context);
     assert.equal(context.snapshotOnlyForNewAccount(),true);
   }

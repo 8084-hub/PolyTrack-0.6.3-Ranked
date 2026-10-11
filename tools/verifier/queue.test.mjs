@@ -13,7 +13,7 @@ test('scheduled preflight checks one due document per lane without a health craw
   assert.equal(result.queueSample.sampleLimitPerLane,1);assert.equal(result.hasWork,false);
 });
 test('missing canonical work leaves the due queue instead of looping forever',()=>{const slot=reconciledSlot(pendingSlot(row),null);assert.equal(queueState({racer:slot}).notBefore,NEVER);});
-test('a superseding PB replaces the exact queued binding',()=>{const slot=pendingSlot(row),next={...row,timeMs:900};assert.deepEqual(reconciledSlot(slot,next),pendingSlot(next));});
+test('a superseding PB replaces the exact queued binding',()=>{const slot=pendingSlot(row),next={...row,timeMs:900},replacement=reconciledSlot(slot,next);assert.deepEqual(replacement,pendingSlot(next,replacement.queuedAt));});
 test('approval requires the pinned engine',()=>{assert.throws(()=>completedSlot(pendingSlot(row),{status:'verified',engineDigest:'wrong'}));assert.equal(completedSlot(pendingSlot(row),{status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST}).status,'verified');});
 test('unavailable work retries with a bounded daily backoff',()=>{let slot=pendingSlot(row);for(let i=0;i<3;i++)slot=completedSlot(slot,{status:'unavailable'},100);assert.equal(slot.retryAt,100+604800000);assert.equal(queueState({racer:slot}).pending,true);});
 test('Firestore round trip preserves timestamps, decimals and zero',()=>{const x={time:new Date('2026-09-10T00:00:00.000Z'),score:1.52,zero:0,none:null};assert.deepEqual(decode(encode(x)),x);});
