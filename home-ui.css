@@ -247,7 +247,7 @@ html body #polytrackTrackFreshness.polytrack-track-freshness {
   padding: 10px 16px 10px 16px !important;
   gap: 5px !important;
   overflow: auto !important;
-  border: 0 !important;
+  border: 1px solid rgba(205, 226, 255, .46) !important;
   border-left: 4px solid #7ee7ff !important;
   border-radius: 0 !important;
   background: var(--sq-track-data-bg) !important;
@@ -255,7 +255,7 @@ html body #polytrackTrackFreshness.polytrack-track-freshness {
   font-size: max(15px, calc(19.5px * var(--sq-ui-scale, 1))) !important;
   line-height: 1.32 !important;
   letter-spacing: .3px !important;
-  clip-path: polygon(0 0, 100% 0, calc(100% - 7px) 100%, 0 100%) !important;
+  clip-path: none !important;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .3) !important;
 }
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-source="snapshot"],
@@ -295,19 +295,22 @@ html body #polytrackTrackFreshness.polytrack-track-freshness .track-data-players
 html body #polytrackTrackFreshness.polytrack-track-freshness .track-data-source { color:#e4edff!important; }
 html body #polytrackTrackFreshness.polytrack-track-freshness .track-data-update { color:#d9dfea!important; }
 html body #polytrackTrackFreshness.polytrack-track-freshness .track-data-unlock { color:#ffe6b4!important; }
+html body #polytrackTrackFreshness.polytrack-track-freshness .track-data-snapshot-age { color:#fff!important;font-weight:900!important; }
+html body #polytrackTrackFreshness.polytrack-track-freshness .track-data-pb-status { color:#ffe4a0!important;font-weight:900!important;letter-spacing:.04em; }
+html body #polytrackTrackFreshness.polytrack-track-freshness[data-submitted-pb="true"] { box-shadow:inset -3px 0 #ffe4a0,0 8px 24px rgba(0,0,0,.3)!important; }
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-base-source="snapshot"],
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-base-source="cache"],
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-base-source="live"],
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-base-source="local"] { --sq-track-data-bg:#253a4d; }
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-layout="vertical"] {
   max-width:min(calc(250px * var(--sq-ui-scale, 1)),calc(100vw - 20px))!important;
-  padding:6px 10px!important;
-  gap:2px!important;
-  font-size:max(13px,calc(13px * var(--sq-ui-scale, 1)))!important;
-  line-height:1.2!important;
+  padding:4px 6px!important;
+  gap:1px!important;
+  font-size:max(13px,min(calc(13px * var(--sq-ui-scale, 1)),calc(5vw),calc(5dvh)))!important;
+  line-height:1.05!important;
 }
-html body #polytrackTrackFreshness.polytrack-track-freshness[data-layout="vertical"] > strong { flex-direction:column;gap:1px;font-size:max(14px,calc(14px * var(--sq-ui-scale, 1)))!important; }
-html body #polytrackTrackFreshness.polytrack-track-freshness[data-layout="vertical"] > span { font-size:max(13px,calc(13px * var(--sq-ui-scale, 1)))!important;line-height:1.2!important; }
+html body #polytrackTrackFreshness.polytrack-track-freshness[data-layout="vertical"] > strong { flex-direction:column;gap:1px;font-size:max(13px,min(calc(14px * var(--sq-ui-scale, 1)),calc(5vw),calc(5dvh)))!important;line-height:1.05!important; }
+html body #polytrackTrackFreshness.polytrack-track-freshness[data-layout="vertical"] > span { font-size:max(13px,min(calc(13px * var(--sq-ui-scale, 1)),calc(5vw),calc(5dvh)))!important;line-height:1.05!important; }
 html body #polytrackTrackFreshness[data-local-pb="true"] { box-shadow:inset -3px 0 #c5a8ff,0 8px 24px rgba(0,0,0,.3)!important; }
 html body #polytrackTrackFreshness[data-refresh-failed="true"] { border-left-color:#ffbe91!important; }
 html body #polytrackTrackFreshness[data-source="loading"] { border-left-color:#c6edff!important; }
@@ -363,3 +366,18 @@ html.sq-reduced-effects body #injectedRankingsBtn.button-spawn { animation-durat
 #overallProfilePopup .profile-guide.is-empty .route-preview-empty{min-height:0!important;gap:5px;line-height:1.4}
 #overallProfilePopup .profile-guide.is-empty .route-preview-empty strong{font-size:calc(18px * var(--sq-ui-scale,1))}
 #overallProfilePopup .profile-guide.is-empty .route-preview-empty small{font-size:calc(14px * var(--sq-ui-scale,1));color:#d2e2f5}
+
+/* High browser zoom leaves a short CSS viewport. Keep custom controls reachable. */
+@media(max-height:360px) {
+  #overallLeaderboardPanel { padding:4px!important;align-items:stretch!important;box-sizing:border-box!important; }
+  #overallLeaderboardPanel .overall-shell {
+    width:100%!important;height:100%!important;max-height:100%!important;min-height:0!important;
+    margin:0!important;transform:none!important;overflow-y:auto!important;clip-path:none!important;
+  }
+  #overallLeaderboardPanel .overall-top { flex:0 0 auto!important;min-height:0!important;padding:8px 10px!important;gap:8px; }
+  #overallLeaderboardPanel .overall-top h2 { font-size:24px!important;line-height:1.1!important; }
+  #overallLeaderboardPanel .overall-action-btn { min-width:48px!important;min-height:28px!important;font-size:14px!important;line-height:28px!important; }
+  #overallLeaderboardPanel .overall-sub { flex:0 0 auto;padding:5px 10px!important;font-size:13px!important; }
+  #overallLeaderboardPanel #overallLeaderboardList { flex:0 0 auto!important;min-height:90px!important;max-height:45dvh!important;overflow-y:auto!important; }
+  #overallLeaderboardPanel .overall-pager { flex:0 0 auto!important; }
+}

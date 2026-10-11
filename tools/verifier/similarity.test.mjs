@@ -50,6 +50,7 @@ test('real decoded snapshot references flag other racers, never self',async()=>{
     const result={resultId:'x',status:'verified'};
     await reviewer([{resultId:'x',accountId:'c'.repeat(64),trackId,timeMs:6000,replay}], [result]);
     assert.equal(similarityEvidence(result).referenceAccountId,accountId);
+    assert.equal(similarityEvidence(result).finishGapMs,0);
     const row={accountId:'c'.repeat(64),trackId,timeMs:6000,frames:6000,raceTimeFrames:6000,uploadId:2,replay,replayHash:hash};
     const job={...row,resultId:'x',queueKey:verificationKey(row),queueCollection:VERIFICATION_COLLECTION};
     Object.assign(result,{engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,reason:'native_exact_finish'});

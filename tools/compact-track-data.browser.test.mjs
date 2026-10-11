@@ -12,7 +12,7 @@ const cssFragments = [...patchSource.matchAll(/(?:style|rankedPolish)\.textConte
 const rankedCss = cssFragments.map(fragment => JSON.parse(fragment[1])).join('\n');
 const positionHelper = patchSource.match(/  function positionTrackFreshnessBanner\(banner,leaderboard\)\{([\s\S]*?)\r?\n  \}\r?\n  function updateTrackFreshnessBanner\(\)/);
 assert.ok(positionHelper, 'freshness sidecar positioning helper remains discoverable');
-const viewports = [[320, 568], [320, 720], [390, 844], [600, 400], [844, 390], [768, 1024], [1024, 768], [1920, 1080], [2800, 1920]];
+const viewports = [[320, 568], [320, 720], [384, 216], [560, 312], [390, 844], [600, 400], [844, 390], [768, 1024], [1024, 768], [1920, 1080], [2800, 1920]];
 
 test('freshness sidecar stays outside the leaderboard and avoids native controls at compact sizes and UI scales', {
   skip: !chromium && 'Set PLAYWRIGHT_MODULE to the bundled Playwright package to run this browser test.'
@@ -30,8 +30,8 @@ test('freshness sidecar stays outside the leaderboard and avoids native controls
         <div class="pages">Leaderboard pages</div><div class="button-wrapper"><button class="back">Back</button><button>Filter</button></div>
       </section></main>
       <div id="polytrackTrackFreshness" class="polytrack-track-freshness" data-source="snapshot">
-          <strong><b class="track-data-weight">1.25x Weight</b><b class="track-data-players">84 Players</b></strong><span class="track-data-source">Snapshot 2h old</span>
-          <span class="track-data-update">Track updated 2d ago</span><span class="track-data-unlock">Live refresh unlocks in 14:00 · finish saved</span>
+          <strong><b class="track-data-weight">1.25x Weight</b><b class="track-data-players">84 Players</b></strong><span class="track-data-source"><b class="track-data-snapshot-age">Snapshot</b> 2h old</span>
+          <span class="track-data-update">Standings changed 2d ago</span><span class="track-data-unlock">Live refresh unlocks in 14:00 · finish saved</span>
       </div></body></html>`);
     await page.addStyleTag({ content: rankedCss });
     await page.addStyleTag({ content: css });
@@ -39,7 +39,7 @@ test('freshness sidecar stays outside the leaderboard and avoids native controls
     await page.evaluate((body) => { window.positionTrackFreshnessBanner = new Function('banner','leaderboard',body); }, positionHelper[1]);
     for (const [width, height] of viewports) {
       await page.setViewportSize({ width, height });
-      for (const scale of [1, 1.25, 1.5, 2]) {
+      for (const scale of width===384&&height===216?[5]:[1, 1.25, 1.5, 2]) {
         await page.locator('#polytrackTrackFreshness').evaluate((node, value) => node.style.setProperty('--sq-ui-scale', value), scale);
         await page.evaluate(() => window.positionTrackFreshnessBanner(document.querySelector('#polytrackTrackFreshness'), document.querySelector('.leaderboard-ui')));
         const result = await page.evaluate(() => {
@@ -49,7 +49,7 @@ test('freshness sidecar stays outside the leaderboard and avoids native controls
           const rect = element => { const r = element.getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}; };
           const intersects=(a,b)=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;
           const countdown = panel.querySelector('.track-data-unlock');
-          return { panel:rect(panel), pages:rect(pages), back:rect(back), countdown:rect(countdown), panelStyle:getComputedStyle(panel), insideLeaderboard:document.querySelector('.leaderboard-ui').contains(panel),
+          return { panel:rect(panel), pages:rect(pages), back:rect(back), countdown:rect(countdown), panelStyle:getComputedStyle(panel), panelInlineHeight:panel.style.height, insideLeaderboard:document.querySelector('.leaderboard-ui').contains(panel),
             overlapsPages:intersects(panel.getBoundingClientRect(),pages.getBoundingClientRect()),overlapsBack:intersects(panel.getBoundingClientRect(),back.getBoundingClientRect()),
             panelScroll:panel.scrollHeight, panelClient:panel.clientHeight, fontSizePx:parseFloat(getComputedStyle(panel).fontSize), layout:panel.dataset.layout||'', viewport:{width:innerWidth,height:innerHeight} };
         });
@@ -60,13 +60,16 @@ test('freshness sidecar stays outside the leaderboard and avoids native controls
         assert.equal(result.overlapsPages, false, `panel avoids leaderboard pages at ${label}`);
         assert.equal(result.overlapsBack, false, `panel and native Back control do not overlap at ${label}`);
         assert.ok(result.panel.width <= Math.min(width-20,500*scale)+1, `sidecar respects UI scaling at ${label}`);
+        assert.ok(result.panel.width > 40 && result.panel.height > 30, `sidecar has visible content dimensions at ${label}`);
+        assert.notEqual(result.panelStyle.backgroundColor,'rgba(0, 0, 0, 0)', `sidecar background remains defined at ${label}`);
+        assert.equal(result.panelInlineHeight,'', `sidecar height remains content-driven at ${label}`);
         if(result.layout==='vertical') assert.ok(result.panel.width<=Math.min(width-20,290*scale)+1,`Back collision selects the narrow vertical card at ${label}`);
         assert.ok(result.panelScroll <= result.panelClient + 2, `sidecar has no clipped content at ${label}`);
         assert.ok(result.countdown.top >= result.panel.top && result.countdown.bottom <= result.panel.bottom,
           `lock countdown remains fully visible at ${label}`);
         assert.ok(result.fontSizePx >= 13, `sidecar text remains readable at ${label}`);
       }
-      if(process.env.UI_SCREENSHOT_DIR && (width===2800 || width===390)){
+      if(process.env.UI_SCREENSHOT_DIR && (width===2800 || width===390 || width===384 || width===560)){
         await page.screenshot({path: `${process.env.UI_SCREENSHOT_DIR}/track-data-${width}.png`});
       }
     }
@@ -94,14 +97,19 @@ test('source states and locked refresh styling are present and interaction-neutr
   assert.match(css, /--sq-track-data-bg:\s*#253a75/);
   assert.match(css, /data-source="snapshot"[\s\S]*?--sq-track-data-bg:\s*#253a4d/);
   assert.match(css, /border-left:\s*4px solid #7ee7ff/);
-  assert.match(css, /clip-path:\s*polygon\(0 0, 100% 0, calc\(100% - 7px\) 100%, 0 100%\)/);
+  assert.match(css, /clip-path:\s*none\s*!important/);
+  assert.match(css, /border:\s*1px solid rgba\(205, 226, 255, \.46\)\s*!important/);
   assert.match(css, /box-shadow:\s*0 8px 24px rgba\(0, 0, 0, \.3\)/);
   assert.match(css, /width:\s*fit-content !important/);
   assert.match(css, /max-width:\s*min\(calc\(500px \* var\(--sq-ui-scale, 1\)\), calc\(100vw - 20px\)\) !important/);
   assert.match(css, /font-size:\s*max\(15px, calc\(19\.5px \* var\(--sq-ui-scale, 1\)\)\) !important/);
   assert.match(patchSource, /Snapshot \$\{old\(capturedAt\)\}/);
   assert.doesNotMatch(patchSource, /const bannerHtml=.*snapshotCaptureLabel\(\)/);
-  assert.match(patchSource, /const bannerHtml=.*\$\{escapeHtml\(second\)\}.*track-data-update/);
+  assert.match(patchSource, /const sourceHtml=.*trackFreshnessSourceHtml\(baseSource,sourceLine\)/);
+  assert.match(patchSource, /const bannerHtml=.*track-data-update/);
+  assert.ok(patchSource.includes('const pbStatusHtml=cloudConfirmed?'));
+  assert.ok(patchSource.includes('track-data-pb-status">WAITING'));
+  assert.ok(patchSource.includes("baseSource!=='snapshot'&&checkedAt?"));
   assert.doesNotMatch(patchSource, /track-data-age/);
   assert.match(patchSource, /banner\.dataset\.layout='vertical'/);
   assert.match(css, /data-layout="vertical"/);

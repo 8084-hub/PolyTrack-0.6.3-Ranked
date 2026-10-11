@@ -47,6 +47,21 @@ test('published verified PB is retained until a genuinely faster local PB exists
   assert.equal(rows.length,1);assert.equal(rows[0].localPending,true);assert.equal(rows[0].runVerified,false);
   assert.equal(rows[0].profileCosmetics,design);assert.equal(rows[0].timeMs,45);
 });
+
+test('a submitted PB missing from the snapshot is not mislabeled device-only',()=>{
+  const local=[{accountId:'me',trackId:'summer1',timeMs:45,frames:45,replayHash:'exact-pb',uploadId:99}];
+  const context=finishContext([{accountId:'me',timeMs:55,frames:55,runVerified:true}],local);
+  context.LOCAL_PB_RECONCILE_STATE_KEY='confirmations';
+  context.readJsonStorage=()=>({me:{confirmed:{summer1:JSON.stringify(['summer1',45,'exact-pb'])}}});
+  vm.runInContext(section('  function localPbSyncSignature(', '  function localPbHasAvailableReplay(')+
+    section('  function runStatus(', '  function matchNativeResult('),context);
+  const row=context.localTrackDisplayEntries('summer1',[{accountId:'me',timeMs:55,runVerified:true}],'me')[0];
+  assert.equal(row.cloudConfirmed,true);assert.equal(row.runVerified,false);
+  assert.equal(context.runStatus(row),'submitted');
+  local[0].replayHash='new-pb';
+  const changed=context.localTrackDisplayEntries('summer1',[{accountId:'me',timeMs:55}],'me')[0];
+  assert.equal(changed.cloudConfirmed,false);assert.equal(context.runStatus(changed),'local');
+});
 test('track row conversion keeps published cosmetic designs without profile reads',()=>{
   const design={version:7,theme:'crimson'};
   const context=vm.createContext({Map,Array,String,Number,Math,

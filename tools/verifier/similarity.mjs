@@ -90,7 +90,7 @@ export function createSimilarityReviewer(root) {
           if(ref.accountId===job.accountId) continue;
           const evidence=compareControls(own,ref.controls,job.timeMs,ref.timeMs);
           if(evidence) {
-            evidenceByResult.set(result,{kind:'similar_top_inputs', version:1, ...evidence, referenceAccountId:ref.accountId, referenceReplayHash:ref.replayHash, referenceRank:Number.isSafeInteger(ref.rank)?ref.rank:null, referenceSnapshot:ref.generation, referenceUpdatedAt:Number.isFinite(ref.boardUpdatedAt)?ref.boardUpdatedAt:null});
+            evidenceByResult.set(result,{kind:'similar_top_inputs', version:1, ...evidence, finishGapMs:Math.abs(job.timeMs-ref.timeMs), referenceAccountId:ref.accountId, referenceReplayHash:ref.replayHash, referenceRank:Number.isSafeInteger(ref.rank)?ref.rank:null, referenceSnapshot:ref.generation, referenceUpdatedAt:Number.isFinite(ref.boardUpdatedAt)?ref.boardUpdatedAt:null});
             break;
           }
         }

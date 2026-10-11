@@ -23,7 +23,7 @@ test('placement provider retains its latest complete snapshot during partial cac
     trackCacheGeneration: 1,
     trackSnapshotStore: () => ({ track: { complete: true, revision: 4, entries: [{ accountId: 'other', timeMs: 1000, replay: 'large payload' }] } })
   });
-  vm.runInContext(`let placementSnapshotGeneration=-1;const MAX_RETAINED_PLACEMENT_SNAPSHOTS=64;const placementCompleteSnapshotCache=new Map();${extract('recordPlacementSnapshots')}`, context);
+  vm.runInContext(`let placementSnapshotGeneration=-1;const MAX_RETAINED_PLACEMENT_SNAPSHOTS=64;const placementCompleteSnapshotCache=new Map();${extract('isNewerPlacementSnapshot')}${extract('recordPlacementSnapshots')}`, context);
   assert.equal(context.recordPlacementSnapshots().track.revision, 4);
   context.trackSnapshotStore = () => ({ track: { complete: false, source: 'local', revision: 5, entries: [{ accountId: 'me' }] } });
   context.trackCacheGeneration = 2;
@@ -32,6 +32,39 @@ test('placement provider retains its latest complete snapshot during partial cac
   context.trackSnapshotStore = () => ({ track: { complete: true, revision: 6, fetchedAt: 200, entries: [{ accountId: 'newer' }] } });
   context.trackCacheGeneration = 3;
   assert.equal(context.recordPlacementSnapshots().track.revision, 6, 'a newer complete snapshot replaces the retained one');
+});
+
+test('higher-revision complete board wins even when its loaded timestamp is older', () => {
+  let current = { track: {
+    complete: true, revision: 4, sourceRevision: 4, fetchedAt: 300, totalEntries: 3,
+    entries: [{ accountId: 'me', timeMs: 900 }, { accountId: 'fast', timeMs: 800 }, { accountId: 'slow', timeMs: 1000 }]
+  } };
+  const context = vm.createContext({
+    trackCacheGeneration: 1,
+    localRaceGeneration: 1,
+    trackSnapshotStore: () => current,
+    localBestRowsForAccount: () => [{ trackId: 'track', accountId: 'me', timeMs: 900 }],
+    canonicalRaceTimeMs: row => Number(row?.timeMs) || 0,
+    cleanUserId: value => String(value || '')
+  });
+  vm.runInContext(`let placementSnapshotGeneration=-1;const MAX_RETAINED_PLACEMENT_SNAPSHOTS=64;const placementCompleteSnapshotCache=new Map();let provisionalPlacementGeneration=-1,provisionalPlacementAccount='',provisionalPlacementRows=new Map();let provisionalPlacementTrackGeneration=-1,provisionalPlacementSnapshots={};const provisionalPlacementCache=new Map();${extract('isNewerPlacementSnapshot')}${extract('recordPlacementSnapshots')}${extract('estimateLocalRecordPlacement')}`, context);
+  assert.equal(context.estimateLocalRecordPlacement('track', 900, 'me').label, '~2/3');
+  current = { track: {
+    complete: true, revision: 5, sourceRevision: 5, fetchedAt: 200, totalEntries: 4,
+    entries: [{ accountId: 'me', timeMs: 900 }, { accountId: 'fast', timeMs: 800 }, { accountId: 'slow', timeMs: 1000 }, { accountId: 'new', timeMs: 850 }]
+  } };
+  context.trackCacheGeneration = 2;
+  assert.equal(context.estimateLocalRecordPlacement('track', 900, 'me').label, '~3/4', 'rank numerator and field denominator use the newest loaded complete board');
+});
+
+test('same-revision complete board replacement refreshes placement field size', () => {
+  let current = { track: { complete: true, revision: 7, fetchedAt: 200, entries: [{ accountId: 'a' }, { accountId: 'b' }] } };
+  const context = vm.createContext({ trackCacheGeneration: 1, trackSnapshotStore: () => current });
+  vm.runInContext(`let placementSnapshotGeneration=-1;const MAX_RETAINED_PLACEMENT_SNAPSHOTS=64;const placementCompleteSnapshotCache=new Map();${extract('isNewerPlacementSnapshot')}${extract('recordPlacementSnapshots')}`, context);
+  assert.equal(context.recordPlacementSnapshots().track.entries.length, 2);
+  current = { track: { complete: true, revision: 7, fetchedAt: 200, entries: [{ accountId: 'a' }, { accountId: 'b' }, { accountId: 'c' }] } };
+  context.trackCacheGeneration = 2;
+  assert.equal(context.recordPlacementSnapshots().track.entries.length, 3, 'equal revision and freshness may still carry a complete replacement');
 });
 
 test('local PB estimate refuses incomplete boards even when they declare a larger field size', () => {
@@ -55,7 +88,7 @@ test('local PB estimate refuses incomplete boards even when they declare a large
       ]
     } })
   });
-  vm.runInContext(`let placementSnapshotGeneration=-1;const MAX_RETAINED_PLACEMENT_SNAPSHOTS=64;const placementCompleteSnapshotCache=new Map();let provisionalPlacementGeneration=-1,provisionalPlacementAccount='',provisionalPlacementRows=new Map();let provisionalPlacementTrackGeneration=-1,provisionalPlacementSnapshots={};const provisionalPlacementCache=new Map();${extract('recordPlacementSnapshots')}${extract('estimateLocalRecordPlacement')}`, context);
+  vm.runInContext(`let placementSnapshotGeneration=-1;const MAX_RETAINED_PLACEMENT_SNAPSHOTS=64;const placementCompleteSnapshotCache=new Map();let provisionalPlacementGeneration=-1,provisionalPlacementAccount='',provisionalPlacementRows=new Map();let provisionalPlacementTrackGeneration=-1,provisionalPlacementSnapshots={};const provisionalPlacementCache=new Map();${extract('isNewerPlacementSnapshot')}${extract('recordPlacementSnapshots')}${extract('estimateLocalRecordPlacement')}`, context);
   assert.equal(context.estimateLocalRecordPlacement(trackId, 900, 'me'), null, 'partial rows cannot safely establish numeric rank');
   assert.equal(context.estimateLocalRecordPlacement(trackId, 901, 'me'), null, 'only the currently saved local PB may be estimated');
 });
@@ -87,7 +120,7 @@ test('new local PB uses the retained complete board after the current cache beco
     trackCacheGeneration: 1,
     trackSnapshotStore: () => ({ [trackId]: completeBoard })
   });
-  vm.runInContext(`let placementSnapshotGeneration=-1;const MAX_RETAINED_PLACEMENT_SNAPSHOTS=64;const placementCompleteSnapshotCache=new Map();let provisionalPlacementGeneration=-1,provisionalPlacementAccount='',provisionalPlacementRows=new Map();let provisionalPlacementTrackGeneration=-1,provisionalPlacementSnapshots={};const provisionalPlacementCache=new Map();${extract('recordPlacementSnapshots')}${extract('estimateLocalRecordPlacement')}`, context);
+  vm.runInContext(`let placementSnapshotGeneration=-1;const MAX_RETAINED_PLACEMENT_SNAPSHOTS=64;const placementCompleteSnapshotCache=new Map();let provisionalPlacementGeneration=-1,provisionalPlacementAccount='',provisionalPlacementRows=new Map();let provisionalPlacementTrackGeneration=-1,provisionalPlacementSnapshots={};const provisionalPlacementCache=new Map();${extract('isNewerPlacementSnapshot')}${extract('recordPlacementSnapshots')}${extract('estimateLocalRecordPlacement')}`, context);
   assert.equal(context.estimateLocalRecordPlacement(trackId, 900, 'me').label, '~2/3');
   context.trackSnapshotStore = () => ({ [trackId]: { complete: false, source: 'local', revision: 5, entries: [{ accountId: 'me', timeMs: 900 }] } });
   context.trackCacheGeneration = 2;
@@ -103,7 +136,7 @@ test('retained complete snapshot cache is capped at 64 boards', () => {
   }]));
   let current = complete;
   const context = vm.createContext({ trackCacheGeneration: 1, trackSnapshotStore: () => current });
-  vm.runInContext(`let placementSnapshotGeneration=-1;const MAX_RETAINED_PLACEMENT_SNAPSHOTS=64;const placementCompleteSnapshotCache=new Map();${extract('recordPlacementSnapshots')}`, context);
+  vm.runInContext(`let placementSnapshotGeneration=-1;const MAX_RETAINED_PLACEMENT_SNAPSHOTS=64;const placementCompleteSnapshotCache=new Map();${extract('isNewerPlacementSnapshot')}${extract('recordPlacementSnapshots')}`, context);
   context.recordPlacementSnapshots();
   current = Object.fromEntries(Object.keys(complete).map(trackId => [trackId, { complete: false, entries: [] }]));
   context.trackCacheGeneration = 2;

@@ -9,6 +9,9 @@ Matches require at least 95% exact transition agreement, at least 95% matching
 nontrivial control time, twenty transitions, and one second of nontrivial inputs.
 Own replays and forward-only runs are ignored. Snapshot coverage may be incomplete
 or outdated, so this is not a complete anti-TAS system.
+Findings also include the finish-time gap in milliseconds. A two-millisecond gap
+alone is not flagged: legitimate close finishes are common, and a copied run can
+finish farther away. Input similarity supplies the review evidence, not the gap.
 
 In Firebase, open `0.6.2_s1_review_inbox` and filter `status == open`.
 This collection contains only findings, never ordinary verified runs. Set
