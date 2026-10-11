@@ -28,11 +28,18 @@ export function installSiteUpdates({ revision, document = globalThis.document, f
       try {
         const url = new URL(endpoint, document.baseURI);
         if (url.origin !== new URL(document.baseURI).origin) return;
+        url.searchParams.set('_updateCheck', String(startedAt));
         const response = await fetchImpl(url.href, { method: 'GET', credentials: 'same-origin', cache: 'no-store',
           headers: { Accept: 'application/json' }, signal: controller.signal });
         if (!response?.ok) return;
         const data = await response.json();
-        if (!Number.isSafeInteger(data?.revision) || data.revision <= revision || disposed || button || !document.body) return;
+        if (!Number.isSafeInteger(data?.revision) || disposed || !document.body) return;
+        if (data.revision <= revision) {
+          button?.remove();
+          button = null;
+          return;
+        }
+        if (button) return;
         button = document.createElement('button');
         button.type = 'button';
         button.textContent = 'Update available';

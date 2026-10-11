@@ -37,6 +37,23 @@ function fixtureFetch(handler,requests=[]){return async(url,options)=>{
 const emptyProfiles=[{readTime:'2026-10-06T00:00:00Z'}];
 const batchResponse=(request,fields=raceFields())=>request.options.documents.map(name=>({found:{name,fields}}));
 
+test('replay-only refresh skips profile queries and reuses unchanged recordings',async()=>{
+ await withDirectory(async directory=>{
+  await stage(directory,[binding()]);const requests=[];
+  await fs.writeFile(path.join(directory,'public-export-summary.json'),JSON.stringify({counts:{profiles:37}}));
+  const fetchImpl=fixtureFetch(req=>batchResponse(req),requests);
+  const first=await exportPublicProfilesAndReplays({directory,includeProfiles:false,maxDocuments:1,fetchImpl});
+  assert.equal(first.fetchedDocumentsThisRun,1);
+  assert.equal(first.counts.profiles,37);
+  assert.equal(requests.length,1);assert.ok(requests[0].url.endsWith(':batchGet'));
+  assert.equal(first.complete,false);
+  requests.length=0;
+  const second=await exportPublicProfilesAndReplays({directory,includeProfiles:false,maxDocuments:1,fetchImpl});
+  assert.equal(second.fetchedDocumentsThisRun,0);assert.equal(requests.length,0);
+  assert.equal(second.complete,false);
+ });
+});
+
 test('exports matching staged native binding despite canonical verified false',async()=>{
  await withDirectory(async directory=>{await stage(directory,[binding()]);const requests=[],logs=[];
   const result=await exportPublicProfilesAndReplays({directory,fetchImpl:fixtureFetch(req=>req.url.endsWith(':runQuery')?[profileDoc()]:batchResponse(req),requests),log:m=>logs.push(m)});

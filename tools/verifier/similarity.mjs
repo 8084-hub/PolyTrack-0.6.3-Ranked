@@ -68,6 +68,15 @@ function identicalInformativeInputs(a, b, duration) {
   return compareControls(a,b,duration,duration);
 }
 
+function jobResultId(job) { return job?.resultId || job?.runId; }
+function submissionOrder(job) {
+  for (const value of [job?.ingestedAt, job?.receivedAt]) {
+    const at=typeof value==='number'?value:typeof value==='string'?Date.parse(value):NaN;
+    if(Number.isSafeInteger(at)&&at>0)return at;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
 export function createSimilarityReviewer(root) {
   let packagePromise;
   const boards = new Map();
@@ -110,11 +119,11 @@ export function createSimilarityReviewer(root) {
     const rowsByResult=new Map(),resultsById=new Map(results.map(item=>[item.resultId,item]));
     const buckets=new Map(), exactGroups=new Map();
     const validResult = (job,result) => result?.status==='verified' && result.engineDigest===VERIFIER_ENGINE_DIGEST &&
-      result.verifierVersion===VERIFIER_VERSION && result.trackId===job.trackId &&
+      (result.verifierVersion||result.binding?.verifierVersion)===VERIFIER_VERSION && result.trackId===job.trackId &&
       result.replayHash===job.replayHash && result.timeMs===job.timeMs;
     const bucketKey=(trackId,bucket)=>`${trackId}:${bucket}`;
     for(const job of jobs) {
-      const result=resultsById.get(job.resultId);
+      const result=resultsById.get(jobResultId(job));
       evidenceByResult.delete(result);
       controlProofByResult.delete(result);
       if(!result || !validResult(job,result) || !/^[a-f0-9]{64}$/.test(job.trackId) || !Number.isSafeInteger(job.timeMs)) continue;
@@ -124,7 +133,7 @@ export function createSimilarityReviewer(root) {
         const informative=compareControls(controls,controls,job.timeMs,job.timeMs);
         const signature=createHash('sha256').update(JSON.stringify(controls.lists)).digest('hex');
         controlProofByResult.set(result,{version:1,signature,transitions:transitionCount,informative:Boolean(informative)});
-        const row={job,result,controls,comparisonAllowed:!job.correctionCandidate}; rows.push(row); rowsByResult.set(result,row);
+      const row={job,result,controls,comparisonAllowed:!job.correctionCandidate}; rows.push(row); rowsByResult.set(result,row);
         const bucket=Math.floor(job.timeMs/11), key=bucketKey(job.trackId,bucket);
         if(!buckets.has(key)) buckets.set(key,[]);
         buckets.get(key).push(row);
@@ -141,15 +150,15 @@ export function createSimilarityReviewer(root) {
         referenceRank:Number.isSafeInteger(ref.rank)?ref.rank:null,
         referenceSnapshot:ref.generation||'same_batch',
         referenceUpdatedAt:Number.isFinite(ref.boardUpdatedAt)?ref.boardUpdatedAt:null});
-      if(exact){result.status='unavailable';result.reason='identical_replay_pending_manual_review';}
+      if(exact){result.status='mismatch';result.reason='exact_duplicate_run';}
     };
     for(const group of exactGroups.values()) {
-      const candidates=group.filter(row=>row.comparisonAllowed&&verifiedControlProof(row.result)?.informative);
+      const candidates=group.filter(row=>row.comparisonAllowed&&verifiedControlProof(row.result)?.informative)
+        .sort((a,b)=>submissionOrder(a.job)-submissionOrder(b.job)||String(jobResultId(a.job)).localeCompare(String(jobResultId(b.job))));
       if(candidates.length<2) continue;
-      const first=candidates[0],second=candidates.find(row=>row.job.accountId!==first.job.accountId);
-      if(!second) continue;
-      for(const row of candidates) {
-        const ref=row.job.accountId!==first.job.accountId?first:second;
+      const winner=candidates[0];
+      for(const row of candidates.slice(1).filter(row=>row.job.accountId!==winner.job.accountId)) {
+        const ref=winner;
         const evidence=compareControls(row.controls,ref.controls,row.job.timeMs,ref.job.timeMs);
         if(evidence) setEvidence(row,{...ref.job,replayHash:ref.job.replayHash},evidence,true);
       }
@@ -171,7 +180,7 @@ export function createSimilarityReviewer(root) {
         const nearby=[];
         const bucket=Math.floor(job.timeMs/11);
         for(let offset=-1;offset<=1&&nearby.length<10;offset++) for(const candidate of buckets.get(bucketKey(job.trackId,bucket+offset))||[]) {
-          if(candidate!==row && candidate.job.accountId!==job.accountId && Math.abs(candidate.job.timeMs-job.timeMs)<=10) nearby.push(candidate);
+          if(candidate!==row && candidate.result.status==='verified' && candidate.job.accountId!==job.accountId && Math.abs(candidate.job.timeMs-job.timeMs)<=10) nearby.push(candidate);
           if(nearby.length>=10) break;
         }
         for(const candidate of nearby.slice(0,10)) {
@@ -182,7 +191,7 @@ export function createSimilarityReviewer(root) {
           }
         }
         if(similarityEvidence(result)) continue;
-        for(const ref of (await references(job.trackId)).filter(item=>item.accountId!==job.accountId && Math.abs(job.timeMs-item.timeMs)<=10)) {
+        for(const ref of (await references(job.trackId)).filter(item=>item.accountId!==job.accountId&&Math.abs(job.timeMs-item.timeMs)<=10)) {
           const exact=job.timeMs===ref.timeMs?identicalInformativeInputs(controls,ref.controls,job.timeMs):null;
           const evidence=exact || compareControls(controls,ref.controls,job.timeMs,ref.timeMs);
           if(evidence) { setEvidence(row,ref,evidence,Boolean(exact)); break; }

@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {publishResults, prioritizeQueueDocuments, verifiedControlReference, verifiedTrackCounts} from './runner.mjs';
-import {VERIFICATION_COLLECTION, VERIFIER_ENGINE_DIGEST, VERIFIER_VERSION, verificationKey} from '../../workers/ranked/src/verification.js';
+import {orderSelectedJobsFastestFirst, publishResults, prioritizeQueueDocuments, selectJobs, verifiedControlReference, verifiedTrackCounts} from './runner.mjs';
+import {VERIFICATION_COLLECTION, VERIFIER_ENGINE_DIGEST, VERIFIER_VERSION, pendingSlot, verificationKey} from '../../workers/ranked/src/verification.js';
 
 const TRACK='5803f9e963625804e3de3246d043dc7dde847aa32e991f7f7326b0453f1fa038';
 const row={accountId:'racer',trackId:TRACK,timeMs:20000,raceTimeFrames:20000,frames:20000,uploadId:7,replayHash:'a'.repeat(64),replay:'fixture'};
 const job={...row,resultId:`racer_${TRACK}`,queueKey:verificationKey(row),queueCollection:VERIFICATION_COLLECTION};
 const verified={resultId:job.resultId,status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,reason:''};
+
+test('native job ordering sorts each track by time without changing track slots',()=>{
+ const jobs=[{trackId:'a',timeMs:900,tag:'slow'},{trackId:'b',timeMs:600,tag:'other'},
+  {trackId:'a',timeMs:100,tag:'fast'},{trackId:'a',timeMs:400,tag:'middle'}];
+ assert.deepEqual(orderSelectedJobsFastestFirst(jobs).map(job=>job.tag),['fast','other','middle','slow']);
+});
 
 test('verified control references require current engine and exact key bindings',()=>{
  const key=JSON.stringify([VERIFIER_VERSION,VERIFIER_ENGINE_DIGEST,'other',TRACK,20000,1,7,'a'.repeat(64)]);
@@ -46,6 +52,79 @@ test('publication adds the exact result ID to bounded reconciliation work in the
  assert.deepEqual(wake.data.pendingTrackIds,[TRACK]);
  assert.deepEqual(wake.data.pendingResultIds,{[TRACK]:[job.resultId]});
  assert.equal(wake.prior.updateTime,'job-v1');
+});
+
+test('selection queue CAS preimage avoids a publication queue read when unchanged',async()=>{
+ const slot=pendingSlot(row),queue={data:{trackId:TRACK,slots:{racer:slot}},updateTime:'queue-v1'};
+ const reads={queue:0,canonical:0,state:0,audit:0};let committed;
+ const db={get:async(collection)=>{
+  if(collection===VERIFICATION_COLLECTION){reads.queue++;return queue;}
+  if(collection==='0.6.2_race_results'){reads.canonical++;return {data:row,updateTime:'canonical-v1'};}
+  if(collection==='0.6.2_s1_worker_jobs'){reads.state++;return {data:{pendingTrackIds:[],pendingResultIds:{}},updateTime:'state-v1'};}
+  if(collection==='0.6.2_s1_verification_audit'){reads.audit++;return null;}
+  return null;
+ },write:(collection,id,data,prior)=>({collection,id,data,prior}),call:async(_path,{writes})=>{committed=writes;return {writeResults:[{updateTime:'queue-v2'},{updateTime:'state-v2'}]};}};
+ const selection=await selectJobs(db,[queue],Date.now());
+ assert.equal(selection.jobs.length,1);
+ await publishResults(db,selection.jobs,[{...verified,resultId:job.resultId}]);
+ assert.deepEqual(reads,{queue:0,canonical:2,state:1,audit:1});
+ assert.equal(committed[0].prior.updateTime,'queue-v1');
+});
+
+test('stale selected queue preimage conflicts, rereads, and preserves concurrent queue changes',async()=>{
+ const slot=pendingSlot(row),stale={data:{trackId:TRACK,slots:{racer:slot}},updateTime:'queue-v1'};
+ let live={...stale},attempt=0,queueReads=0,committedQueue;
+ const conflict=Object.assign(Error('stale queue'),{status:412});
+ const db={get:async(collection)=>{
+  if(collection===VERIFICATION_COLLECTION){queueReads++;return live;}
+  if(collection==='0.6.2_race_results')return {data:row,updateTime:'canonical-v1'};
+  if(collection==='0.6.2_s1_worker_jobs')return {data:{pendingTrackIds:[],pendingResultIds:{}},updateTime:'state-v1'};
+  return null;
+ },write:(collection,id,data,prior)=>({collection,id,data,prior}),call:async(_path,{writes})=>{
+  attempt++;
+  if(attempt===1){
+   live={data:{...live.data,slots:{...live.data.slots,other:{accountId:'other',status:'waiting'}}},updateTime:'queue-v2'};
+   throw conflict;
+  }
+  committedQueue=writes[0];
+  return {writeResults:[{updateTime:'queue-v3'},{updateTime:'state-v3'}]};
+ }};
+ const selection=await selectJobs(db,[stale],Date.now());
+ await publishResults(db,selection.jobs,[{...verified,resultId:job.resultId}]);
+ assert.equal(attempt,2);
+ assert.equal(queueReads,1);
+ assert.equal(committedQueue.prior.updateTime,'queue-v2');
+ assert.deepEqual(committedQueue.data.slots.other,live.data.slots.other);
+});
+
+test('later same-track jobs cannot reuse selection preimages after cache invalidation',async()=>{
+ const secondRow={...row,accountId:'racer2',uploadId:8};
+ const slots={racer:pendingSlot(row),racer2:pendingSlot(secondRow)};
+ const original={data:{trackId:TRACK,slots},updateTime:'queue-v1'};
+ let live={...original},queueReads=0,commits=0,retryWrite;
+ const state={data:{pendingTrackIds:[],pendingResultIds:{}},updateTime:'state-v1'};
+ const db={get:async(collection,id)=>{
+  if(collection==='0.6.2_race_results')return {data:id===job.resultId?row:secondRow,updateTime:'canonical-v1'};
+  if(collection===VERIFICATION_COLLECTION){queueReads++;return live;}
+  if(collection==='0.6.2_s1_worker_jobs')return state;
+  if(collection==='0.6.2_s1_verification_audit')return null;
+  return null;
+ },write:(collection,id,data,prior)=>({collection,id,data,prior}),call:async(_path,{writes})=>{
+  commits++;
+  if(commits===1){live={data:writes[0].data,updateTime:'queue-after-first'};return {};}
+  if(commits===2){
+   live={data:{...live.data,slots:{...live.data.slots,other:{accountId:'other',status:'waiting'}}},updateTime:'queue-external'};
+   throw Object.assign(Error('concurrent queue update'),{status:412});
+  }
+  retryWrite=writes[0];return {};
+ }};
+ const selection=await selectJobs(db,[original],Date.now());
+ assert.deepEqual(selection.jobs.map(item=>item.accountId),['racer','racer2']);
+ await publishResults(db,selection.jobs,[{...verified,resultId:job.resultId},{...verified,resultId:secondRow.accountId+'_'+TRACK}]);
+ assert.equal(commits,3);
+ assert.equal(queueReads,2,'second job conflict and retry both fetch current queue state');
+ assert.equal(retryWrite.prior.updateTime,'queue-external');
+ assert.deepEqual(retryWrite.data.slots.other,live.data.slots.other);
 });
 
 test('publication falls back to the existing track queue when the 200-ID bound is full',async()=>{

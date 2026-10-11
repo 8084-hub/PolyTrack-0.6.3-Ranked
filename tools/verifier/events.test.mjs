@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runEventCoordinator, EVENT_JOB_LIMIT } from './events.mjs';
+import { createSimilarityReviewer } from './similarity.mjs';
+import { VERIFIER_ENGINE_DIGEST, VERIFIER_VERSION } from '../../workers/ranked/src/verification.js';
+import { createHash } from 'node:crypto';
+import { deflateSync } from 'node:zlib';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 function fixture(counts, inboxCount = 0, unavailable = false) {
   let intakes = 0, native = 0;
@@ -100,6 +107,56 @@ test('Kodub periods reject mismatched leased job tracks before verification', as
     verifyBatch: async () => assert.fail('mismatched job must not reach verifier'),
   }), /Kodub verifier period mismatch/);
 });
+
+test('event exact-duplicate review runs on bound results before any event publication',async()=>{
+  const trackId='a'.repeat(64), replayParts=[];
+  const turns=Array.from({length:24},(_,i)=>100+i*200);
+  const controls={lists:{up:[0],right:turns,down:[],left:[],reset:[]}};
+  for(const list of Object.values(controls.lists)){
+    const bytes=Buffer.alloc(3+list.length*3);bytes.writeUIntLE(list.length,0,3);
+    list.forEach((tick,i)=>bytes.writeUIntLE(tick-(i?list[i-1]:0),3+i*3,3));replayParts.push(bytes);
+  }
+  const replay=deflateSync(Buffer.concat(replayParts)).toString('base64url');
+  const replayHash=createHash('sha256').update(replay).digest('hex');
+  const jobs=[
+    {runId:'run-later',resultId:'run-later',accountId:'b'.repeat(64),trackId,timeMs:6000,replay,replayHash,receivedAt:200},
+    {runId:'run-earlier',resultId:'run-earlier',accountId:'c'.repeat(64),trackId,timeMs:6000,replay,replayHash,receivedAt:100},
+  ];
+  const period={id:'daily',kind:'daily',trackId};
+  const nativeResults=jobs.map(job=>({resultId:job.runId,status:'verified',trackId,timeMs:job.timeMs,replayHash,
+    engineDigest:VERIFIER_ENGINE_DIGEST,trackContentHash:null,
+    binding:{verifierVersion:VERIFIER_VERSION,resultId:job.runId,trackId,nativeTrackId:trackId,timeMs:job.timeMs,
+      replayHash,actualReplayHash:replayHash,trackContentHash:null,engineDigest:VERIFIER_ENGINE_DIGEST}}));
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'event-similarity-'));
+  try{
+    const reviewer=createSimilarityReviewer(root);let publishedResults;
+    const runtime={service:{processBatch:async(_period,verify)=>{
+      publishedResults=await verify(jobs,period);
+      return publishedResults;
+    },archivePeriod:async()=>assert.fail('unexpected archive')}};
+    const result=await runEventCoordinator(runtime,root,{limit:2,consumeInbox:async()=>({consumed:0}),
+      readWork:async()=>({periodIds:['daily'],archiveId:null}),verifyBatch:async()=>nativeResults,
+      reviewSimilarity:reviewer});
+    assert.equal(result.checked,2);
+    assert.equal(publishedResults[0].status,'mismatch');
+    assert.equal(publishedResults[0].reason,'exact_duplicate_run');
+    assert.equal(publishedResults[1].status,'verified','earliest trusted event receipt remains the winner');
+  }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('event similarity guard lets sparse unavailable results defer without native proof fields',async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'event-unavailable-'));
+  try{
+    const job={runId:'unavailable-run',resultId:'unavailable-run'};
+    const runtime={service:{processBatch:async(_period,verify)=>verify([job],{id:'daily',kind:'daily'}),archivePeriod:async()=>assert.fail('unexpected archive')}};
+    const result=await runEventCoordinator(runtime,root,{limit:1,consumeInbox:async()=>({consumed:0}),
+      readWork:async()=>({periodIds:['daily'],archiveId:null}),verifyBatch:async()=>[{resultId:job.runId,status:'unavailable',reason:'engine_unavailable'}],
+      reviewSimilarity:createSimilarityReviewer(root)});
+    assert.equal(result.checked,1);
+    assert.equal(result.results[0].reason,'engine_unavailable');
+  }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
 test('intake alternates retry priority even under sustained fresh traffic', async () => {
   const f = fixture({}, 100), priorities = [];
   await runEventCoordinator(f.runtime, '/repo', { ...f.options,

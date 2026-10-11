@@ -10,6 +10,7 @@ export const TRACK_AGING_MS = 3600000;
 const OVERALL_COLLECTION = '0.6.2_s1_leaderboards_overall';
 const NORMAL_SELECTION_LIMIT = 16;
 const PER_TRACK_SELECTION_LIMIT = 8;
+const selectionQueuePreimages = new WeakMap();
 let trackNames;
 
 export function verifiedControlReference(slot, trackId) {
@@ -117,6 +118,21 @@ function impact(slot, doc) {
   return weight*Math.min(2,target/time)**2;
 }
 
+export function orderSelectedJobsFastestFirst(jobs) {
+  const byTrack=new Map();
+  for(const job of jobs){
+    if(!byTrack.has(job.trackId))byTrack.set(job.trackId,[]);
+    byTrack.get(job.trackId).push(job);
+  }
+  for(const rows of byTrack.values()) rows.sort((a,b)=>a.timeMs-b.timeMs);
+  const positions=new Map();
+  return jobs.map(job=>{
+    const index=positions.get(job.trackId)||0;
+    positions.set(job.trackId,index+1);
+    return byTrack.get(job.trackId)[index];
+  });
+}
+
 export function isConflict(error) {
   return ['ABORTED', 'FAILED_PRECONDITION', 'ALREADY_EXISTS'].includes(error.code) || [409, 412].includes(Number(error.status)) || /(?:^|\s)(409|412)(?:$|\s)/.test(String(error.message));
 }
@@ -153,12 +169,21 @@ export async function selectJobs(db, docs, now = Date.now(), {jobLimit = NORMAL_
     try{await db.call(':commit',{writes:[db.write(queueCollection,doc.data.trackId,{...doc.data,...queueState(context.slots,now)},doc)]});}
     catch(error){if(!isConflict(error))throw error;selectionConflicts++;jobs=jobs.filter(job=>job.trackId!==doc.data.trackId);}
   }
-  return {jobs, canonicalAttempts, selectionConflicts};
+  const selected=orderSelectedJobsFastestFirst(jobs);
+  for(const job of selected){
+    const context=contexts.find(candidate=>candidate.doc.data.trackId===job.trackId&&
+      (candidate.doc.queueCollection||verificationCollectionForTrack(candidate.doc.data.trackId))===job.queueCollection);
+    if(!context?.changed&&typeof context?.doc.updateTime==='string'&&context.doc.updateTime){
+      selectionQueuePreimages.set(job,context.doc);
+    }
+  }
+  return {jobs:selected, canonicalAttempts, selectionConflicts};
 }
 
 export async function publishResults(db, jobs, results) {
   const totals = {verified: 0, verifiedByTrack: {}, mismatch: 0, unavailable: 0, superseded: 0, deferred: 0, corrected: 0, reviewFlagged:0, reviewInboxAdded:0, reasons: {}};
   const queueCache = new Map();
+  const acquiredQueueKeys = new Set();
   let stateCacheLoaded = false, stateCache = null;
   for (const result of results) {
     const job = jobs.find(j => j.resultId === result.resultId);
@@ -166,8 +191,15 @@ export async function publishResults(db, jobs, results) {
     const queueCollection = job.queueCollection || verificationCollectionForTrack(job.trackId);
     if (![VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION].includes(queueCollection)) throw Error('Invalid verification queue collection');
     const queueCacheKey = queueCollection + '/' + job.trackId;
+    const selectedPreimage=selectionQueuePreimages.get(job);
+    selectionQueuePreimages.delete(job);
+    const canUseSelectedPreimage=!acquiredQueueKeys.has(queueCacheKey)&&Boolean(selectedPreimage?.updateTime);
+    acquiredQueueKeys.add(queueCacheKey);
     for (let attempt = 0; attempt < 3; attempt++) {
-      const queue = queueCache.has(queueCacheKey) ? queueCache.get(queueCacheKey) : await db.get(queueCollection, job.trackId);
+      let queue=queueCache.get(queueCacheKey);
+      if(!queueCache.has(queueCacheKey)){
+        queue=attempt===0&&canUseSelectedPreimage?selectedPreimage:await db.get(queueCollection,job.trackId);
+      }
       if (!queueCache.has(queueCacheKey)) queueCache.set(queueCacheKey, queue);
       const current = await db.get('0.6.2_race_results', job.resultId);
       if (!queue || !current || verificationKey(current.data) !== job.queueKey ||

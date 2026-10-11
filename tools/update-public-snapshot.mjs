@@ -138,7 +138,7 @@ async function moveIntoHistory(root, sourceName, destinationName) {
   return true;
 }
 
-export async function updatePublicSnapshot({ root = moduleRoot, offline = false, fullPublic = false,
+export async function updatePublicSnapshot({ root = moduleRoot, offline = false, fullPublic = false, refreshReplays = false,
   capture = runPublicSnapshotBackup, captureTotals = capturePublicEventTotals,
   captureOptions = {}, exportPublic = exportPublicProfilesAndReplays, log = console.log } = {}) {
   const absoluteRoot = path.resolve(root);
@@ -161,12 +161,16 @@ export async function updatePublicSnapshot({ root = moduleRoot, offline = false,
       catch (error) { log(JSON.stringify({ publicEventTotalsBackup: { preservedPrevious: true, error: error.message } })); }
     }
   }
-  if (fullPublic) {
+  if (fullPublic || refreshReplays) {
     const previousProgress = await readJsonIfPresent(path.join(stagingDirectory, 'export-progress.json'));
-    const startFullSnapshot = previousProgress?.fullSnapshotPending !== true;
-    exportResult = await exportPublic({ directory: stagingDirectory, snapshotDirectory: stagingDirectory, maxDocuments: 2000,
-      fullSnapshot: startFullSnapshot, log });
-    const summary={counts:exportResult.counts,scanned:exportResult.scanned,capturedAt:new Date().toISOString(),
+    const previousSummary = await readJsonIfPresent(path.join(stagingDirectory, 'public-export-summary.json'));
+    const startFullSnapshot = fullPublic && previousProgress?.fullSnapshotPending !== true;
+    exportResult = await exportPublic({ directory: stagingDirectory, snapshotDirectory: stagingDirectory, maxDocuments: fullPublic ? 2000 : 100,
+      fullSnapshot: startFullSnapshot, includeProfiles: fullPublic, log });
+    const capturedAt = new Date().toISOString();
+    const summary={counts:exportResult.counts,scanned:exportResult.scanned,capturedAt,
+      profilesCapturedAt:fullPublic ? capturedAt : previousSummary?.profilesCapturedAt || previousSummary?.capturedAt || null,
+      replaysCapturedAt:capturedAt,
       coverage:exportResult.coverage||exportResult.totalCoverage,complete:exportResult.complete===true,
       budgetReached:exportResult.budgetReached===true,incompletePage:exportResult.incompletePage===true};
     await fs.writeFile(path.join(stagingDirectory,'public-export-summary.json'),JSON.stringify(summary)+'\n');
@@ -210,7 +214,7 @@ export async function updatePublicSnapshot({ root = moduleRoot, offline = false,
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const args = new Set(process.argv.slice(2));
-  const unknown = [...args].filter(arg => !['--offline', '--full-public'].includes(arg));
+  const unknown = [...args].filter(arg => !['--offline', '--full-public', '--refresh-replays'].includes(arg));
   if (unknown.length) throw new Error(`Unknown arguments: ${unknown.join(', ')}`);
-  await updatePublicSnapshot({ offline: args.has('--offline'), fullPublic: args.has('--full-public') });
+  await updatePublicSnapshot({ offline: args.has('--offline'), fullPublic: args.has('--full-public'), refreshReplays: args.has('--refresh-replays') });
 }

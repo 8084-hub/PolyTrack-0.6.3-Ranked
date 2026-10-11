@@ -14,6 +14,14 @@ async function fixture(t) {
   return root;
 }
 
+test('replay-only refresh has a 100-document cap and does not restart profile scans',async t=>{
+ const root=await fixture(t);let options;
+ await updatePublicSnapshot({root,offline:true,refreshReplays:true,exportPublic:async value=>{
+  options=value;return {complete:false,coverage:{complete:false},counts:{recordings:0}};
+ },log:()=>{}});
+ assert.equal(options.maxDocuments,100);assert.equal(options.includeProfiles,false);assert.equal(options.fullSnapshot,false);
+});
+
 test('offline mode packages staging, excludes progress, writes honest coverage and updates meta', async t => {
   const root = await fixture(t);
   const staging = path.join(root, 'local-reports', 'snapshot-staging');

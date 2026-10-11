@@ -13,15 +13,15 @@ class FakeDocument extends EventTarget {
     addEventListener(name, fn) { this.listeners[name] = fn; }, remove() { this.removed = true; } }; }
 }
 
-function harness({ response = { revision: 44 }, isIdle = () => true } = {}) {
-  const document = new FakeDocument(); let time = 1000, calls = 0, reloadChecks = 0, nextTimer = 0;
+function harness({ response = { revision: 44 }, isIdle = () => true, revision = 43 } = {}) {
+  const document = new FakeDocument(); let time = 1000, calls = 0, reloadChecks = 0, nextTimer = 0, currentResponse=response;
   const timers = new Map();
-  const handle = installSiteUpdates({ revision: 43, document, now: () => time, isIdle,
-    fetch: async (url, options) => { calls++; assert.equal(url, 'https://game.example/path/site-version.json');
-      assert.equal(options.cache, 'no-store'); return { ok: true, json: async () => response }; },
+  const handle = installSiteUpdates({ revision, document, now: () => time, isIdle,
+    fetch: async (url, options) => { calls++; const parsed=new URL(url);assert.equal(parsed.origin+parsed.pathname,'https://game.example/path/site-version.json');
+      assert.equal(parsed.searchParams.get('_updateCheck'),String(time));assert.equal(options.cache, 'no-store'); return { ok: true, json: async () => currentResponse }; },
     setTimeout: (fn, delay) => { const id = ++nextTimer; timers.set(id, { fn, delay }); return id; },
     clearTimeout: (id) => timers.delete(id), canReload: () => { reloadChecks++; return false; } });
-  return { document, handle, timers, get calls() { return calls; }, get reloadChecks() { return reloadChecks; }, setTime: (value) => { time = value; } };
+  return { document, handle, timers, get calls() { return calls; }, get reloadChecks() { return reloadChecks; }, setTime: (value) => { time = value; }, setResponse: value => { currentResponse=value; } };
 }
 
 test('checks same-origin version and offers reload only from a user-clickable notification', async () => {
@@ -31,6 +31,28 @@ test('checks same-origin version and offers reload only from a user-clickable no
   assert.equal(h.reloadChecks, 0, 'finding an update must not interrupt the current session');
   h.document.button.listeners.click();
   assert.equal(h.reloadChecks, 1, 'reload safety is checked only after an explicit click');
+  h.handle.dispose();
+});
+
+test('clears an obsolete update badge when the loaded revision is current', async () => {
+  const h=harness();await h.handle.check();
+  const badge=h.document.button;assert.equal(badge.dataset.siteUpdate,'available');
+  h.setTime(1000+30*60*1000);h.setResponse({revision:'44'});await h.handle.check();
+  assert.equal(badge.removed,undefined,'an invalid response must not clear a valid notification');
+  h.setTime(1000+60*60*1000);h.setResponse({revision:43});await h.handle.check();
+  assert.equal(badge.removed,true);assert.equal(h.document.button,badge);
+  h.setTime(1000+90*60*1000);h.setResponse({revision:45});await h.handle.check();
+  assert.notEqual(h.document.button,badge);assert.equal(h.document.button.dataset.siteUpdate,'available');
+  h.handle.dispose();
+});
+
+test('new bootstrap revision clears stale remote state but retains a genuinely newer release',async()=>{
+  const h=harness({revision:114,response:{revision:115}});await h.handle.check();
+  const badge=h.document.button;assert.ok(badge);
+  h.setTime(1000+30*60*1000);h.setResponse({revision:112});await h.handle.check();
+  assert.equal(badge.removed,true,'a stale remote manifest cannot leave the old badge visible');
+  h.setTime(1000+60*60*1000);h.setResponse({revision:115});await h.handle.check();
+  assert.equal(h.document.button.dataset.siteUpdate,'available','a revision newer than the loaded client remains visible');
   h.handle.dispose();
 });
 

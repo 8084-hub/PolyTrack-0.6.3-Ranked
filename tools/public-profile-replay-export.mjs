@@ -240,9 +240,10 @@ function currentRaceState(bindings, fingerprint, invalid, previous) {
 }
 
 export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directory, projectId = 'polytrack-052', maxDocuments = 2000,
-  pageSize = 100, log = () => {}, fullSnapshot = false, snapshotDirectory = directory} = {}) {
+  pageSize = 100, log = () => {}, fullSnapshot = false, includeProfiles = true, snapshotDirectory = directory} = {}) {
   if (typeof fetchImpl !== 'function' || typeof directory !== 'string' || !directory || typeof snapshotDirectory !== 'string' ||
       !Number.isSafeInteger(maxDocuments) || maxDocuments < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 ||
+      typeof includeProfiles !== 'boolean' || fullSnapshot && !includeProfiles ||
       typeof projectId !== 'string' || !/^[a-z][a-z0-9-]{4,62}[a-z0-9]$/.test(projectId)) throw Error('Invalid public export options');
   maxDocuments = Math.min(maxDocuments, MAX_DOCUMENTS_PER_RUN);
   await fs.mkdir(directory, {recursive: true});
@@ -250,19 +251,24 @@ export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directo
   let previous = {};
   try { previous = JSON.parse(await fs.readFile(progressPath, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; }
+  let savedSummary = {};
+  if (!includeProfiles) {
+    try { savedSummary = JSON.parse(await fs.readFile(path.join(directory, 'public-export-summary.json'), 'utf8')); }
+    catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; }
+  }
   const progress = {schemaVersion: 2, projectId,
     profiles: {cursor: fullSnapshot ? null : previous.profiles?.cursor ?? previous.cursors?.profiles ?? null,
       complete: fullSnapshot ? false : previous.profiles?.complete ?? previous.complete?.profiles === true,
       scanned: fullSnapshot ? 0 : previous.profiles?.scanned ?? previous.scanned ?? 0,
       ids: fullSnapshot ? [] : previous.profiles?.ids ?? []},
-    profileCount: fullSnapshot ? 0 : previous.profileCount ?? previous.counts?.profiles ?? 0,
+    profileCount: fullSnapshot ? 0 : previous.profileCount ?? previous.counts?.profiles ?? savedSummary.counts?.profiles ?? 0,
     profileSkipped: fullSnapshot ? 0 : previous.profileSkipped ?? 0,
     fullSnapshotPending: fullSnapshot || previous.fullSnapshotPending === true,
     raceExport: null};
   const staged = await loadStagedBindings(directory, snapshotDirectory);
   let usedThisRun = 0, budgetReached = false, incompletePage = false;
   const base = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents`;
-  if (!progress.profiles.complete) {
+  if (includeProfiles && !progress.profiles.complete) {
     while (usedThisRun < maxDocuments) {
       const limit = Math.min(pageSize, maxDocuments - usedThisRun);
       const response = await fetchImpl(`${base}:runQuery`, {method: 'POST', headers: {'content-type': 'application/json'},

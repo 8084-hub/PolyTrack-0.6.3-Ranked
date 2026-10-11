@@ -6374,7 +6374,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   let snapshotTrackStatistics = {};
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=112').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=114').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
       void reader('track-statistics').then(data=>{if(!data)return;snapshotTrackStatistics=data.tracks;updateTrackFreshnessBanner();}).catch(()=>{});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
@@ -8392,7 +8392,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=110',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:110,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=114',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:114,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);

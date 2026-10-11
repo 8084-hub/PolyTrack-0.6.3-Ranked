@@ -32,7 +32,7 @@ test('missing snapshot cannot interrupt physics verification',async()=>{
   const results=[{status:'verified',resultId:'x'}];
   assert.equal(await createSimilarityReviewer('/missing-snapshot')([{resultId:'x',trackId:'a'.repeat(64),replay:'bad',timeMs:6000}],results),results);
 });
-test('real decoded exact clones are held, near-time matches are review-only, and self is ignored',async()=>{
+test('real decoded exact clones are denied, near-time matches are review-only, and low-information patterns are ignored',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'similarity-'));
   try {
     const parts=[];
@@ -53,8 +53,8 @@ test('real decoded exact clones are held, near-time matches are review-only, and
     const reviewer=createSimilarityReviewer(root);
     const result={resultId:'x',status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:6000};
     await reviewer([{resultId:'x',accountId:'c'.repeat(64),trackId,timeMs:6000,replay,replayHash:hash}], [result]);
-    assert.equal(result.status,'unavailable');
-    assert.equal(result.reason,'identical_replay_pending_manual_review');
+    assert.equal(result.status,'mismatch');
+    assert.equal(result.reason,'exact_duplicate_run');
     assert.equal(similarityEvidence(result).kind,'identical_replay');
     assert.equal(similarityEvidence(result).trackName,'Summer 1');
     assert.equal(similarityEvidence(result).referenceAccountId,accountId);
@@ -78,12 +78,19 @@ test('real decoded exact clones are held, near-time matches are review-only, and
     assert.equal(similarityEvidence(near).finishGapMs,5);
     const batchA={resultId:'batch-a',status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:7000};
     const batchB={resultId:'batch-b',status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:7000};
-    await reviewer([{resultId:'batch-a',accountId:'d'.repeat(64),trackId,timeMs:7000,replay,replayHash:hash},
-      {resultId:'batch-b',accountId:'e'.repeat(64),trackId,timeMs:7000,replay,replayHash:hash}],[batchA,batchB]);
-    for(const item of [batchA,batchB]) {
-      assert.equal(item.status,'unavailable');
-      assert.equal(similarityEvidence(item).referenceSnapshot,'same_batch');
-    }
+    await reviewer([{resultId:'batch-b',accountId:'e'.repeat(64),trackId,timeMs:7000,replay,replayHash:hash,ingestedAt:'2026-10-11T00:00:02Z'},
+      {resultId:'batch-a',accountId:'d'.repeat(64),trackId,timeMs:7000,replay,replayHash:hash,ingestedAt:'2026-10-11T00:00:01Z'}],[batchA,batchB]);
+    assert.equal(batchA.status,'verified','earliest trusted ingestion remains the winner');
+    assert.equal(similarityEvidence(batchA),undefined);
+    assert.equal(batchB.status,'mismatch');
+    assert.equal(batchB.reason,'exact_duplicate_run');
+    assert.equal(similarityEvidence(batchB).referenceSnapshot,'same_batch');
+    const sameAccountA={resultId:'same-account-a',status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:7100};
+    const sameAccountB={resultId:'same-account-b',status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:7100};
+    await reviewer([{resultId:'same-account-a',accountId:'f'.repeat(64),trackId,timeMs:7100,replay,replayHash:hash,ingestedAt:'2026-10-11T00:00:01Z'},
+      {resultId:'same-account-b',accountId:'f'.repeat(64),trackId,timeMs:7100,replay,replayHash:hash,ingestedAt:'2026-10-11T00:00:02Z'}],[sameAccountA,sameAccountB]);
+    assert.equal(sameAccountA.status,'verified');
+    assert.equal(sameAccountB.status,'verified','same-account repetitions are not duplicate-account enforcement');
     const correctedCandidate={resultId:'candidate',accountId:'f'.repeat(64),trackId,timeMs:6000,replay,replayHash:hash,correctionCandidate:{frames:6000}};
     const candidateResult={resultId:'candidate',status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:6000};
     await reviewer([correctedCandidate],[candidateResult]);
@@ -91,6 +98,11 @@ test('real decoded exact clones are held, near-time matches are review-only, and
     assert.equal(similarityEvidence(candidateResult),undefined);
     const self={resultId:'self',status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:6000};
     await reviewer([{resultId:'self',accountId,trackId,timeMs:6000,replay,replayHash:hash}],[self]);
+    assert.equal(self.status,'verified','a racer matching their own trusted history is ignored');
     assert.equal(similarityEvidence(self),undefined);
+    const selfNear={resultId:'self-near',status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:6005};
+    await reviewer([{resultId:'self-near',accountId,trackId,timeMs:6005,replay,replayHash:hash}],[selfNear]);
+    assert.equal(selfNear.status,'verified');
+    assert.equal(similarityEvidence(selfNear),undefined);
   } finally {await fs.rm(root,{recursive:true,force:true});}
 });

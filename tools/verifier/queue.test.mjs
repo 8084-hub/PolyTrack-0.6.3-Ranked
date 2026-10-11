@@ -59,7 +59,7 @@ test('track scheduling prefers weight while reserving an aged queue and uses one
   assert.equal(fallback, docs);
 });
 
-test('selection reserves a genuinely overdue run then prioritizes relative pace across sparse tracks', async () => {
+test('overdue quota keeps its selected run but faster selected same-track jobs simulate first', async () => {
   const now = 10 * TRACK_AGING_MS;
   const rows = Array.from({length: 9}, (_, index) => ({...row, accountId: 'racer-' + index,
     timeMs: 1000 + index * 1000, frames: 1000 + index * 1000, uploadId: index + 1}));
@@ -75,8 +75,8 @@ test('selection reserves a genuinely overdue run then prioritizes relative pace 
       timeMs: parsed[4], frames: parsed[5], uploadId: parsed[6], replayHash: parsed[7]}});
   }
   const result = await selectJobs({get: async (_, id) => canonical.get(id), write: fakeWrite, call: async () => {}}, sparse, now);
-  assert.equal(result.jobs[0].accountId, 'racer-8');
-  assert.deepEqual(result.jobs.filter(job=>job.trackId==='track-a').slice(1).map(job => job.timeMs), [1000, 2000, 3000, 4000, 5000, 6000, 7000]);
+  assert.deepEqual(result.jobs.filter(job=>job.trackId==='track-a').map(job => job.timeMs), [1000, 2000, 3000, 4000, 5000, 6000, 7000, 9000]);
+  assert.ok(result.jobs.some(job=>job.accountId==='racer-8'),'the overdue reservation remains selected');
   assert.deepEqual(result.jobs.filter(job=>job.trackId!=='track-a').map(job => job.trackId), ['track-b', 'track-c']);
   assert.equal(result.canonicalAttempts, 10);
 });

@@ -1,5 +1,7 @@
 import { createRequire } from 'node:module';
 import { eventRuntime, eventWork, consumeEventInbox } from '../../workers/ranked/src/events-runtime.js';
+import { VERIFIER_ENGINE_DIGEST, VERIFIER_VERSION } from '../../workers/ranked/src/verification.js';
+import { createSimilarityReviewer } from './similarity.mjs';
 
 export const EVENT_JOB_LIMIT = 16;
 function runtime(db, now = Date.now) {
@@ -12,10 +14,10 @@ export async function checkEventWork(db, { now = Date.now } = {}) {
 export async function runEventVerification(db, root, { now = Date.now, verifyBatch, limit = EVENT_JOB_LIMIT, intakeLimit = 16, canSpend = () => true, selectionState } = {}) {
   const r = runtime(db, typeof now === 'function' ? now : () => now);
   const verify = verifyBatch || createRequire(import.meta.url)('./verify.cjs').verifyBatch;
-  return runEventCoordinator(r, root, { verifyBatch: verify, limit, intakeLimit, canSpend, selectionState });
+  return runEventCoordinator(r, root, { verifyBatch: verify, reviewSimilarity:createSimilarityReviewer(root), limit, intakeLimit, canSpend, selectionState });
 }
 export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_JOB_LIMIT, intakeLimit = 16,
-  consumeInbox = consumeEventInbox, readWork = eventWork, canSpend = () => true, selectionState } = {}) {
+  consumeInbox = consumeEventInbox, readWork = eventWork, canSpend = () => true, selectionState, reviewSimilarity } = {}) {
   if (!Number.isInteger(limit) || limit < 1 || limit > EVENT_JOB_LIMIT) throw Error('Event job limit');
   if (!Number.isInteger(intakeLimit) || intakeLimit < 1 || intakeLimit > 16) throw Error('Event intake limit');
   let consumed = 0, rejected = false, budgetDeferred = false;
@@ -42,9 +44,17 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
     if (!canSpend(128)) { budgetDeferred = true; break; }
     const periodId = pending.shift();
     const published = await r.service.processBatch(periodId, (jobs,period)=>{
-        if(period.kind!=='kodub')return verifyBatch(root,jobs);
+        const verifyAndReview = async (trustedJobs, trustedPeriod, trustedTracks) => {
+          const verified = await verifyBatch(root,trustedJobs,trustedTracks);
+          if (reviewSimilarity) {
+            assertBoundEventResults(trustedJobs,trustedPeriod,verified);
+            await reviewSimilarity(trustedJobs,verified);
+          }
+          return verified;
+        };
+        if(period.kind!=='kodub')return verifyAndReview(jobs,period);
         if(!jobs.every(job=>job.trackId===period.trackId))throw Error('Kodub verifier period mismatch');
-        return verifyBatch(root,jobs,[{trackId:period.trackId,code:period.kodub.trackCode,codeHash:period.kodub.trackCodeHash}]);
+        return verifyAndReview(jobs,period,[{trackId:period.trackId,code:period.kodub.trackCode,codeHash:period.kodub.trackCodeHash}]);
       }, Math.min(4, limit - checked));
     checked += published.length; results.push(...published);
     if (published.length && selectionState) selectionState.lastPeriodId = periodId;
@@ -55,4 +65,23 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
   if (work.archiveId && canSpend(24)) { await r.service.archivePeriod(work.archiveId); archived = work.archiveId; }
   else if (work.archiveId) budgetDeferred = true;
   return { checked, consumed, rejected, archived, results, budgetDeferred };
+}
+
+function assertBoundEventResults(jobs,period,results) {
+  if(!Array.isArray(results)||results.length!==jobs.length||new Set(results.map(row=>row?.resultId)).size!==jobs.length)throw Error('Invalid event verifier result set');
+  const seen=new Set();
+  for(const job of jobs){
+    const resultId=job.runId||job.resultId;
+    const result=results.find(row=>row?.resultId===resultId);
+    if(!result||seen.has(resultId)||!['verified','mismatch','unavailable'].includes(result.status))throw Error('Invalid event verifier result binding');
+    seen.add(resultId);
+    if(result.status==='unavailable')continue;
+    if(result.trackId!==job.trackId||result.timeMs!==job.timeMs||result.replayHash!==job.replayHash)throw Error('Invalid event verifier result binding');
+    const binding=result.binding;
+    if(result.engineDigest!==VERIFIER_ENGINE_DIGEST||binding?.engineDigest!==VERIFIER_ENGINE_DIGEST||
+      binding.verifierVersion!==VERIFIER_VERSION||binding.resultId!==resultId||binding.trackId!==job.trackId||
+      binding.nativeTrackId!==job.trackId||binding.timeMs!==job.timeMs||binding.replayHash!==job.replayHash||
+      binding.actualReplayHash!==job.replayHash||binding.trackContentHash!==result.trackContentHash||
+      period.kind==='kodub'&&binding.trackContentHash!==period.kodub?.trackCodeHash)throw Error('Invalid event verifier proof');
+  }
 }
