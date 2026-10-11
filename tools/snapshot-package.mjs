@@ -7,6 +7,49 @@ import { promisify } from 'node:util';
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 
+export function buildTrackStatistics(files) {
+  const byPath = new Map(files.map(({ logicalPath, value }) => [logicalPath, value]));
+  const manifest = byPath.get('manifest.json');
+  const exportSummary = byPath.get('public-export-summary.json');
+  const overall = byPath.get('overall.json');
+  const manifestTracks = manifest?.tracks && typeof manifest.tracks === 'object' && !Array.isArray(manifest.tracks) ? manifest.tracks : {};
+  const tracks = {};
+  let present = 0;
+  let allComplete = true;
+  for (const [trackId, record] of Object.entries(manifestTracks)) {
+    if (!/^[a-f0-9]{64}$/.test(trackId)) continue;
+    const snapshot = byPath.get(`tracks/${trackId}.json`);
+    if (!snapshot || record?.path === null || !Array.isArray(snapshot.entries)) {
+      tracks[trackId] = { count: null, players: null, totalEntries: null, complete: false, weight: null,
+        revision: Number.isSafeInteger(record?.revision) ? record.revision : null,
+        updatedAt: Number.isSafeInteger(record?.sourceUpdatedAt) ? record.sourceUpdatedAt : null,
+        capturedAt: Number.isSafeInteger(record?.checkedAt) && record.checkedAt > 0 ? new Date(record.checkedAt).toISOString() : null };
+      allComplete = false;
+      continue;
+    }
+    present += 1;
+    const entries = snapshot.entries;
+    const accountIds = entries.map(row => row?.accountId || row?.userId);
+    const uniqueIds = new Set(accountIds);
+    const totalEntries = Number.isSafeInteger(snapshot.totalEntries) && snapshot.totalEntries >= 0 ? snapshot.totalEntries : null;
+    const complete = snapshot.complete === true && totalEntries === entries.length &&
+      accountIds.every(id => typeof id === 'string' && /^[a-f0-9]{64}$/.test(id)) && uniqueIds.size === entries.length;
+    const weights = [...new Set(entries.map(row => row?.weight).filter(value => Number.isFinite(value) && value >= 0))];
+    const weight = entries.length && weights.length === 1 && entries.every(row => Number.isFinite(row?.weight) && row.weight >= 0 && row.weight === weights[0]) ? weights[0] : null;
+    tracks[trackId] = { count: entries.length, players: complete ? uniqueIds.size : null, totalEntries, complete, weight,
+      revision: Number.isSafeInteger(snapshot.revision) ? snapshot.revision : Number.isSafeInteger(record?.revision) ? record.revision : null,
+      updatedAt: Number.isSafeInteger(snapshot.updatedAt) ? snapshot.updatedAt : null,
+      capturedAt: Number.isSafeInteger(record?.checkedAt) && record.checkedAt > 0 ? new Date(record.checkedAt).toISOString() : null };
+    if (!complete) allComplete = false;
+  }
+  const tracksKnown = Number.isSafeInteger(manifest?.trackIdsKnown) && manifest.trackIdsKnown >= 0 ? manifest.trackIdsKnown : null;
+  return { schemaVersion: 1, complete: tracksKnown !== null && present === tracksKnown && Object.keys(tracks).length === tracksKnown && allComplete,
+    tracksKnown, tracksPresent: present,
+    capturedAt: typeof exportSummary?.capturedAt === 'string' ? exportSummary.capturedAt : null,
+    revision: Number.isSafeInteger(overall?.revision) ? overall.revision : Number.isSafeInteger(overall?.sourceRevision) ? overall.sourceRevision : null,
+    updatedAt: Number.isSafeInteger(overall?.updatedAt) ? overall.updatedAt : null, tracks };
+}
+
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_DECODED_BYTES = 2 * 1024 * 1024;
 export const SNAPSHOT_XOR_KEY = 0xa7;
@@ -63,16 +106,21 @@ async function collectJsonFiles(directory) {
       const fullPath = path.join(current, entry.name);
       if (entry.isSymbolicLink()) throw new Error(`Snapshot staging cannot contain symlinks: ${nextRelative}`);
       if (entry.isDirectory()) await walk(fullPath, nextRelative);
-      else if (entry.isFile() && entry.name.endsWith('.json') && entry.name !== 'export-progress.json') {
+      else if (entry.isFile() && entry.name.endsWith('.json') && entry.name !== 'export-progress.json' && nextRelative !== 'track-statistics.json') {
         const logicalPath = safeRelativePath(nextRelative);
         const bytes = await fs.readFile(fullPath);
         if (bytes.byteLength > MAX_DECODED_BYTES) throw new RangeError(`${logicalPath} exceeds decoded limit (${MAX_DECODED_BYTES} bytes)`);
-        try { JSON.parse(bytes.toString('utf8')); } catch (error) { throw new Error(`${logicalPath} is not valid JSON`, { cause: error }); }
-        entries.push({ logicalPath, bytes });
+        let value;
+        try { value = JSON.parse(bytes.toString('utf8')); } catch (error) { throw new Error(`${logicalPath} is not valid JSON`, { cause: error }); }
+        entries.push({ logicalPath, bytes, value });
       }
     }
   }
   await walk(directory);
+  const statistics = buildTrackStatistics(entries.filter(entry => entry.logicalPath !== 'track-statistics.json'));
+  const statisticsBytes = Buffer.from(`${JSON.stringify(statistics)}\n`, 'utf8');
+  if (statisticsBytes.byteLength > MAX_DECODED_BYTES) throw new RangeError('track-statistics.json exceeds decoded limit');
+  entries.push({ logicalPath: 'track-statistics.json', bytes: statisticsBytes, value: statistics });
   entries.sort((a, b) => a.logicalPath.localeCompare(b.logicalPath, 'en'));
   if (!entries.length) throw new Error('Staging directory contains no JSON snapshots');
   return entries;

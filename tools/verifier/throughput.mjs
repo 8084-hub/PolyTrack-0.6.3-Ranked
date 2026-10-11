@@ -65,8 +65,12 @@ export async function drainVerification({runRound,requests,now=()=>performance.n
     if(!normalProgress&&!eventProgress&&!pruned) {stop='no_progress';break;}
   }
   const reasons={};
+  const verifiedByTrack={};
   for (const round of rounds) for (const [reason,count] of Object.entries(round.reasons || {})) {
     reasons[reason]=(reasons[reason] || 0)+Number(count || 0);
+  }
+  for (const round of rounds) for (const [trackId,count] of Object.entries(round.verifiedByTrack || {})) {
+    verifiedByTrack[trackId]=(verifiedByTrack[trackId] || 0)+Number(count || 0);
   }
   const summary={rounds:rounds.length,processed:rounds.reduce((n,r)=>n+r.processed,0),
     eventChecked:rounds.reduce((n,r)=>n+r.events.checked,0),
@@ -74,7 +78,7 @@ export async function drainVerification({runRound,requests,now=()=>performance.n
     unavailable:rounds.reduce((n,r)=>n+(r.unavailable||0),0),
     mismatch:rounds.reduce((n,r)=>n+(r.mismatch||0),0),
     deferred:rounds.reduce((n,r)=>n+(r.deferred||0),0),
-    superseded:rounds.reduce((n,r)=>n+(r.superseded||0),0),reasons,
+    superseded:rounds.reduce((n,r)=>n+(r.superseded||0),0),reasons,verifiedByTrack,
     normalQueueReturnedDocuments:rounds.reduce((n,r)=>n+(r.normalQueueReturnedDocuments||0),0),
     unusedEventReservedSlots:rounds.reduce((n,r)=>n+(r.unusedEventReservedSlots||0),0),
     normalIdleSlots:rounds.reduce((n,r)=>n+(r.normalIdleSlots||0),0),

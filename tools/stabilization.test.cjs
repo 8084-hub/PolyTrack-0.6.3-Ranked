@@ -589,3 +589,9 @@ test('earned cosmetic hover preserves reason and award date',()=>{
  assert.match(reason('unlock:stripe:overdrive',{}),/3 distinct official or Rolling Hills/);
  assert.match(reason('unlock:emblem:target',{cosmeticUnlocks:['emblem:target'],serverAchievements:{beatOwner:{unlocks:[{cosmeticId:'emblem:target',unlockedAt:1000000000000}]}}}),/Permanently earned on/);
 });
+
+ test('Firestore compact overall details are restored before profile and planner decoding',async()=>{
+  let expanded=0;const ctx={unpackOverallDetailsForClient:async data=>{expanded++;return {...data,entries:[{userId:'me',bestTracks:[{trackId:'summer1'}],cosmeticUnlocks:['ice']}]};},decodeRankedResults:data=>data.entries};
+  const rows=await run('expandRankedResults',ctx)({entries:[{userId:'me'}],entryDetailsVersion:1,entryDetailsBundle:'packed'});
+  assert.equal(expanded,1);assert.equal(rows[0].bestTracks[0].trackId,'summer1');assert.equal(rows[0].cosmeticUnlocks[0],'ice');
+ });

@@ -1115,6 +1115,16 @@ test('event scheduling chooses fastest impact, reserving only one overdue slot p
  assert.deepEqual(prioritizedEventSlots(slots,p,at,4).map(s=>s.runId),['slow','first','second','third']);
  slots[0].leaseUntil=at+1;assert.equal(prioritizedEventSlots(slots,p,at,4).some(s=>s.runId==='slow'),false);
 });
+test('event scheduling preserves an overdue slot at reduced positive capacities',()=>{
+ const at=7200000,slot=(runId,timeMs,receivedAt=at)=>({runId,timeMs,receivedAt,notBefore:receivedAt,leaseUntil:0,attempts:0});
+ const slots=[slot('overdue-slow',25000,1),slot('fast-a',10000),slot('fast-b',11000),slot('fast-c',12000)];
+ for(const limit of [1,2,3]) {
+  const selected=prioritizedEventSlots(slots,p,at,limit).map(row=>row.runId);
+  assert.equal(selected.length,limit);
+  assert.equal(selected[0],'overdue-slow',`limit ${limit} must reserve one overdue run`);
+ }
+ assert.deepEqual(prioritizedEventSlots(slots,p,at,0),[]);
+});
 test('legacy event queue priority reuses public playback times rather than reading replay candidates',()=>{
  const slots=['slow','fast','middle'].map(runId=>({runId,notBefore:1000,leaseUntil:0,attempts:0}));
  const playbacks=[{runId:'slow',timeMs:30000},{runId:'fast',timeMs:10000},{runId:'middle',timeMs:20000}];

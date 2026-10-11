@@ -3,7 +3,7 @@ import {sameHashMap} from './engine-pin.cjs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {connect, decode} from './firestore.mjs';
-import {QUEUE_CANDIDATE_LIMIT, prioritizeQueueDocuments, selectJobs, publishResults} from './runner.mjs';
+import {QUEUE_CANDIDATE_LIMIT, prioritizeQueueDocuments, selectJobs, publishResults, verifiedTrackCounts} from './runner.mjs';
 import {budgetDatabase, drainVerification, DRAIN_LIMITS, CATCH_UP_LIMITS} from './throughput.mjs';
 import {loadWeeklyTrustedTrack} from './weekly-track.mjs';
 import {createSimilarityReviewer} from './similarity.mjs';
@@ -147,6 +147,7 @@ export async function runVerifier({check = false, drain = false, catchUp = false
     'Time admission is measured, not a completion guarantee; the workflow step timeout remains the hard stop. '+
     'Interrupted-round publication counts are incomplete, not zero. `stop` explains why this invocation ended; a round is not a GitHub workflow run number. '+
     'Unknown or untrusted tracks remain unavailable rather than admitting user-supplied track data.\n'+
+    `\nVerified tracks:\n${verifiedTrackCounts(summary.verifiedByTrack).map(track=>`- ${track.trackName}: ${track.count}`).join('\n') || '- None'}\n`+
     (summary.stop==='firestore_throttled'?'Firestore returned a deferred throttle response. No commit was replayed; queue state will be reread by a later scheduled run. Publication counts for the interrupted round are incomplete.\n':''));
   return summary;
 }
@@ -218,10 +219,11 @@ export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNorma
   const totals = await publishNormal(db, jobs, results);
   const reasons = totals.reasons;
   log(JSON.stringify({processed: jobs.length, canonicalAttempts, selectionConflicts, ...idleCounts, ...totals, reasons, firestoreRequests: db.requests()}));
-  if(env.GITHUB_STEP_SUMMARY)fs.appendFileSync(env.GITHUB_STEP_SUMMARY,`## Replay verification\nProcessed: ${jobs.length}. Verified: ${totals.verified}. Corrected legacy times: ${totals.corrected}. Waiting: ${totals.unavailable}. Deferred conflicts: ${totals.deferred}. Review inbox additions: ${totals.reviewInboxAdded||0} (manual review, not cheating verdicts).\n\n${Object.entries(reasons).map(([reason,count])=>'- '+reason+': '+count).join('\n')}\n`);
+  const tracks = verifiedTrackCounts(totals.verifiedByTrack);
+  if(env.GITHUB_STEP_SUMMARY)fs.appendFileSync(env.GITHUB_STEP_SUMMARY,`## Replay verification\nProcessed: ${jobs.length}. Verified: ${totals.verified}. Corrected legacy times: ${totals.corrected}. Waiting: ${totals.unavailable}. Deferred conflicts: ${totals.deferred}. Review inbox additions: ${totals.reviewInboxAdded||0} (manual review, not cheating verdicts).\n\nVerified tracks:\n${tracks.length ? tracks.map(track=>`- ${track.trackName}: ${track.count}`).join('\n') : '- None'}\n\n${Object.entries(reasons).map(([reason,count])=>'- '+reason+': '+count).join('\n')}\n`);
   if(results.some(r=>r.reason==='engine_unavailable')){console.error('Verifier startup failed. Runs remain waiting; inspect the startup diagnostic.');process.exitCode=1;}
   return {processed:jobs.length,canonicalAttempts,selectionConflicts,...idleCounts,...totals,events:eventSummary,
-    infrastructureFailure:eventFailure||results.some(infrastructure)};
+    verifiedByTrack:totals.verifiedByTrack, infrastructureFailure:eventFailure||results.some(infrastructure)};
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

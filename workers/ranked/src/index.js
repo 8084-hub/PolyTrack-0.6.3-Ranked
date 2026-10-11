@@ -1,8 +1,9 @@
 import { safePublicName } from './public-name-policy.js';
 import {kodubWeekly} from './kodub-weekly.js';
 import { eventWorkerHandler, eventWorkerMaintenance } from './events-worker.js';
-import {packPlannerResults, plannerDocumentBytes, PLANNER_BUNDLE_VERSION, PLANNER_PUBLICATION_VERSION} from './planner-results.js';
+import {packPlannerResults, plannerDocumentBytes, PLANNER_BUNDLE_VERSION, PLANNER_PUBLICATION_VERSION, PLANNER_DOCUMENT_BUDGET} from './planner-results.js';
 export {packPlannerResults} from './planner-results.js';
+import {compactOverallEntries, compactOverallSnapshot, unpackOverallDetails, OVERALL_DETAILS_VERSION} from './overall-details.js';
 import { VERIFICATION_BOOTSTRAP_ID, VERIFICATION_BOOTSTRAP_BATCH, bootstrapSlots, VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION, verificationCollectionForTrack, verificationSchedule, verificationKey, hasAcceptedVerifiedProof, verifiedVerdict, verifiedTargetMs, pendingSlot } from './verification.js';
 import { aggregateServerAchievements, BEAT_OWNER_STAGES, OWNER_PUBLIC_ID, SERVER_ACHIEVEMENT_VERSION, SPECIAL_ROLLING_HILLS_TRACK_ID } from './server-achievements.js';
 import { EXTRA_TRACK_IDS } from './extra-track-ids.js';
@@ -28,6 +29,8 @@ const UNRANKED_EXTRA_TRACK_ID = '586fbb2ef6e638f8d22e050342896497f22da6302ff081e
 const OVERALL_BOARD_PAGE_SIZE = 100;
 const OVERALL_BOARD_LIMIT = 500;
 const REBUILD_COOLDOWN_MS = 15 * 60 * 1000;
+const OVERALL_REBUILD_FAILURE_BASE_MS = 15 * 60 * 1000;
+const OVERALL_REBUILD_FAILURE_MAX_MS = 2 * 60 * 60 * 1000;
 const overallBuildRequests = new WeakMap();
 const BACKGROUND_REPAIR_INTERVAL_MS = 30 * 60 * 1000;
 const OVERALL_INCOMPLETE_RETRY_LIMIT = 1;
@@ -391,6 +394,17 @@ async function loadFirestoreRequest(env, path, init = {}) {
 async function readDocument(env, collection, id) {
   const payload = await firestoreRequest(env, `/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`);
   return payload ? { id, data: decodeFields(payload.fields || {}), updateTime: payload.updateTime || '' } : null;
+}
+
+async function readOverallSnapshot(env) {
+  const document = await readDocument(env, COLLECTIONS.overall, 'main');
+  return document ? {...document, data: await unpackOverallDetails(document.data)} : null;
+}
+
+async function writeOverallSnapshot(env, prior, data) {
+  const compacted = await compactOverallSnapshot(data);
+  if (plannerDocumentBytes(compacted) >= PLANNER_DOCUMENT_BUDGET) throw Error('OVERALL_DOCUMENT_CAP');
+  return writeDocument(env, COLLECTIONS.overall, 'main', compacted, prior?.updateTime || '');
 }
 
 async function readDocumentsForCollections(env, requests) {
@@ -1266,10 +1280,44 @@ async function loadOverallRebuild(env, force = false) {
   const metaDoc = await readDocument(env, COLLECTIONS.meta, 'current');
   const meta = metaDoc?.data || {};
   const now = Date.now();
+  const retryAt = Number(meta.overallRebuildRetryAt || 0);
+  if (!force && Number.isSafeInteger(retryAt) && retryAt > now) {
+    return {rebuilt: false, reason: 'failure_cooldown', retryAt,
+      attempts: Number(meta.overallRebuildFailureAttempts || 0)};
+  }
   const metricsOutdated = Number(meta.plannerPublicationVersion || 0) < PLANNER_PUBLICATION_VERSION || Number(meta.plannerBundleVersion || 0) < PLANNER_BUNDLE_VERSION || Number(meta.cosmeticEntitlementVersion||0)<COSMETIC_ENTITLEMENT_VERSION || Number(meta.averagePlacementVersion || 0) < AVERAGE_PLACEMENT_VERSION || Number(meta.derivedMetricsVersion || 0) < DERIVED_METRICS_VERSION;
   if (!force && !metricsOutdated && (!meta.dirty || now - Number(meta.lastOverallBuildAt || 0) < REBUILD_COOLDOWN_MS)) return { rebuilt: false, reason: meta.dirty ? 'cooldown' : 'clean', revision: Number(meta.builtRevision || 0) };
+  try {
+    return await buildOverallSnapshot(env, metaDoc, meta, now);
+  } catch (error) {
+    await recordOverallRebuildFailure(env, meta);
+    throw error;
+  }
+}
+
+async function recordOverallRebuildFailure(env, initialMeta) {
+  try {
+    const currentDoc = await readDocument(env, COLLECTIONS.meta, 'current');
+    const current = currentDoc?.data || {};
+    const buildTime = Number(current.lastOverallBuildAt || 0);
+    if (buildTime > Number(initialMeta.lastOverallBuildAt || 0) &&
+        Number(current.builtRevision || 0) >= Number(current.revision || 0)) return;
+
+    const previousAttempts = Number.isSafeInteger(current.overallRebuildFailureAttempts)
+      ? Math.max(0, current.overallRebuildFailureAttempts) : 0;
+    const attempts = Math.min(previousAttempts + 1, 5);
+    const retryDelay = Math.min(OVERALL_REBUILD_FAILURE_MAX_MS,
+      OVERALL_REBUILD_FAILURE_BASE_MS * 2 ** Math.min(attempts - 1, 4));
+    await commitDocuments(env, [{collection: COLLECTIONS.meta, id: 'current', prior: currentDoc,
+      data: {...current, overallRebuildFailureAttempts: attempts, overallRebuildRetryAt: Date.now() + retryDelay}}]);
+  } catch {
+    // Failure bookkeeping must not hide the original build error or weaken CAS.
+  }
+}
+
+async function buildOverallSnapshot(env, metaDoc, meta, now) {
   const {boards, limitReached: boardLimitReached} = await readOverallBoards(env);
-  const priorDoc = await readDocument(env, COLLECTIONS.overall, 'main');
+  const priorDoc = await readOverallSnapshot(env);
   const prior = priorDoc?.data || {};
   const revision = Number(meta.revision || 0);
   const migration = (await readDocument(env, COLLECTIONS.jobs, 'release_migration'))?.data || {};
@@ -1350,7 +1398,8 @@ async function loadOverallRebuild(env, force = false) {
   const overallIncompleteReason = boardLimitReached ? 'board-query-limit'
     : sourceIncomplete ? 'source-track-incomplete'
       : totalEntries > OVERALL_LIMIT ? 'publication-limit' : '';
-  const snapshot = { entries, trackSummaries, complete: sourceTracksComplete && totalEntries <= OVERALL_LIMIT,
+  const compacted = await compactOverallEntries(entries);
+  const snapshot = { entries: compacted.entries, trackSummaries, complete: sourceTracksComplete && totalEntries <= OVERALL_LIMIT,
     totalEntries, totalEntriesExact: sourceTracksComplete, publishedEntries: entries.length,
     authorityAudit: aggregated.audit, betaPolicy: {version: 1, open: openBetaEnabled(env), config: 'OPEN_BETA_ENABLED'},
     updatedAt: now, builtAt: now, seededBy: 'polytrack-ranked-worker',
@@ -1358,6 +1407,10 @@ async function loadOverallRebuild(env, force = false) {
     schemaVersion: TRACK_SCHEMA_VERSION, averagePlacementVersion: AVERAGE_PLACEMENT_VERSION,
     derivedMetricsVersion: DERIVED_METRICS_VERSION, serverAchievementVersion: SERVER_ACHIEVEMENT_VERSION,
     entryLimit: OVERALL_LIMIT, trackLimit: TRACK_LIMIT };
+  if (compacted.entryDetailsBundle) {
+    snapshot.entryDetailsBundle = compacted.entryDetailsBundle;
+    snapshot.entryDetailsVersion = compacted.entryDetailsVersion;
+  }
   const packed = await packPlannerResults(computedEntries, snapshot, {
     boardCount: boards.length, boardLimit: OVERALL_BOARD_LIMIT, boardLimitReached
   });
@@ -1372,8 +1425,11 @@ async function loadOverallRebuild(env, force = false) {
   } else {
     Object.assign(snapshot, packed);
   }
-  if (plannerDocumentBytes(snapshot) >= 1048576) throw Error('OVERALL_DOCUMENT_CAP');
-  await commitDocuments(env,[...entitlementWrites,...resultWrites,{collection:COLLECTIONS.overall,id:'main',prior:priorDoc,data: snapshot},{collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data: { ...meta, plannerPublicationVersion:PLANNER_PUBLICATION_VERSION, plannerBundleVersion:PLANNER_BUNDLE_VERSION, cosmeticEntitlementVersion:COSMETIC_ENTITLEMENT_VERSION, serverAchievementVersion:SERVER_ACHIEVEMENT_VERSION,
+  if (plannerDocumentBytes(snapshot) >= PLANNER_DOCUMENT_BUDGET) throw Error('OVERALL_DOCUMENT_CAP');
+  const successMeta = {...meta};
+  delete successMeta.overallRebuildFailureAttempts;
+  delete successMeta.overallRebuildRetryAt;
+  await commitDocuments(env,[...entitlementWrites,...resultWrites,{collection:COLLECTIONS.overall,id:'main',prior:priorDoc,data: snapshot},{collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data: { ...successMeta, plannerPublicationVersion:PLANNER_PUBLICATION_VERSION, plannerBundleVersion:PLANNER_BUNDLE_VERSION, cosmeticEntitlementVersion:COSMETIC_ENTITLEMENT_VERSION, serverAchievementVersion:SERVER_ACHIEVEMENT_VERSION,
     dirty: incompleteRetryPending, overallComplete: snapshot.complete, overallSourceComplete: sourceTracksComplete,
     overallIncompleteReason, overallIncompleteRevision: sourceIncomplete ? revision : 0,
     overallIncompleteObservations: incompleteObservations, overallRetryPending: incompleteRetryPending,
@@ -1427,7 +1483,7 @@ async function saveGroupCode(env, accountId, groupCode) {
     const [tagPrior, directoryPrior, overall] = await Promise.all([
       readDocument(env, COLLECTIONS.groupTags, tagId),
       readDocument(env, COLLECTIONS.groupTags, 'current'),
-      readDocument(env, COLLECTIONS.overall, 'main')
+      readOverallSnapshot(env)
     ]);
     const updatedAt = Date.now();
     const accounts = {...(directoryPrior?.data?.accounts || {})};
@@ -1458,8 +1514,11 @@ async function saveGroupCode(env, accountId, groupCode) {
         else delete updated.groupCode;
         return updated;
       });
-      if (found) writes.push({collection: COLLECTIONS.overall, id: 'main', prior: overall,
-        data: {...overall.data, entries, identityUpdatedAt: updatedAt}});
+      if (found) {
+        const data = await compactOverallSnapshot({...overall.data, entries, identityUpdatedAt: updatedAt});
+        if (plannerDocumentBytes(data) >= PLANNER_DOCUMENT_BUDGET) throw Error('OVERALL_DOCUMENT_CAP');
+        writes.push({collection: COLLECTIONS.overall, id: 'main', prior: overall, data});
+      }
     }
     try {
       await commitDocuments(env, writes);
@@ -1510,7 +1569,7 @@ async function updateProfileCosmetics(request, env, context, uid, body) {
   const cosmetics = sanitizeProfileCosmetics(body.cosmetics);
   if(profile.data.cosmeticsSyncedAt && JSON.stringify(cosmetics)!==JSON.stringify(sanitizeProfileCosmetics(profile.data.profileCosmetics)))return json(origin,env,409,{error:'cosmetics_superseded'});
   const [overall, badge] = await Promise.all([
-    readDocument(env, COLLECTIONS.overall, 'main'),
+    readOverallSnapshot(env),
     readDocument(env, COLLECTIONS.badges, accountId)
   ]);
   const entry = (Array.isArray(overall?.data?.entries) ? overall.data.entries : []).find((row) => safeText(row.userId || row.accountId, 128) === accountId) || {};
@@ -1519,7 +1578,7 @@ async function updateProfileCosmetics(request, env, context, uid, body) {
   await writeDocument(env, COLLECTIONS.profiles, accountId, { ...profile.data, profileCosmetics: cosmetics, updatedAt: Date.now() }, profile.updateTime);
   if (overall?.data && Array.isArray(overall.data.entries)) {
     const entries = overall.data.entries.map((row) => safeText(row.userId || row.accountId, 128) === accountId ? { ...row, profileCosmetics: cosmetics } : row);
-    await writeDocument(env, COLLECTIONS.overall, 'main', { ...overall.data, entries, identityUpdatedAt: Date.now() }, overall.updateTime);
+    await writeOverallSnapshot(env, overall, { ...overall.data, entries, identityUpdatedAt: Date.now() });
   }
   return notifyProfile(request, env, context, uid, { accountId });
 }
@@ -1591,7 +1650,7 @@ async function processCosmeticJobs(env) {
     const cosmetics = sanitizeProfileCosmetics(job.data.cosmetics);
     const issuedBeta = await ensureProfileBetaEntitlement(env, accountId);
     const [overall, badge] = await Promise.all([
-      readDocument(env, COLLECTIONS.overall, 'main'),
+      readOverallSnapshot(env),
       readDocument(env, COLLECTIONS.badges, accountId)
     ]);
     const entry = (Array.isArray(overall?.data?.entries) ? overall.data.entries : []).find((row) => safeText(row.userId || row.accountId, 128) === accountId) || {};
@@ -1603,7 +1662,7 @@ async function processCosmeticJobs(env) {
     await writeDocument(env, COLLECTIONS.profiles, accountId, { ...profile.data, profileCosmetics: cosmetics, updatedAt: Math.max(Number(profile.data.updatedAt || 0), Number(job.data.updatedAt || 0)) }, profile.updateTime);
     if (overall?.data && Array.isArray(overall.data.entries)) {
       const entries = overall.data.entries.map((row) => safeText(row.userId || row.accountId, 128) === accountId ? { ...row, profileCosmetics: cosmetics } : row);
-      await writeDocument(env, COLLECTIONS.overall, 'main', { ...overall.data, entries, identityUpdatedAt: Date.now() }, overall.updateTime);
+      await writeOverallSnapshot(env, overall, { ...overall.data, entries, identityUpdatedAt: Date.now() });
     }
     const deferred = [];
     const origin = [...allowedOrigins(env)][0] || '';
@@ -1705,6 +1764,7 @@ async function publicSnapshot(request, env, context, origin, collection, id) {
   cacheUrl.searchParams.set('__algorithm', ALGORITHM_VERSION);
   cacheUrl.searchParams.set('__averagePlacement', String(AVERAGE_PLACEMENT_VERSION));
   cacheUrl.searchParams.set('__integrityState', String(INTEGRITY_STATE_VERSION));
+  cacheUrl.searchParams.set('__entryDetails', String(OVERALL_DETAILS_VERSION));
   const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
   if (cache) {
     const cached = await cache.match(cacheKey);
@@ -1732,16 +1792,18 @@ async function publicSnapshot(request, env, context, origin, collection, id) {
           }
           return response;
         }
-        const data = collection === COLLECTIONS.track && Array.isArray(snapshot.data.entries)
+        const overallData = collection === COLLECTIONS.overall && id === 'main'
+          ? await unpackOverallDetails(snapshot.data) : snapshot.data;
+        const data = collection === COLLECTIONS.track && Array.isArray(overallData.entries)
           ? {
-              ...snapshot.data,
+              ...overallData,
               integrityStateVersion: INTEGRITY_STATE_VERSION,
-              entries: snapshot.data.entries.map((entry) => ({
+              entries: overallData.entries.map((entry) => ({
                 ...entry,
                 verifiedState: entry.runVerified === true ? 1 : 0,
               })),
             }
-          : snapshot.data;
+          : overallData;
         const response = json(origin, env, 200, data, 'public, max-age=60, stale-while-revalidate=30');
         if (cache && context.waitUntil) {
           const fill = Promise.resolve().then(() => cache.put(cacheKey, response.clone()))

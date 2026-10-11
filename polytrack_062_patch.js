@@ -2709,6 +2709,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function ensureRecordPlacementUi(){
     if(recordPlacementUi)return Promise.resolve(recordPlacementUi);
     if(!recordPlacementUiPromise){
+      void readPublicSnapshotBackup('track-statistics');
       recordPlacementUiPromise=import(recordPlacementModuleUrl).then((module)=>{
         const warmSnapshot=module.createPlacementSnapshotWarmer({
           read:trackId=>readPublicSnapshotBackup('track',trackId),
@@ -4317,7 +4318,13 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(message || 'Timed out')),milliseconds);})
     ]).finally(()=>clearTimeout(timer));
   }
+  let overallDetailsModulePromise=null;
+  async function unpackOverallDetailsForClient(data){
+    if(!overallDetailsModulePromise)overallDetailsModulePromise=import('./workers/ranked/src/overall-details.js?v=111').catch(error=>{overallDetailsModulePromise=null;throw error;});
+    return (await overallDetailsModulePromise).unpackOverallDetails(data);
+  }
   async function expandRankedResults(data){
+    if(data?.entryDetailsVersion!==undefined||data?.entryDetailsBundle!==undefined)data=await unpackOverallDetailsForClient(data);
     if(data?.resultBundleVersion!==1||typeof data.resultBundle!=='string'||typeof DecompressionStream==='undefined')return decodeRankedResults(data);
     try{
       if(data.resultBundle.length>1400000)return decodeRankedResults(data);
@@ -6292,9 +6299,11 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       button.title='Refresh published standings';button.setAttribute('aria-label',button.title);
     }
   }
+  let snapshotTrackStatistics = {};
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=110').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=111').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
+      void reader('track-statistics').then(data=>{if(!data)return;snapshotTrackStatistics=data.tracks;updateTrackFreshnessBanner();}).catch(()=>{});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
       void reader('snapshot-meta').then(meta=>{const at=Date.parse(meta?.capturedAt||'');if(Number.isFinite(at)&&at>0&&at<=Date.now())publicSnapshotCapturedAt=at;}).catch(()=>{});
       return reader;
@@ -8129,8 +8138,9 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const state=currentTrackLoadState;
     banner.className=`polytrack-track-freshness ${state.status==='stale'?'is-stale':state.status==='loading'?'is-loading':''}`;
     const cached=readTrackSnapshotCache(state.trackId);
-    const fieldSize=Math.max(0,Number(cached?.entries?.length||0)||0);
-    const weight=cachedTrackWeight(state.trackId,cached);
+    const statistics=snapshotTrackStatistics[state.trackId];
+    const fieldSize=cached?Math.max(0,Number(cached.entries?.length||0)||0):statistics?.complete===true?Number(statistics.players||0):0;
+    const weight=cached?cachedTrackWeight(state.trackId,cached):Number(statistics?.weight||0);
     const snapshotAt=Number(state.fetchedAt||0)||0;
     const checkedAt=Number(state.checkedAt||0)||0;
     const failed=state.status==='stale';

@@ -21,10 +21,11 @@ test('drain summary aggregates waiting reasons and distinguishes cap from workfl
   let calls=0;
   const result=await drainVerification({now:()=>0,requests:()=>calls*20,log:quiet,
     runRound:async()=>{calls++;return round({reasons:{missing_trusted_track:2,scan_work_limit:1},
-      unavailable:3,verified:13});}});
+      unavailable:3,verified:13,verifiedByTrack:{summer:6,desert:7}});}});
   assert.equal(result.rounds,4);
   assert.equal(result.stop,'round_limit');
   assert.deepEqual(result.reasons,{missing_trusted_track:8,scan_work_limit:4});
+  assert.deepEqual(result.verifiedByTrack,{summer:24,desert:28});
   assert.equal(result.unavailable,12);
 });
 

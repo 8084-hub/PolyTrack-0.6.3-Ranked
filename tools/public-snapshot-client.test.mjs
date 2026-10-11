@@ -164,6 +164,19 @@ test('snapshot capture metadata is bundled, shared, and never fetched from Fireb
   await fixture.read('snapshot-meta');assert.equal(fixture.calls(),2);
 });
 
+test('track statistics load through the compact static route and reject malformed totals',async()=>{
+  const id='a'.repeat(64),stats={schemaVersion:1,complete:false,tracksKnown:1,tracksPresent:1,capturedAt:null,revision:9,updatedAt:10,
+    tracks:{[id]:{count:2,players:null,totalEntries:4,complete:false,weight:0,revision:3,updatedAt:8,capturedAt:null}}};
+  const fixture=await packedFixture(stats,'track-statistics.json');
+  const loaded=await fixture.read('track-statistics');
+  assert.equal(loaded.tracks[id].count,2);
+  assert.equal(loaded.tracks[id].players,null);
+  assert.equal(loaded.tracks[id].weight,0);
+  assert.equal(fixture.calls(),2);
+  const invalid=await packedFixture({...stats,tracks:{[id]:{...stats.tracks[id],players:-1}}},'track-statistics.json');
+  assert.equal(await invalid.read('track-statistics'),null);
+});
+
 test('packed cosmetic directory loads public designs and rejects invalid identities',async()=>{
   const id='a'.repeat(64),fixture=await packedFixture({updatedAt:1,entries:{[id]:{at:1,value:{theme:'crimson',emblem2:'flag'}}}},'cosmetic-directory.json');
   assert.equal((await fixture.read('cosmetic-directory')).entries[id].value.emblem2,'flag');

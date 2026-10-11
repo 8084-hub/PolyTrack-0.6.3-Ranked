@@ -132,7 +132,8 @@ export function prioritizedEventSlots(slots, period, at, limit, playbacks = []) 
     return {slot,time:valid?time:Number.MAX_SAFE_INTEGER,score,age:Number(slot.receivedAt??saved?.submittedAt??slot.notBefore)};
   });
   const priority=[...due].sort((a,b)=>b.score-a.score||a.time-b.time||a.age-b.age||a.slot.runId.localeCompare(b.slot.runId));
-  const aged=due.filter(row=>at-row.age>=3600000).sort((a,b)=>a.age-b.age||b.score-a.score||a.slot.runId.localeCompare(b.slot.runId)).slice(0,Math.floor(limit/4));
+  const overdueLimit=limit>0?Math.max(1,Math.floor(limit/4)):0;
+  const aged=due.filter(row=>at-row.age>=3600000).sort((a,b)=>a.age-b.age||b.score-a.score||a.slot.runId.localeCompare(b.slot.runId)).slice(0,overdueLimit);
   const used=new Set(aged.map(row=>row.slot.runId));
   return [...aged,...priority.filter(row=>!used.has(row.slot.runId))].slice(0,limit).map(row=>row.slot);
 }

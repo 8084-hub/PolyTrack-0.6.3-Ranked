@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import {similarityEvidence} from './similarity.mjs';
 import {reviewInboxWrite} from './review-inbox.mjs';
 import {queueState, reconciledSlot, completedSlot} from './queue.mjs';
@@ -9,6 +10,20 @@ export const TRACK_AGING_MS = 3600000;
 const OVERALL_COLLECTION = '0.6.2_s1_leaderboards_overall';
 const NORMAL_SELECTION_LIMIT = 16;
 const PER_TRACK_SELECTION_LIMIT = 8;
+let trackNames;
+
+export function verifiedTrackCounts(byTrack = {}) {
+  if (!trackNames) {
+    try {
+      const geometry = JSON.parse(fs.readFileSync(new URL('./track-geometry.json', import.meta.url), 'utf8'));
+      trackNames = new Map((geometry.tracks || []).map(track => [String(track.id), String(track.name || '').split('/').at(-1).replace(/\.track$/i, '')
+        .replace(/([a-z])([0-9])/gi, '$1 $2').replace(/[-_]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())]));
+    } catch { trackNames = new Map(); }
+  }
+  return Object.entries(byTrack).filter(([, count]) => Number.isSafeInteger(count) && count > 0)
+    .sort(([a], [b]) => (trackNames.get(a) || a).localeCompare(trackNames.get(b) || b) || a.localeCompare(b))
+    .map(([trackId, count]) => ({trackId, trackName: trackNames.get(trackId) || trackId, count}));
+}
 
 export async function prioritizeQueueDocuments(db, docs, now = Date.now(), cache) {
   if (!Array.isArray(docs) || docs.length < 2) return Array.isArray(docs) ? docs : [];
@@ -29,7 +44,7 @@ export async function prioritizeQueueDocuments(db, docs, now = Date.now(), cache
     if (/^[A-Za-z0-9_-]{1,80}$/.test(trackId) && Number.isFinite(weight) && weight >= 0) {weights.set(trackId, weight);records.set(trackId, Number(row.recordMs || row.leader?.timeMs));}
   }
   const decorated = docs.map((doc, index) => ({doc, index, trackId: trackIds[index],
-    dueAt: Number(doc.data?.notBefore || 0), weight: weights.get(trackIds[index]) || 0}));
+    dueAt: Number(doc.data?.notBefore || 0), weight: weights.get(trackIds[index]) ?? 1}));
   decorated.sort((a, b) => b.weight - a.weight || a.dueAt - b.dueAt || a.trackId.localeCompare(b.trackId));
   const oldest = docs[0], oldestDueAt = Number(oldest.data?.notBefore || 0);
   if (Number.isFinite(oldestDueAt) && now - oldestDueAt >= TRACK_AGING_MS) {
@@ -100,7 +115,7 @@ export async function selectJobs(db, docs, now = Date.now(), {jobLimit = NORMAL_
 }
 
 export async function publishResults(db, jobs, results) {
-  const totals = {verified: 0, mismatch: 0, unavailable: 0, superseded: 0, deferred: 0, corrected: 0, reviewFlagged:0, reviewInboxAdded:0, reasons: {}};
+  const totals = {verified: 0, verifiedByTrack: {}, mismatch: 0, unavailable: 0, superseded: 0, deferred: 0, corrected: 0, reviewFlagged:0, reviewInboxAdded:0, reasons: {}};
   const queueCache = new Map();
   let stateCacheLoaded = false, stateCache = null;
   for (const result of results) {
@@ -203,6 +218,7 @@ export async function publishResults(db, jobs, results) {
           stateCacheLoaded = false;
         }
         totals[publication.status]++;
+        if (publication.status === 'verified') totals.verifiedByTrack[job.trackId] = (totals.verifiedByTrack[job.trackId] || 0) + 1;
         if(reviewWrite) totals.reviewInboxAdded++;
         if(publication.status==='verified' && similarityEvidence(result)) totals.reviewFlagged++;
         const reason = String(publication.reason || '').slice(0, 100);

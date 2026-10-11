@@ -88,7 +88,7 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     }
   }
   return async function read(kind,id='',accountId=''){
-    const path=kind==='snapshot-meta'?'public-export-summary.json':kind==='manifest'?'manifest.json':kind==='cosmetic-directory'?'cosmetic-directory.json':kind==='overall'?'overall.json':kind==='overall-results'?'overall-results.json':kind==='event-totals'?'event-totals.json':
+    const path=kind==='snapshot-meta'?'public-export-summary.json':kind==='track-statistics'?'track-statistics.json':kind==='manifest'?'manifest.json':kind==='cosmetic-directory'?'cosmetic-directory.json':kind==='overall'?'overall.json':kind==='overall-results'?'overall-results.json':kind==='event-totals'?'event-totals.json':
       kind==='track'&&/^[a-f0-9]{64}$/.test(id)?`tracks/${id}.json`:
       kind==='event'&&/^[A-Za-z0-9_-]{1,64}$/.test(id)?`events/${id}.json`:
       kind==='archive-month'&&/^\d{4}-(0[1-9]|1[0-2])$/.test(id)?`archives/${id}.json`:
@@ -114,8 +114,9 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
         }
         if(body.length>2*1024*1024)throw Error('Public backup exceeds size limit');
         const value=JSON.parse(body);
-        if(!value||typeof value!=='object'||Array.isArray(value)||(!['event-replay','snapshot-meta','manifest'].includes(kind)&&!Number.isFinite(value.updatedAt)))throw Error('Invalid public backup');
+        if(!value||typeof value!=='object'||Array.isArray(value)||(!['event-replay','snapshot-meta','manifest','track-statistics'].includes(kind)&&!Number.isFinite(value.updatedAt)))throw Error('Invalid public backup');
         if(kind==='snapshot-meta'&&(typeof value.capturedAt!=='string'||!Number.isFinite(Date.parse(value.capturedAt))||Date.parse(value.capturedAt)<=0))throw Error('Invalid snapshot capture date');
+        if(kind==='track-statistics'&&(value.schemaVersion!==1||typeof value.complete!=='boolean'||!value.tracks||typeof value.tracks!=='object'||Array.isArray(value.tracks)||Object.entries(value.tracks).some(([id,row])=>!/^[a-f0-9]{64}$/.test(id)||!row||typeof row!=='object'||typeof row.complete!=='boolean'||!(row.count===null||Number.isSafeInteger(row.count)&&row.count>=0)||!(row.players===null||Number.isSafeInteger(row.players)&&row.players>=0)||!(row.totalEntries===null||Number.isSafeInteger(row.totalEntries)&&row.totalEntries>=0)||!(row.weight===null||Number.isFinite(row.weight)&&row.weight>=0)||!(row.revision===null||Number.isSafeInteger(row.revision))||!(row.updatedAt===null||Number.isSafeInteger(row.updatedAt))||!(row.capturedAt===null||typeof row.capturedAt==='string'&&Number.isFinite(Date.parse(row.capturedAt))))))throw Error('Invalid public track statistics');
         if(kind==='manifest'&&(value.schemaVersion!==1||!value.tracks||typeof value.tracks!=='object'||Array.isArray(value.tracks)))throw Error('Invalid public snapshot manifest');
         if(kind==='track'&&value.trackId!==id)throw Error('Public track identity mismatch');
         if(kind==='event'&&value.id!==id)throw Error('Public event identity mismatch');

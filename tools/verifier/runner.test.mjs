@@ -1,12 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {publishResults} from './runner.mjs';
+import {publishResults, prioritizeQueueDocuments, verifiedTrackCounts} from './runner.mjs';
 import {VERIFICATION_COLLECTION, VERIFIER_ENGINE_DIGEST, VERIFIER_VERSION, verificationKey} from '../../workers/ranked/src/verification.js';
 
 const TRACK='5803f9e963625804e3de3246d043dc7dde847aa32e991f7f7326b0453f1fa038';
 const row={accountId:'racer',trackId:TRACK,timeMs:20000,raceTimeFrames:20000,frames:20000,uploadId:7,replayHash:'a'.repeat(64),replay:'fixture'};
 const job={...row,resultId:`racer_${TRACK}`,queueKey:verificationKey(row),queueCollection:VERIFICATION_COLLECTION};
 const verified={resultId:job.resultId,status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,reason:''};
+
+test('missing leaderboard metadata uses neutral track impact and names verified tracks',async()=>{
+ const docs=['unknown-track', 'known-track'].map((trackId,index)=>({data:{trackId,notBefore:index}}));
+ const prioritized=await prioritizeQueueDocuments({get:async()=>({data:{trackSummaries:[{trackId:'known-track',weight:0}]}})},docs,100);
+ assert.equal(prioritized.find(doc=>doc.data.trackId==='unknown-track').priorityWeight,1);
+ assert.equal(prioritized.find(doc=>doc.data.trackId==='known-track').priorityWeight,0);
+ const named=verifiedTrackCounts({[TRACK]:6,'unknown-track':2});
+ assert.deepEqual(named.find(track=>track.trackId===TRACK),{trackId:TRACK,trackName:'Summer 1',count:6});
+ assert.deepEqual(named.find(track=>track.trackId==='unknown-track'),{trackId:'unknown-track',trackName:'unknown-track',count:2});
+});
 
 test('publication adds the exact result ID to bounded reconciliation work in the same CAS transaction',async()=>{
  let committed;
@@ -16,7 +26,8 @@ test('publication adds the exact result ID to bounded reconciliation work in the
   write:(collection,id,data,prior)=>({collection,id,data,prior}),
   call:async(path,{writes})=>{committed=writes;return {};}
  };
- await publishResults(db,[job],[verified]);
+ const totals=await publishResults(db,[job],[verified]);
+ assert.deepEqual(totals.verifiedByTrack,{[TRACK]:1});
  const wake=committed.find(write=>write.collection==='0.6.2_s1_worker_jobs');
  assert.deepEqual(wake.data.pendingTrackIds,[TRACK]);
  assert.deepEqual(wake.data.pendingResultIds,{[TRACK]:[job.resultId]});

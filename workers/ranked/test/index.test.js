@@ -4,6 +4,7 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import rankedWorker, { overallTrackInput, rebuildOverall, rebuildTrack, mergeCanonicalResultIntoTrack, computeOverall, computeTrackEntries, handleRequest, migrateExtraVerificationQueues, profileCosmeticsUnlocked, reconcileCanonicalChanges, sanitizeProfileCosmetics, trackSnapshotIsCurrent, trackWeightParts, updateTrackIdentity } from '../src/index.js';
+import {compactOverallEntries, unpackOverallDetails} from '../src/overall-details.js';
 import {EXTRA_TRACK_IDS} from '../src/extra-track-ids.js';
 
 const TRACK = '5803f9e963625804e3de3246d043dc7dde847aa32e991f7f7326b0453f1fa038';
@@ -363,17 +364,19 @@ test('rejects notification for a result owned by another Firebase user', async (
 });
 
 test('cosmetic saves update the public overall snapshot before background propagation', async () => {
-  let overallWrite='',entitlementFields=null;const guardedPaths=[];
+  let overallWrite='',overallFields=null,entitlementFields=null;const guardedPaths=[];
   const accountId='cosmetic-racer';
+  const compacted=await compactOverallEntries([{userId:accountId,raceCount:8,extraCount:1,rank:4,
+    cosmeticUnlocks:['emblem:target']}]);
   const response=await handleRequest(new Request('https://ranked.example/v1/profile/cosmetics',{
     method:'POST',
     headers:{Origin:'https://staticquasar931.github.io','Content-Type':'application/json'},
-    body:JSON.stringify({accountId,cosmetics:{version:2,theme:'forest',stage:'night',stripe:'circuit',badge:'auto',overridePodium:true}})
+    body:JSON.stringify({accountId,cosmetics:{version:2,theme:'forest',stage:'night',stripe:'circuit',emblem:'target',badge:'auto',overridePodium:true}})
   }),{
     ALLOWED_ORIGINS:'https://staticquasar931.github.io',
     __TEST_UID:'signed-in-user',
     __TEST_FIRESTORE:async(path,init={})=>{
-      if(path===':commit'){for(const write of JSON.parse(init.body).writes){guardedPaths.push(write.currentDocument.updateTime);if(write.update.name.includes('cosmetic_entitlements'))entitlementFields=write.update.fields;if(write.update.name.includes('s1_leaderboards_overall'))overallWrite=JSON.stringify(write.update);}return {writeResults:[{updateTime:'2026-09-09T00:00:00Z'}]};}
+      if(path===':commit'){for(const write of JSON.parse(init.body).writes){guardedPaths.push(write.currentDocument.updateTime);if(write.update.name.includes('cosmetic_entitlements'))entitlementFields=write.update.fields;if(write.update.name.includes('s1_leaderboards_overall')){overallWrite=JSON.stringify(write.update);overallFields=write.update.fields;}}return {writeResults:[{updateTime:'2026-09-09T00:00:00Z'}]};}
       if(init.method==='PATCH'){
         if(path.includes('profiles_public')||path.includes('s1_leaderboards_overall'))guardedPaths.push(path);
         if(path.includes('s1_leaderboards_overall'))overallWrite=String(init.body||'');
@@ -382,12 +385,8 @@ test('cosmetic saves update the public overall snapshot before background propag
       if(path===':runQuery')return [];
       if(path.includes('cosmetic_entitlements'))return entitlementFields?{updateTime:'2026-09-09T00:00:00Z',fields:entitlementFields}:null;
       if(path.includes('profiles_public'))return {updateTime:'2026-09-05T00:00:00Z',fields:{accountId:{stringValue:accountId},ownerUid:{stringValue:'signed-in-user'},name:{stringValue:'Racer'},nickname:{stringValue:'Racer'},carStyle:{stringValue:'style'},isVerifier:{booleanValue:false},updatedAt:{integerValue:'1'}}};
-      if(path.includes('s1_leaderboards_overall'))return {updateTime:'2026-09-05T00:00:00Z',fields:{
-        revision:{integerValue:'7'},
-        entries:{arrayValue:{values:[{mapValue:{fields:{
-          userId:{stringValue:accountId},raceCount:{integerValue:'8'},extraCount:{integerValue:'1'},rank:{integerValue:'4'}
-        }}}]}}
-      }};
+      if(path.includes('s1_leaderboards_overall'))return {updateTime:'2026-09-05T00:00:00Z',fields:
+        wire({...compacted,revision:7}).mapValue.fields};
       return null;
     }
   });
@@ -397,6 +396,10 @@ test('cosmetic saves update the public overall snapshot before background propag
   assert.equal(payload.betaEntitlement.source,'open-beta-release');
   assert.match(overallWrite,/profileCosmetics/);
   assert.match(overallWrite,/circuit/);
+  assert.ok(overallFields.entryDetailsBundle);
+  const restored=await restoredOverall(overallFields);
+  assert.deepEqual(restored.entries[0].cosmeticUnlocks,['emblem:target']);
+  assert.equal(restored.entries[0].profileCosmetics.emblem,'target');
   assert.deepEqual(guardedPaths,[undefined,'2026-09-05T00:00:00Z','2026-09-05T00:00:00Z']);
 });
 
@@ -427,16 +430,23 @@ test('accepts an owned hash mismatch as pending without granting integrity verif
 });
 
 test('serves a complete public snapshot from the Worker API', async () => {
+  const compacted = await compactOverallEntries([{userId: 'racer', name: 'Racer', score: 4,
+    profileCosmetics: {frame: 'frame-a'}, serverAchievements: {casual: {count: 9}},
+    opportunityTracks: [{trackId: TRACK, rank: 2}]}]);
   const response = await handleRequest(new Request('https://ranked.example/v1/snapshot/overall', {
     headers: { Origin: 'https://staticquasar931.github.io' }
   }), {
     ALLOWED_ORIGINS: 'https://staticquasar931.github.io',
-    __TEST_FIRESTORE: async (path) => path.includes('leaderboards_overall') ? { fields: {
-      revision: { integerValue: '7' }, entries: { arrayValue: { values: [] } }, trackSummaries: { arrayValue: { values: [] } }
-    } } : null
+    __TEST_FIRESTORE: async (path) => path.includes('leaderboards_overall')
+      ? {fields: wire({...compacted, revision: 7, trackSummaries: []}).mapValue.fields} : null
   });
   assert.equal(response.status, 200);
-  assert.equal((await response.json()).revision, 7);
+  const payload = await response.json();
+  assert.equal(payload.revision, 7);
+  assert.deepEqual(payload.entries[0].opportunityTracks, [{trackId: TRACK, rank: 2}]);
+  assert.deepEqual(payload.entries[0].profileCosmetics, {frame: 'frame-a'});
+  assert.deepEqual(payload.entries[0].serverAchievements, {casual: {count: 9}});
+  assert.ok(!('entryDetailsBundle' in payload));
   assert.match(response.headers.get('Cache-Control'), /^public/);
 });
 
@@ -947,6 +957,9 @@ function unwire(value){
  if(value&&'nullValue'in value)return null;
  return value?.stringValue;
 }
+async function restoredOverall(fields){
+ return unpackOverallDetails(unwire({mapValue:{fields}}));
+}
 
 test('full track rebuild keeps its canonical scan bounded and still reconciles verifier slots',async()=>{
  let queryLimit=0,queueRead=false;const commits=[];
@@ -1190,7 +1203,7 @@ test('200-racer entitlement initialization uses one atomic batch within the Free
   if(path.includes('s1_release_meta'))return {fields:wire({dirty:true,revision:10}).mapValue.fields,updateTime:'2026-09-09T00:00:00Z'};
   return null;
  }},true);
-  assert.equal(result.racers,200);assert.equal(commit.writes.length,203);assert.equal(requests,6);
+   assert.equal(result.racers,200);assert.equal(commit.writes.length,202);assert.equal(requests,6);
  assert.ok(commit.writes.slice(0,200).every(w=>w.update.name.includes('cosmetic_entitlements')&&!w.currentDocument));
  assert.equal(commit.writes.at(-1).currentDocument.updateTime,'2026-09-09T00:00:00Z');
  assert.ok(JSON.stringify(commit).length<10*1024*1024);
@@ -1429,7 +1442,7 @@ test('unchanged canonical PB repairs its missing verification slot with no board
 });
 
 function overallFixture(boards) {
-  let failCommit = false;
+  let failCommit = false, failQuery = false;
   const commits = [];
   const documents = new Map();
   const calls = [];
@@ -1437,6 +1450,7 @@ function overallFixture(boards) {
   const env = {__TEST_FIRESTORE: async (p, init = {}) => {
     calls.push(p);
     if (p === ':runQuery') {
+      if (failQuery) { failQuery = false; throw Error('SOURCE_SCAN_FAILED'); }
       const q = JSON.parse(init.body).structuredQuery;
       assert.equal(q.from[0].collectionId, '0.6.2_s1_leaderboards_track');
       assert.ok(q.limit===100||q.limit===1);
@@ -1457,7 +1471,7 @@ function overallFixture(boards) {
     }
     return documents.get(p) || null;
   }};
-  return {env, calls, commits, documents, setFailCommit: value => {failCommit = value;}, snapshot: () => snapshot,
+  return {env, calls, commits, documents, setFailCommit: value => {failCommit = value;}, setFailQuery: value => {failQuery = value;}, snapshot: () => snapshot,
     sidecar: () => documents.get('/0.6.2_s1_leaderboards_overall/main_results')?.fields};
 }
 
@@ -1511,6 +1525,82 @@ test('normal overall updates wait fifteen minutes without reading source boards'
   const result=await rebuildOverall(f.env,false);
   assert.equal(result.reason,'cooldown');
   assert.deepEqual(f.calls.slice(before),['/0.6.2_s1_release_meta/current']);
+});
+
+test('failed overall scans persist bounded cooldown and later scheduled retries read only metadata despite new revisions', async () => {
+  const f=overallFixture([{trackId:TRACK,complete:true,entries:[]}]);
+  f.setFailQuery(true);
+  await assert.rejects(rebuildOverall(f.env,false),/SOURCE_SCAN_FAILED/);
+  const path='/0.6.2_s1_release_meta/current', doc=f.documents.get(path);
+  let meta=unwire({mapValue:{fields:doc.fields}});
+  assert.equal(meta.overallRebuildFailureAttempts,1);
+  assert.ok(meta.overallRebuildRetryAt>Date.now());
+  assert.equal(doc.updateTime,'v1');
+
+  doc.fields={...doc.fields, ...wire({revision:3922,builtRevision:3832,dirty:true}).mapValue.fields};
+  const before=f.calls.length;
+  const result=await rebuildOverall(f.env,false);
+  assert.equal(result.reason,'failure_cooldown');
+  assert.deepEqual(f.calls.slice(before),[path]);
+});
+
+test('successful overall rebuild clears persisted failure cooldown state', async () => {
+  const f=overallFixture([{trackId:TRACK,complete:true,entries:[]}]);
+  f.setFailQuery(true);
+  await assert.rejects(rebuildOverall(f.env,false),/SOURCE_SCAN_FAILED/);
+  const metaDoc=f.documents.get('/0.6.2_s1_release_meta/current');
+  metaDoc.fields.overallRebuildRetryAt=wire(Date.now()-1);
+  await rebuildOverall(f.env,false);
+  const meta=unwire({mapValue:{fields:f.documents.get('/0.6.2_s1_release_meta/current').fields}});
+  assert.equal(Object.hasOwn(meta,'overallRebuildFailureAttempts'),false);
+  assert.equal(Object.hasOwn(meta,'overallRebuildRetryAt'),false);
+});
+
+test('forced overall rebuild bypasses a persisted failure cooldown', async () => {
+  const f=overallFixture([{trackId:TRACK,complete:true,entries:[]}]);
+  f.setFailQuery(true);
+  await assert.rejects(rebuildOverall(f.env,false),/SOURCE_SCAN_FAILED/);
+  const before=f.calls.length;
+  const result=await rebuildOverall(f.env,true);
+  assert.equal(result.rebuilt,true);
+  assert.ok(f.calls.slice(before).includes(':runQuery'));
+  const meta=unwire({mapValue:{fields:f.documents.get('/0.6.2_s1_release_meta/current').fields}});
+  assert.equal(Object.hasOwn(meta,'overallRebuildFailureAttempts'),false);
+  assert.equal(Object.hasOwn(meta,'overallRebuildRetryAt'),false);
+});
+
+test('overall rebuild failure backoff doubles to a capped two hours', async () => {
+  const f=overallFixture([{trackId:TRACK,complete:true,entries:[]}]);
+  for(let attempt=1;attempt<=7;attempt++){
+    const started=Date.now();
+    f.setFailQuery(true);
+    await assert.rejects(rebuildOverall(f.env,attempt>1),/SOURCE_SCAN_FAILED/);
+    const meta=unwire({mapValue:{fields:f.documents.get('/0.6.2_s1_release_meta/current').fields}});
+    const expectedDelay=Math.min(2*60*60*1000,15*60*1000*2**(attempt-1));
+    assert.equal(meta.overallRebuildFailureAttempts,Math.min(attempt,5));
+    assert.ok(meta.overallRebuildRetryAt>=started+expectedDelay);
+    assert.ok(meta.overallRebuildRetryAt<=Date.now()+expectedDelay);
+  }
+});
+
+test('overall failure cooldown bookkeeping uses a fresh guarded metadata version and preserves the source error on conflict', async () => {
+  let metaReads=0, markerWrite;
+  const env={__TEST_FIRESTORE:async(path,init={})=>{
+    if(path==='/0.6.2_s1_release_meta/current'){
+      metaReads++;
+      const version=metaReads===1?'meta-before':'meta-after-concurrent-update';
+      return {fields:wire({revision:3922,builtRevision:3832,dirty:true}).mapValue.fields,updateTime:version};
+    }
+    if(path===':runQuery')throw Error('SOURCE_SCAN_FAILED');
+    if(path===':commit'){
+      markerWrite=JSON.parse(init.body).writes[0];
+      throw Error('FIRESTORE_409');
+    }
+    return null;
+  }};
+  await assert.rejects(rebuildOverall(env,false),/SOURCE_SCAN_FAILED/);
+  assert.equal(metaReads,2);
+  assert.equal(markerWrite.currentDocument.updateTime,'meta-after-concurrent-update');
 });
 
 test('overall completeness reports the exact full racer count when only publication is truncated', async () => {
@@ -1579,7 +1669,7 @@ test('a prior server beta badge is retained with immutable source metadata witho
   }};
   await rebuildOverall(env,true);
   const main=commit.writes.find(write=>write.update.name.endsWith('/0.6.2_s1_leaderboards_overall/main'));
-  const saved=unwire({mapValue:{fields:main.update.fields}});
+  const saved=await restoredOverall(main.update.fields);
   const beta=saved.entries.find(entry=>entry.userId==='beta-racer');
   assert.equal(beta.badges.betaTester,true);
   assert.deepEqual(beta.betaEntitlement,{id:'beta-tester',source:'ranked-overall-snapshot',sourceRevision:4,issuedAt:1700000000000,cutoffAt:0});
@@ -1603,7 +1693,7 @@ test('a legacy server entitlement retains beta for a returning racer absent from
   }};
   await rebuildOverall(env,true);
   const main=commit.writes.find(write=>write.update.name.endsWith('/0.6.2_s1_leaderboards_overall/main'));
-  const beta=unwire({mapValue:{fields:main.update.fields}}).entries.find(entry=>entry.userId==='returning-beta');
+   const beta=(await restoredOverall(main.update.fields)).entries.find(entry=>entry.userId==='returning-beta');
   assert.equal(beta.badges.betaTester,true);
   assert.equal(beta.betaEntitlement.source,'legacy-cosmetic-entitlement');
   assert.equal(beta.betaEntitlement.issuedAt,Date.parse('2026-09-01T00:00:00Z'));
@@ -1624,7 +1714,7 @@ test('open beta defaults on and server-issues beta to current racers without mig
   }};
   await rebuildOverall(env,true);
   const main=commit.writes.find(write=>write.update.name.endsWith('/0.6.2_s1_leaderboards_overall/main'));
-  const saved=unwire({mapValue:{fields:main.update.fields}});
+   const saved=await restoredOverall(main.update.fields);
   const beta=saved.entries.find(entry=>entry.userId==='new-063-racer');
   assert.equal(saved.betaPolicy.open,true);
   assert.equal(beta.badges.betaTester,true);
@@ -1650,7 +1740,7 @@ test('closing open beta excludes new racers but retains persisted server entitle
   }};
   await rebuildOverall(env,true);
   const main=commit.writes.find(write=>write.update.name.endsWith('/0.6.2_s1_leaderboards_overall/main'));
-  const saved=unwire({mapValue:{fields:main.update.fields}});
+   const saved=await restoredOverall(main.update.fields);
   const retained=saved.entries.find(entry=>entry.userId==='retained-beta');
   const fresh=saved.entries.find(entry=>entry.userId==='after-close');
   assert.equal(saved.betaPolicy.open,false);
@@ -1692,6 +1782,10 @@ test('planner packs all finishes losslessly without changing rankings or persist
   const stored = f.snapshot();
   assert.equal(stored.resultBundleVersion.integerValue, '1');
   assert.ok(stored.entries.arrayValue.values.every(e => !e.mapValue.fields.resultSamples && !e.mapValue.fields.resultData));
+  assert.ok(stored.entries.arrayValue.values.every(e => !e.mapValue.fields.bestTracks && !e.mapValue.fields.serverAchievements));
+  const restored = await unpackOverallDetails(unwire({mapValue: {fields: stored}}));
+  assert.equal(restored.entries.length, 2);
+  assert.ok(restored.entries.every(entry => Array.isArray(entry.bestTracks) && entry.serverAchievements));
   const storedDecoded = await unpackPlanner({resultBundle: stored.resultBundle.stringValue});
   assert.equal(storedDecoded.entries.find(entry => entry.userId === 'racer').extraCount, undefined);
 });
@@ -1719,12 +1813,12 @@ test('overflow returns a complete sidecar bundle and invalid or unavailable data
   } finally {globalThis.CompressionStream = original;}
 });
 
-function entropyBoards(seed) {
+function entropyBoards(seed, trackCount = 78) {
   let state = seed;
   const random = () => {state ^= state << 13; state ^= state >>> 17; state ^= state << 5; return (state >>> 0)/4294967296;};
   const token = length => Array.from({length}, () => '0123456789abcdef'[Math.floor(random()*16)]).join('');
   const users = Array.from({length: 200}, () => ({accountId: token(28), name: token(24)}));
-  return Array.from({length: 78}, () => ({trackId: token(64), updatedAt: 1780000000000,
+  return Array.from({length: trackCount}, () => ({trackId: token(64), updatedAt: 1780000000000,
     entries: users.map(user => ({...user, countryCode: 'US', carStyle: 'standard',
       timeMs: 10000+Math.floor(random()*290000), pbAt: 1700000000000+Math.floor(random()*100000000000),
       totalPlaytimeMs: Math.floor(random()*1000000000), accountCreatedAt: 1600000000000,
@@ -1899,7 +1993,7 @@ test('overall distinguishes an exact 500-board set from a capped 501-board set',
 
 
 test('overflow sidecar, main and metadata commit atomically; conflict cannot publish a mismatched pair',async()=>{
-  const f=overallFixture(entropyBoards(12345));
+  const f=overallFixture(entropyBoards(12345,200));
   await rebuildOverall(f.env,true);
   assert.equal(f.commits.length,1);
   const commit=f.commits[0];
@@ -1924,7 +2018,7 @@ test('overflow sidecar, main and metadata commit atomically; conflict cannot pub
 });
 
 test('thirty racers stay inline without sidecar reads or writes, and shrinking a board removes the old location',async()=>{
-  const boards=entropyBoards(2468);
+  const boards=entropyBoards(2468,200);
   const f=overallFixture(boards);
   await rebuildOverall(f.env,true);
   assert.ok(f.snapshot().resultBundleLocation);
@@ -1935,7 +2029,7 @@ test('thirty racers stay inline without sidecar reads or writes, and shrinking a
   assert.ok(!f.snapshot().resultBundleLocation);
   const decoded=await unpackPlanner({resultBundle:f.snapshot().resultBundle.stringValue});
   assert.equal(decoded.entries.length,30);
-  assert.ok(decoded.entries.every(row=>JSON.parse(row.resultData).length===78));
+  assert.ok(decoded.entries.every(row=>JSON.parse(row.resultData).length===200));
   assert.ok(!f.commits[1].some(w=>w.update.name.endsWith('/main_results')));
   assert.equal(JSON.stringify(f.sidecar()),oldSidecar);
   assert.equal(f.calls.filter(p=>p.endsWith('/main_results')).length,0);
