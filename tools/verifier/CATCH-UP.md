@@ -32,3 +32,7 @@ prevents duplicate simulation and competing publications.
 If waiting reasons include `missing_trusted_track`, `scan_work_limit`, or
 `time_limit`, longer batches do not repair those individual runs. They need
 separate diagnosis; slow or unavailable runs are never automatically approved.
+
+Within one drain, event batches resume after the last served period. This prevents twelve fast Catch-Up rounds from repeatedly serving only the first period while the clock-based discovery rotation is unchanged. The cursor is in memory only; event reservations, request caps, and retry eligibility do not change.
+
+A verified proof and a published green badge are distinct stages. Use the private diagnostic publication state to distinguish an accepted proof awaiting board reconciliation from a deferred verification retry. Repeated Catch-Up workflows cannot fix delayed publication. Normal native capacity is also conditional on the remaining shared request budget, not a guarantee of twelve checks when event intake is expensive.

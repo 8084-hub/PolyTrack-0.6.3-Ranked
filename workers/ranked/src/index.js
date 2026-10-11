@@ -985,7 +985,7 @@ export async function mergeCanonicalResultIntoTrack(env, trackId, canonicalResul
   return persistTrackSnapshot(env, trackId, entries, prior);
 }
 
-async function mergeCanonicalResultsIntoTrack(env, trackId, resultIds, canonicalById) {
+export async function mergeCanonicalResultsIntoTrack(env, trackId, resultIds, canonicalById) {
   const prior = await readDocument(env, COLLECTIONS.track, trackId);
   const snapshot = prior?.data;
   if (!trackSnapshotIsCurrent(snapshot, snapshot?.signature) || snapshot.complete !== true) return {fallback: true};
@@ -1127,11 +1127,15 @@ export async function reconcileCanonicalChanges(env, {scanResults = true, now = 
   if(forceFullRebuildAll)for(const trackId of queued)fullRebuildTracks.add(trackId);
   let rebuilt=0,targeted=0;
   const fallbackOnly = trackId => fullRebuildTracks.has(trackId) || !pendingResultIds[trackId]?.length;
-  const selected=[...Object.keys(pendingResultIds),...([...queued].filter(id=>!pendingResultIds[id]))]
-    .filter((id,index,list)=>queued.has(id)&&list.indexOf(id)===index
-      &&!(fallbackOnly(id)&&rebuildCoolingDown(id))
-      &&!(fallbackOnly(id)&&!failedFullRebuilds[id]
-        &&Object.keys(failedFullRebuilds).length>=RECONCILE_REBUILD_FAILURE_LIMIT)).slice(0,RECONCILE_TRACK_BATCH);
+  // Firestore map key order is not a durable cursor; rotate using the persisted array.
+  const eligible=[...queued].filter(id=>!(fallbackOnly(id)&&rebuildCoolingDown(id))
+    &&!(fallbackOnly(id)&&!failedFullRebuilds[id]
+      &&Object.keys(failedFullRebuilds).length>=RECONCILE_REBUILD_FAILURE_LIMIT));
+  const fullCandidates=eligible.filter(fallbackOnly);
+  // Reserve one existing slot for the oldest eligible full rebuild, then favor
+  // targeted work. Full work may borrow idle slots, never exceed the four-track cap.
+  const selected=[...fullCandidates.slice(0,1),...eligible.filter(id=>!fallbackOnly(id)),
+    ...fullCandidates.slice(1)].slice(0,RECONCILE_TRACK_BATCH);
   const targetGroups=[];let targetBudget=RECONCILE_TARGET_ID_BATCH;
   for(const trackId of selected){
     if(fullRebuildTracks.has(trackId)||!pendingResultIds[trackId]?.length)continue;
@@ -1150,6 +1154,8 @@ export async function reconcileCanonicalChanges(env, {scanResults = true, now = 
     const ids=pendingResultIds[trackId]||[];
     const targetedIds=targetGroups.find(([id])=>id===trackId)?.[1]||[];
     if(ids.length&&!targetedIds.length&&!fullRebuildTracks.has(trackId))continue;
+    // Failed, cooling and partially processed tracks yield to other pending tracks.
+    queued.delete(trackId);queued.add(trackId);
     let attemptedFullRebuild = false;
     try{
       let result;
@@ -1674,6 +1680,7 @@ async function publicSnapshot(request, env, context, origin, collection, id) {
     const cached = await cache.match(cacheKey);
     if (cached) return cached;
   }
+  if (!await allowPublicRead(request, env)) return rateLimited(origin, env);
   const key = cacheKey.url;
   let load = publicSnapshotLoads.get(key);
   if (!load) {
@@ -1682,10 +1689,6 @@ async function publicSnapshot(request, env, context, origin, collection, id) {
         if (publicSnapshotLoads.get(key) === load) publicSnapshotLoads.delete(key);
       };
       try {
-        if (!await allowPublicRead(request, env)) {
-          release();
-          return rateLimited(origin, env);
-        }
         const snapshot = await readDocument(env, collection, id);
         if (!snapshot) {
           const response = json(origin, env, 404, { error: 'snapshot_not_ready' }, 'public, max-age=10');
@@ -1709,7 +1712,7 @@ async function publicSnapshot(request, env, context, origin, collection, id) {
               })),
             }
           : snapshot.data;
-        const response = json(origin, env, 200, data, 'public, max-age=10, stale-while-revalidate=20');
+        const response = json(origin, env, 200, data, 'public, max-age=60, stale-while-revalidate=30');
         if (cache && context.waitUntil) {
           const fill = Promise.resolve().then(() => cache.put(cacheKey, response.clone()))
             .catch(() => {})
@@ -1725,6 +1728,36 @@ async function publicSnapshot(request, env, context, origin, collection, id) {
       }
     })();
     publicSnapshotLoads.set(key, load);
+  }
+  return (await load).clone();
+}
+
+async function publicStatus(request, env, context, origin) {
+  const cache = typeof caches !== 'undefined' ? caches.default : null;
+  const url = new URL('/__ranked_public_status/v1', request.url);
+  url.searchParams.set('origin', origin);
+  url.searchParams.set('config', JSON.stringify([ALGORITHM_VERSION, TRACK_SCHEMA_VERSION, AVERAGE_PLACEMENT_VERSION, DERIVED_METRICS_VERSION,
+    openBetaEnabled(env), String(env.RANKED_WRITES_ENABLED) !== 'false', String(env.MULTIPLAYER_ENABLED) !== 'false']));
+  const cacheKey = new Request(url, {method: 'GET'});
+  const cached = await cache?.match(cacheKey).catch(() => null);
+  if (cached) return cached;
+  // Admission is per caller; only the database read may be shared.
+  if (!await allowPublicRead(request, env)) return rateLimited(origin, env);
+  let load = publicSnapshotLoads.get(cacheKey.url);
+  if (!load) {
+    load = (async () => {
+      const release = () => { if (publicSnapshotLoads.get(cacheKey.url) === load) publicSnapshotLoads.delete(cacheKey.url); };
+      try {
+        const meta = (await readDocument(env, COLLECTIONS.meta, 'current'))?.data || {};
+        const response = json(origin, env, 200, { service: 'polytrack-ranked', algorithmVersion: ALGORITHM_VERSION, schemaVersion: TRACK_SCHEMA_VERSION, averagePlacementVersion: AVERAGE_PLACEMENT_VERSION, derivedMetricsVersion: Number(meta.derivedMetricsVersion || 0), currentDerivedMetricsVersion: DERIVED_METRICS_VERSION, openBetaEnabled: openBetaEnabled(env), rankedWritesEnabled: String(env.RANKED_WRITES_ENABLED) !== 'false', multiplayerEnabled: String(env.MULTIPLAYER_ENABLED) !== 'false', revision: Number(meta.revision || 0), builtRevision: Number(meta.builtRevision || 0), dirty: meta.dirty === true, pendingRevisions: Math.max(0, Number(meta.revision || 0) - Number(meta.builtRevision || 0)), updatedAt: Number(meta.updatedAt || 0) }, 'public, max-age=30');
+        // Keep concurrent requests joined until the edge cache is populated.
+        if (cache) await cache.put(cacheKey, response.clone()).catch(() => {});
+        return response;
+      } catch {
+        return json(origin, env, 503, {error: 'status_unavailable'});
+      } finally { release(); }
+    })();
+    publicSnapshotLoads.set(cacheKey.url, load);
   }
   return (await load).clone();
 }
@@ -1797,8 +1830,7 @@ export async function handleRequest(request, env, context = {}) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: responseHeaders(origin, env) });
   if (path === '/v1/kodub-weekly' || path.startsWith('/v1/kodub-weekly/')) return kodubWeekly(request,responseHeaders(origin,env),context);
   if (request.method === 'GET' && path === '/v1/status') {
-    const meta = (await readDocument(env, COLLECTIONS.meta, 'current').catch(() => null))?.data || {};
-    return json(origin, env, 200, { service: 'polytrack-ranked', algorithmVersion: ALGORITHM_VERSION, schemaVersion: TRACK_SCHEMA_VERSION, averagePlacementVersion: AVERAGE_PLACEMENT_VERSION, derivedMetricsVersion: Number(meta.derivedMetricsVersion || 0), currentDerivedMetricsVersion: DERIVED_METRICS_VERSION, openBetaEnabled: openBetaEnabled(env), rankedWritesEnabled: String(env.RANKED_WRITES_ENABLED) !== 'false', multiplayerEnabled: String(env.MULTIPLAYER_ENABLED) !== 'false', revision: Number(meta.revision || 0), builtRevision: Number(meta.builtRevision || 0), dirty: meta.dirty === true, pendingRevisions: Math.max(0, Number(meta.revision || 0) - Number(meta.builtRevision || 0)), updatedAt: Number(meta.updatedAt || 0) });
+    return publicStatus(request, env, context, origin);
   }
   if (request.method === 'GET' && path === '/v1/profile/group-code') {
     let uid;

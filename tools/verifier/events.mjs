@@ -9,13 +9,13 @@ function runtime(db, now = Date.now) {
 export async function checkEventWork(db, { now = Date.now } = {}) {
   return eventWork(runtime(db, typeof now === 'function' ? now : () => now));
 }
-export async function runEventVerification(db, root, { now = Date.now, verifyBatch, limit = EVENT_JOB_LIMIT, intakeLimit = 16, canSpend = () => true } = {}) {
+export async function runEventVerification(db, root, { now = Date.now, verifyBatch, limit = EVENT_JOB_LIMIT, intakeLimit = 16, canSpend = () => true, selectionState } = {}) {
   const r = runtime(db, typeof now === 'function' ? now : () => now);
   const verify = verifyBatch || createRequire(import.meta.url)('./verify.cjs').verifyBatch;
-  return runEventCoordinator(r, root, { verifyBatch: verify, limit, intakeLimit, canSpend });
+  return runEventCoordinator(r, root, { verifyBatch: verify, limit, intakeLimit, canSpend, selectionState });
 }
 export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_JOB_LIMIT, intakeLimit = 16,
-  consumeInbox = consumeEventInbox, readWork = eventWork, canSpend = () => true } = {}) {
+  consumeInbox = consumeEventInbox, readWork = eventWork, canSpend = () => true, selectionState } = {}) {
   if (!Number.isInteger(limit) || limit < 1 || limit > EVENT_JOB_LIMIT) throw Error('Event job limit');
   if (!Number.isInteger(intakeLimit) || intakeLimit < 1 || intakeLimit > 16) throw Error('Event intake limit');
   let consumed = 0, rejected = false, budgetDeferred = false;
@@ -32,6 +32,10 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
   let checked = 0;
   const results = [];
   const pending = [...work.periodIds];
+  // The clock-based discovery rotation may not change during a whole Catch-Up.
+  // Continue after the last served period without another read or persisted cursor.
+  const lastIndex = pending.indexOf(selectionState?.lastPeriodId);
+  if (lastIndex >= 0) pending.push(...pending.splice(0, lastIndex + 1));
   while (pending.length && checked < limit) {
     // Reserve before leasing: one lease and up to four completion transactions.
     // Existing adapter has no retries; each transaction uses at most sixteen reads.
@@ -43,6 +47,7 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
         return verifyBatch(root,jobs,[{trackId:period.trackId,code:period.kodub.trackCode,codeHash:period.kodub.trackCodeHash}]);
       }, Math.min(4, limit - checked));
     checked += published.length; results.push(...published);
+    if (published.length && selectionState) selectionState.lastPeriodId = periodId;
     if (published.some(result => result.reason === 'engine_unavailable')) break;
     if (published.length) pending.push(periodId);
   }

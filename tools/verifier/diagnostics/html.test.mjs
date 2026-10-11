@@ -11,13 +11,20 @@ test('HTML report escapes malicious identifiers and remains self-contained', () 
     runs: [{kind: 'normal', verificationLane: 'extra', accountId: '<img src=x onerror=alert(1)>', resultId: '" onclick="alert(2)',
       trackId: 'track', trackName: '</td><script>alert(3)</script>', status: 'verified', place: {rank: 1, fieldSize: 4},
       waitAgeMs: 4000, submittedAt: '2026-09-20T11:59:00.000Z', verifiedAt: '2026-09-20T12:00:00.000Z',
-      verificationLatencyMs: 60000, replay: 'secret replay must not render', reason: 'private native detail'}]
+      verificationLatencyMs: 60000, replay: 'secret replay must not render', reason: 'legacy_time_unconfirmed',
+      nativeReason: '<script>native-detail</script>', eligibility: 'retry_not_due', attempts: 0,
+      retryAt: '2026-09-21T12:00:00.000Z', publicationState: 'verified_not_published'}]
   });
   assert.match(html, /id="search"/);
   assert.match(html, /addEventListener\('input'/);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(html, /&lt;\/td&gt;&lt;script&gt;alert\(3\)&lt;\/script&gt;/);
-  assert.doesNotMatch(html, /<img src=x|<\/td><script>|secret replay|private native detail/);
+  assert.doesNotMatch(html, /<img src=x|<\/td><script>|secret replay|<script>native-detail/);
+  assert.match(html, /&lt;script&gt;native-detail&lt;\/script&gt;/);
+  assert.match(html, /legacy_time_unconfirmed/);
+  assert.match(html, /retry_not_due/);
+  assert.match(html, /verified_not_published/);
+  assert.match(html, /2026-09-21T12:00:00.000Z/);
   assert.doesNotMatch(html, /<script src=|https?:\/\//);
   assert.match(html, /Wait duration/);
   assert.match(html, /#1\/4/);

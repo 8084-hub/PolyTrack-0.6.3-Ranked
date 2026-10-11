@@ -1247,7 +1247,7 @@ export function mountFilterMenu({
 
   function open() {
     if (destroyed) return;
-    writeForm(refresh());
+    refresh();
     priorFocus = document.activeElement;
     overlay.hidden = false;
     for (const picker of overlay.querySelectorAll('.fm-user-picker')) {
@@ -1270,9 +1270,8 @@ export function mountFilterMenu({
     tracks = Array.isArray(currentTracks) ? currentTracks.filter(track => track && track.id != null) : [];
     const current = normalizeFilter(safeCall(getFilter, filter));
     filter = current;
-    for (const userPicker of [whitelistPicker, blacklistPicker]) userPicker.refresh();
-    countryPicker.render(); badgePicker.render(); renderTrackRules(); renderTrackWeights();
     groupCodeInput.value = cleanString(safeCall(getGroupCode, groupCodeInput.value), 6);
+    writeForm(filter);
     updateRuleNotice();
     local.paused = !current.enabled;
     pauseButton.textContent = local.paused ? 'Resume filters' : 'Pause filters';
@@ -1293,7 +1292,6 @@ export function mountFilterMenu({
 
   writeForm(filter);
   renderLoadouts();
-  renderTrackRules();
   if (local.paused !== !filter.enabled) {
     local.paused = !filter.enabled;
     saveLocal(storage, local);

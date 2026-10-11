@@ -349,6 +349,8 @@ export function mountRankedFilterPanel(options = {}) {
   const categories = Array.isArray(options.categories) && options.categories.length ? options.categories : RANKED_FILTER_CATEGORIES;
   const storage = options.storage ?? globalThis.localStorage;
   let rows = Array.isArray(options.rows) ? options.rows : [];
+  let loadedUsersRows = null;
+  let loadedUsersCache = new Map();
   let filter = normalizeRankedFilter(options.initialFilter, categories);
   let enabled = true;
 
@@ -509,14 +511,16 @@ export function mountRankedFilterPanel(options = {}) {
   }
 
   function loadedUsers() {
-    const users = new Map();
+    if (loadedUsersRows === rows) return loadedUsersCache;
+    loadedUsersRows = rows;
+    loadedUsersCache = new Map();
     for (const row of rows) {
       const id = rowId(row);
-      if (!id || users.has(id)) continue;
+      if (!id || loadedUsersCache.has(id)) continue;
       const name = typeof row.name === 'string' ? row.name.trim().slice(0, 80) : '';
-      users.set(id, name);
+      loadedUsersCache.set(id, name);
     }
-    return users;
+    return loadedUsersCache;
   }
 
   function refreshSelectedUsers(name) {
@@ -711,6 +715,7 @@ export function mountRankedFilterPanel(options = {}) {
     setFilter(value) { filter = normalizeRankedFilter(value, categories); writeForm(filter); return emit(); },
     update(nextRows) {
       rows = Array.isArray(nextRows) ? nextRows : [];
+      loadedUsersRows = null;
       for (const name of Object.keys(listInputs)) refreshSelectedUsers(name);
       refreshAvailability();
       return emit();

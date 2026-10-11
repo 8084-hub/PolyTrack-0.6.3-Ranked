@@ -183,6 +183,31 @@ test('manual catch-up is wired through the real runner with one setup and preser
   assert.deepEqual(f.order,Array.from({length:12},()=>['events','query','query','normal:12','publish']).flat());
 });
 
+test('real Catch-Up runner shares period selection state only within its invocation', async () => {
+  let prior;
+  for (let invocation = 0; invocation < 2; invocation++) {
+    const f = integration(4);
+    const base = f.options.eventRun;
+    let calls = 0, state;
+    f.options.catchUp = true;
+    f.options.env.GITHUB_EVENT_NAME = 'workflow_dispatch';
+    f.options.eventRun = async (db, root, options) => {
+      if (!state) {
+        state = options.selectionState;
+        assert.notEqual(state, prior);
+        assert.deepEqual(state, {});
+      }
+      assert.equal(options.selectionState, state);
+      assert.equal(state.lastPeriodId, calls ? String(calls) : undefined);
+      state.lastPeriodId = String(++calls);
+      return base(db, root, options);
+    };
+    await runVerifier(f.options);
+    assert.equal(calls, 12);
+    prior = state;
+  }
+});
+
 test('sustained events get first chance and four reserved simulations on every round',async()=>{
   const f=integration(4);const result=await runVerifier(f.options);
   assert.equal(result.processed,48);assert.equal(result.eventChecked,16);

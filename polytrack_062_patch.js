@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=105',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=106',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='105';
+  const extraCatalogRevision='106';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -1410,8 +1410,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       const tabs=Array.from(studio.querySelectorAll('[data-studio-tab]'));
       const active=tabs.findIndex(tab=>tab.getAttribute('aria-selected')==='true');
       const digit=e.shiftKey&&/^Digit[1-4]$/.test(e.code)?Number(e.code.slice(-1))-1:-1;
-      const direction=!e.shiftKey&&['ArrowRight','d','D'].includes(e.key)?1:!e.shiftKey&&['ArrowLeft','a','A'].includes(e.key)?-1:0;
       const tabKey=e.target.closest('[data-studio-tab]');
+      const direction=tabKey&&!e.shiftKey&&['ArrowRight','d','D'].includes(e.key)?1:tabKey&&!e.shiftKey&&['ArrowLeft','a','A'].includes(e.key)?-1:0;
       const edge=tabKey&&e.key==='Home'?0:tabKey&&e.key==='End'?tabs.length-1:-1;
       if(digit<0&&!direction&&edge<0)return;
       e.preventDefault();e.stopPropagation();
@@ -4674,7 +4674,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=105',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=106',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -4694,8 +4694,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=105',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=105',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=105',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=106',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=106',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=106',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -5958,18 +5958,18 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(status==='loading')parts.push(snapshotAt?`Saved snapshot ${ageLabel(snapshotAt)}`:'No saved snapshot','checking cloud now');
     else if(failed)parts.push(isOld?'Older saved standings':'Saved standings',snapshotAt?`${ageLabel(snapshotAt)}`:'age unknown','live refresh unavailable');
     else if(status==='cloud'||status==='pending')parts.push(`Cloud checked ${checkedAt?ageLabel(checkedAt):'just now'}`,snapshotAt?`changed ${ageLabel(snapshotAt)}`:'change time unavailable');
-    else parts.push(status==='snapshot'?'Snapshot data':'Cached data',snapshotAt?`changed ${ageLabel(snapshotAt)}`:'change time unavailable');
+    else parts.push(status==='snapshot'?snapshotCaptureLabel():'Cached data',snapshotAt?`standings changed ${ageLabel(snapshotAt)}`:'change time unavailable');
     const wait=isOld?0:Math.max(0,120000-(Date.now()-lastRankedManualRefreshAt));
     const automaticWait=Math.max(0,Number(overallLoadState.nextRefreshAt||0)-Date.now());
-    if(snapshotOnlyForNewAccount())parts.push('saved-data mode');
-    else if(status==='loading'){}
-    else if(wait>0&&!failed)parts.push(`next check in ${durationLabel(wait)}`);
-    else if(automaticWait>0&&status==='cache')parts.push(`refresh in ${durationLabel(automaticWait)}`);
-    else parts.push('click to refresh');
-    if(status==='snapshot')parts.push(snapshotCaptureLabel());
-    if(snapshotOnlyForNewAccount())parts.push(snapshotUnlockLabel());
+    const protectedReads=snapshotOnlyForNewAccount();
+    if(!protectedReads&&status!=='loading'){
+      if(wait>0&&!failed)parts.push(`next check in ${durationLabel(wait)}`);
+      else if(automaticWait>0&&status==='cache')parts.push(`refresh in ${durationLabel(automaticWait)}`);
+      else parts.push('click to refresh');
+    }
+    if(protectedReads)parts.push(snapshotUnlockLabel());
     el.textContent=parts.join(' · ');
-    el.title=`${snapshotOnlyForNewAccount()?snapshotAccessNotice():'Snapshot = standings bundled with the game, not live. Cached = standings saved on this device. Live = the last cloud response, not a continuous feed. Your newer local PB appears immediately; verification is separate. Select to request live updates.'} ${checkedAt?`Cloud last checked ${ageLabel(checkedAt)}.`:''}`.trim();
+    el.title=`${protectedReads?snapshotAccessNotice():'Snapshot = standings bundled with the game, not live. Cached = standings saved on this device. Live = the last cloud response, not a continuous feed. Your newer local PB appears immediately; verification is separate. Select to request live updates.'} ${checkedAt?`Cloud last checked ${ageLabel(checkedAt)}.`:''}`.trim();
     syncSnapshotRefreshControl(el);
     const streakEl=document.getElementById('overallStreakLeader');
     if(streakEl?.dataset.base&&streakEl.dataset.fetchedAt) streakEl.textContent=`${streakEl.dataset.base} · ${ageLabel(Number(streakEl.dataset.fetchedAt))}`;
@@ -6153,7 +6153,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function snapshotAccessNotice(){
     const state=snapshotRefreshState();
-    return `${state.needsFinish?'Save a first finish and wait for the timer to unlock live refresh.':'Your finish is saved. Only the timer remains before live refresh unlocks.'} Until then, snapshot standings and your local PB are available. Run submissions still work.`;
+    return `${state.needsFinish?'Live refresh unlocks after the timer and your first saved finish.':'Finish saved. Live refresh unlocks when the timer ends.'} You can race and save runs while using snapshot standings.`;
   }
   let snapshotCountdownWasLocked=false;
   // Only update visible status panels, never reload boards for a countdown.
@@ -6192,7 +6192,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     }
   }
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=105').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=106').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
       void reader('snapshot-meta').then(meta=>{const at=Date.parse(meta?.capturedAt||'');if(Number.isFinite(at)&&at>0&&at<=Date.now())publicSnapshotCapturedAt=at;}).catch(()=>{});
@@ -8179,7 +8179,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=105',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:105,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=106',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:106,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);

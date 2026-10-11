@@ -368,6 +368,32 @@ html.sq-reduced-effects body #injectedRankingsBtn.button-spawn { animation-durat
 #overallProfilePopup .profile-guide.is-empty .route-preview-empty small{font-size:calc(14px * var(--sq-ui-scale,1));color:#d2e2f5}
 
 /* High browser zoom leaves a short CSS viewport. Keep custom controls reachable. */
+#overallLeaderboardPanel .personal-filter-toggle {
+  box-sizing:border-box!important;min-width:0!important;min-height:40px!important;height:auto!important;
+  padding:8px 14px!important;font:20px/1.15 ForcedSquare,sans-serif!important;
+}
+#overallLeaderboardPanel .personal-filter-toggle[aria-pressed="false"] {background:#253865!important;color:#d9e6ff!important;}
+#overallLeaderboardPanel .personal-filter-toggle[aria-pressed="true"] {background:var(--personal-filter-color,#68efac)!important;color:#101c2e!important;}
+#overallLeaderboardPanel #overallDailyGrid .overall-center-tools {grid-template-rows:44px auto!important;}
+#overallLeaderboardPanel #overallDailyGrid .overall-freshness {
+  box-sizing:border-box!important;height:auto!important;min-height:36px!important;max-height:none!important;
+  padding:6px 10px!important;white-space:normal!important;overflow-wrap:anywhere;line-height:1.35!important;
+}
+@media(max-width:600px) {
+  #overallLeaderboardPanel .overall-shell {overflow-y:auto!important;}
+  #overallLeaderboardPanel #overallLeaderboardList {min-height:110px!important;}
+  #overallLeaderboardPanel .overall-top {display:grid!important;grid-template-columns:minmax(0,1fr) max-content!important;gap:8px!important;padding:10px!important;}
+  #overallLeaderboardPanel .overall-title-group {grid-column:1/-1!important;min-width:0!important;}
+  #overallLeaderboardPanel .overall-top h2 {font-size:26px!important;line-height:1.1!important;}
+  #overallLeaderboardPanel .overall-filter-host {grid-column:1!important;grid-row:2!important;min-width:0!important;width:auto!important;margin:0!important;display:flex!important;justify-content:flex-start!important;}
+  #overallLeaderboardPanel .overall-top .personal-filter-toggle {font-size:17px!important;max-width:100%!important;}
+  #overallLeaderboardPanel .overall-actions {display:flex!important;grid-column:2!important;grid-row:2!important;gap:4px!important;margin:0!important;}
+  #overallLeaderboardPanel .overall-action-btn {width:auto!important;min-width:42px!important;padding:5px 7px!important;font-size:14px!important;}
+  #overallLeaderboardPanel .overall-sub {font-size:13px!important;line-height:1.35!important;padding:8px 10px!important;}
+}
+@media(max-width:360px) {
+  #overallLeaderboardPanel .overall-top .personal-filter-toggle {font-size:15px!important;padding:8px!important;}
+}
 @media(max-height:360px) {
   #overallLeaderboardPanel { padding:4px!important;align-items:stretch!important;box-sizing:border-box!important; }
   #overallLeaderboardPanel .overall-shell {

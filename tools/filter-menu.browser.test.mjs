@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installNativeRankedAuditFixture } from './native-ranked-audit-fixture.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -16,7 +17,7 @@ test('filter menu works offline in a real browser: focus, preview, share and loa
 }, async () => {
   const menuPath = resolve(here, 'filter-menu.mjs');
   const cssPath = resolve(here, 'filter-menu.css');
-  const html = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/filter-menu.css"></head><body>
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/filter-menu.css"></head><body>
     <button id="opener">Open filters</button><main id="root"></main>
     <script type="module">
       import { mountFilterMenu } from '/filter-menu.mjs';
@@ -48,23 +49,60 @@ test('filter menu works offline in a real browser: focus, preview, share and loa
     } catch { res.writeHead(500); res.end(); }
   });
   await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true,
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : {}) });
   try {
-    const page = await browser.newPage();
+    const page = await browser.newPage({ deviceScaleFactor: 2, viewport: { width: 1280, height: 900 } });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', route => {
       const url = new URL(route.request().url());
       return url.hostname === '127.0.0.1' ? route.continue() : route.abort();
     });
+    await installNativeRankedAuditFixture(page);
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.waitForFunction(() => window.ready === true);
     const opener = page.locator('#opener');
     await opener.focus();
+    const renderedBeforeOpen = await page.evaluate(() => window.fixture.rendered);
     await opener.click();
     const overlay = page.locator('.pt-group-filter-menu');
     await assert.doesNotReject(() => overlay.waitFor({ state: 'visible' }));
     await assert.doesNotReject(() => page.getByRole('button', { name: 'Close advanced filters' }).waitFor());
+    const renderedAfterOpen = await page.evaluate(() => window.fixture.rendered);
+    assert.equal(renderedAfterOpen - renderedBeforeOpen, 4,
+      'opening refreshes each racer chip once before and once after the overlay becomes visible');
+    for (const [width, height, label, fileName] of [
+      [390, 844, 'phone viewport'],
+      [195, 422, '200% zoom effective viewport']
+    ]) {
+      await page.setViewportSize({ width, height });
+      await page.waitForTimeout(200);
+      const layout = await overlay.evaluate(element => {
+        const shell = element.querySelector('.fm-shell').getBoundingClientRect();
+        const content = element.querySelector('.fm-content');
+        const controls = [...element.querySelectorAll('.fm-header button, .fm-footer button')].map(button => {
+          const rect = button.getBoundingClientRect();
+          return { left: rect.left, right: rect.right };
+        });
+        return {
+          shell: { left: shell.left, top: shell.top, right: shell.right, bottom: shell.bottom },
+          contentWidth: content.clientWidth,
+          contentScrollWidth: content.scrollWidth,
+          contentHeight: content.clientHeight,
+          controls
+        };
+      });
+      assert.ok(layout.shell.left >= -1 && layout.shell.top >= -1 && layout.shell.right <= width + 1 && layout.shell.bottom <= height + 1,
+        `filter dialog stays in the viewport at ${label}: ${JSON.stringify(layout.shell)}`);
+      assert.ok(layout.contentScrollWidth <= layout.contentWidth + 1,
+        `filter content has no horizontal overflow at ${label}`);
+      assert.ok(layout.controls.every(rect => rect.left >= -1 && rect.right <= width + 1),
+        `filter actions fit without clipping at ${label}: ${JSON.stringify(layout.controls)}`);
+      if (width === 195) assert.ok(layout.contentHeight >= 100,
+        `filter content remains usable at ${label}: ${layout.contentHeight}px high`);
+    }
+    await page.setViewportSize({ width: 1280, height: 900 });
     await overlay.locator('.fm-button-pause').focus();
     await page.keyboard.press('Shift+Tab');
     const lastFocused = await page.evaluate(() => document.activeElement?.textContent?.trim());

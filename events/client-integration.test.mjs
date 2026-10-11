@@ -592,8 +592,17 @@ test('live and archived event browser fits phone, tablet and desktop without hor
   assert.equal(await p.locator('[data-event-close]').evaluate(node=>{
    const box=node.getBoundingClientRect();return node.contains(document.elementFromPoint(box.x+box.width/2,box.y+box.height/2));
   }),true,'Close is not covered by a thumbnail');
+  assert.equal(await p.locator('.sq-events-dialog').evaluate(node=>{
+   const box=node.getBoundingClientRect();return box.top>=-1&&box.bottom<=innerHeight+1;
+  }),true,'dialog stays within the viewport height');
+  for(const control of await p.locator('.sq-events-dialog header button, .sq-events-dialog nav button').all()){
+   assert.equal(await control.evaluate(node=>{
+    const box=node.getBoundingClientRect(),x=box.left+box.width/2,y=box.top+box.height/2;
+    return box.width>0&&box.height>0&&x>=0&&x<innerWidth&&y>=0&&y<innerHeight&&node.contains(document.elementFromPoint(x,y));
+   }),true,'dialog navigation controls remain visible and clickable');
+  }
  };
- for(const [width,height] of [[320,720],[390,844],[820,1180],[1107,1282],[1920,1080],[2515,1248],[2800,1920]]){
+ for(const [width,height] of [[320,720],[390,844],[844,390],[768,1024],[820,1180],[1107,1282],[1920,1080],[2515,1248],[2800,1920],[384,216]]){
   await p.setViewportSize({width,height});
   await assertContainedPreviews();
   assert.equal(await p.locator('.sq-events-dialog').evaluate(node=>node.getBoundingClientRect().left>=-1&&node.getBoundingClientRect().right<=innerWidth+1&&node.scrollWidth<=node.clientWidth+2),true,width+'px live dialog');
@@ -601,7 +610,27 @@ test('live and archived event browser fits phone, tablet and desktop without hor
  }
  if(process.env.EVENT_MENU_SCREENSHOT)await p.screenshot({path:process.env.EVENT_MENU_SCREENSHOT});
  await p.locator('[data-event-archives]').click();await p.locator('input[name="archive-month"]').fill('2026-08');await p.getByRole('button',{name:'View month',exact:true}).click();await p.locator('[data-archive-event-id="old-event"]').waitFor();
- for(const [width,height] of [[320,720],[390,844],[820,1180],[1920,1080]]){
+ for(const [width,height] of [[320,720],[390,844],[844,390],[768,1024],[820,1180],[1920,1080],[384,216]]){
   await p.setViewportSize({width,height});await assertContainedPreviews();assert.equal(await p.locator('.sq-events-dialog main').evaluate(node=>node.scrollWidth<=node.clientWidth+2),true,width+'px archive content');
+  if(width===384&&height===216){
+   const main=p.locator('.sq-events-dialog main');
+   await main.evaluate(node=>node.scrollTop=0);
+   const controls=[p.locator('input[name="archive-month"]'),...await p.locator('.sq-event-archive-filter button').all()];
+   for(const control of controls){
+    await control.scrollIntoViewIfNeeded();
+    assert.equal(await control.evaluate(node=>{
+     const box=node.getBoundingClientRect(),main=node.closest('main').getBoundingClientRect(),x=box.left+box.width/2,y=box.top+box.height/2;
+     return box.width>0&&box.height>0&&box.top>=main.top-1&&box.bottom<=main.bottom+1&&node.contains(document.elementFromPoint(x,y));
+    }),true,'short archive viewport can scroll each month control into view');
+   }
+   const archiveEntry=p.locator('[data-archive-event-id="old-event"] summary');
+   await archiveEntry.scrollIntoViewIfNeeded();
+   const entryState=await archiveEntry.evaluate(node=>{
+    const box=node.getBoundingClientRect(),mainNode=node.closest('main'),main=mainNode.getBoundingClientRect(),x=box.left+box.width/2,y=box.top+box.height/2,hit=document.elementFromPoint(x,y);
+    return {visible:box.width>0&&box.height>0&&box.top>=main.top-1&&box.bottom<=main.bottom+1&&node.contains(hit),entry:{top:box.top,bottom:box.bottom,height:box.height},main:{top:main.top,bottom:main.bottom,scrollTop:mainNode.scrollTop,scrollHeight:mainNode.scrollHeight,clientHeight:mainNode.clientHeight},hit:hit?.className||hit?.tagName||null};
+   });
+   assert.equal(entryState.visible,true,'short archive viewport can scroll an event entry into view: '+JSON.stringify(entryState));
+  }
  }
+ if(process.env.EVENT_ARCHIVE_SCREENSHOT)await p.screenshot({path:process.env.EVENT_ARCHIVE_SCREENSHOT,fullPage:true});
 });

@@ -501,13 +501,14 @@ test('missing public snapshots share reads, cache briefly, and recover after exp
     assert.equal(first.status, 404);
     assert.deepEqual(await concurrent.json(), { error: 'snapshot_not_ready' });
     assert.equal(reads, 1, 'missing snapshot remains coalesced until cache fill settles');
+    assert.equal(permits, 2, 'cold callers receive independent admission checks');
     finishFill();
     await Promise.all(pending.splice(0));
     published = true;
     now = 9999;
     assert.equal((await handleRequest(request(), env, context)).status, 404);
     assert.equal(reads, 1);
-    assert.equal(permits, 1, 'cached absence does not consume school-network permits');
+    assert.equal(permits, 2, 'cached absence does not consume additional school-network permits');
     now = 10001;
     const fresh = await handleRequest(request(), env, context);
     assert.equal(fresh.status, 200);

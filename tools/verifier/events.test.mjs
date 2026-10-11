@@ -134,3 +134,24 @@ test('insufficient completion reserve never leases another event batch',async()=
   const result=await runEventCoordinator(f.runtime,'/repo',{...f.options,canSpend:n=>n<=remaining});
   assert.equal(f.native(),0);assert.equal(f.batches.length,0);assert.equal(result.budgetDeferred,true);
 });
+
+test('four-slot Catch-Up rounds rotate sustained periods even when discovery clock order is unchanged', async () => {
+  const f = fixture({daily: 100, weekly: 100, older: 100});
+  const selectionState = {};
+  for (let i = 0; i < 12; i++) {
+    const result = await runEventCoordinator(f.runtime, '/repo', {...f.options, limit: 4, selectionState});
+    assert.equal(result.checked, 4);
+  }
+  assert.deepEqual(f.batches.map(batch => batch.period), Array.from({length: 4}, () => ['daily', 'weekly', 'older']).flat());
+  assert.equal(f.intakes(), 12, 'No additional intake or discovery polling');
+});
+
+test('deferred event budgets do not advance the in-memory period cursor', async () => {
+  const f = fixture({daily: 100, weekly: 100});
+  const selectionState = {lastPeriodId: 'daily'};
+  await runEventCoordinator(f.runtime, '/repo', {...f.options, limit: 4, selectionState, canSpend: () => false});
+  assert.deepEqual(selectionState, {lastPeriodId: 'daily'});
+  const result = await runEventCoordinator(f.runtime, '/repo', {...f.options, limit: 4, selectionState});
+  assert.equal(result.checked, 4);
+  assert.equal(f.batches[0].period, 'weekly');
+});

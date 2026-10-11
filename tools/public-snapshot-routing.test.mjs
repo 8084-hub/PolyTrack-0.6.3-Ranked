@@ -36,7 +36,8 @@ test('new-account snapshot protection needs fifteen minutes and a saved finish, 
   now+=899999;context=create();assert.equal(context.snapshotOnlyForNewAccount(),true);
   assert.match(context.snapshotUnlockLabel(),/0:01/);
   assert.doesNotMatch(context.snapshotUnlockLabel(),/finish required/);
-  assert.match(context.snapshotAccessNotice(),/Only the timer remains/);
+  assert.match(context.snapshotAccessNotice(),/Finish saved\. Live refresh unlocks when the timer ends\./);
+  assert.doesNotMatch(context.snapshotAccessNotice(),/first saved finish/);
   now++;assert.equal(context.snapshotOnlyForNewAccount(),false);
   assert.equal(context.snapshotUnlockLabel(),'Live refresh available');
   accountId='b'.repeat(64);assert.equal(context.snapshotOnlyForNewAccount(),true);

@@ -187,11 +187,16 @@ body.pt-group-filter-menu-open { overflow: hidden; }
   .fm-track-meta-note { grid-column: 1; }
 }
 @media (max-width: 380px) {
-  .fm-header { align-items: flex-start; }
-  .fm-header-actions { flex-direction: column-reverse; align-items: stretch; }
+  .fm-header { align-items: flex-start; flex-wrap: wrap; }
+  .fm-heading, .fm-header-actions { flex: 1 1 100%; min-width: 0; }
+  .fm-kicker { display: none; }
+  .fm-heading h1 { font-size: clamp(15px, 9vw, 18px); white-space: nowrap; }
+  .fm-header-actions { flex-direction: row; justify-content: flex-end; align-items: center; }
+  .fm-header-actions .fm-button { min-width: 0; padding-inline: 6px; white-space: nowrap; }
   .fm-range-pair { gap: 7px; }
   .fm-range { padding: 9px; }
-  .fm-footer .fm-button { padding-inline: 9px; }
+  .fm-footer { gap: 6px; }
+  .fm-footer .fm-button { flex: 1 1 0; min-width: 0; margin-right: 0; padding-inline: 6px; white-space: normal; }
 }
 .fm-toggle-row, .fm-notice-toggle { display: flex; align-items: center; gap: 10px; margin: 10px 0; color: #dce5fb; }
 .fm-toggle-row input, .fm-notice-toggle input { width: 20px; min-height: 20px; flex: 0 0 20px; }

@@ -808,3 +808,17 @@ body.sq-event-active .track-info-ui{background:#1b2854}
  .sq-events-dialog .sq-event-card .sq-event-thumb{height:58px}
  .sq-events-dialog .sq-event-card .sq-event-record{font-size:13px}
 }
+
+@media(max-width:650px) and (max-height:280px){
+ .sq-events-dialog header{padding:4px 8px}
+ .sq-events-dialog h2{font-size:22px}
+ .sq-events-dialog nav{padding:4px;gap:4px}
+ .sq-events-dialog nav button{font-size:13px;line-height:1.1}
+ .sq-events-dialog .button{min-height:36px;padding:4px 6px}
+ .sq-events-dialog main{padding:4px 8px}
+ .sq-event-status{margin:2px 8px;font-size:12px}
+ .sq-archive-event-summary{grid-template-columns:36px minmax(0,1fr);gap:6px;padding:6px}
+ .sq-archive-thumb{width:36px;height:36px}
+ .sq-archive-title .sq-archive-kind,.sq-archive-title .sq-archive-date{font-size:12px;line-height:1.2}
+ .sq-archive-count{font-size:12px}
+}

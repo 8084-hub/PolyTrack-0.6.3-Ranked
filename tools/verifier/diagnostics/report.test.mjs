@@ -218,3 +218,50 @@ for (const [file, captureStep] of [
     assert.ok(captureIndex > checkIndex, 'consistency check runs before public capture');
   });
 }
+
+
+test('bounded Summer1 diagnosis separates verified publication lag from infrastructure retry and stale audit', async () => {
+  const {verificationKey, VERIFIER_VERSION, VERIFIER_ENGINE_DIGEST} = await import('../../../workers/ranked/src/verification.js');
+  const now = 1791678399604;
+  const canonical = new Map(['verified', 'retry', 'requeued'].map(accountId => [accountId + '_' + knownTrack,
+    {accountId, trackId: knownTrack, timeMs: 22448, frames: 22448, uploadId: 1, replayHash: 'a'.repeat(64), pbAt: 1000}]));
+  const slots = Object.fromEntries([...canonical].map(([resultId, row]) => [row.accountId, {
+    accountId: row.accountId, resultId, trackId: knownTrack, key: verificationKey(row),
+    verifierVersion: VERIFIER_VERSION, engineDigest: VERIFIER_ENGINE_DIGEST,
+    status: row.accountId === 'verified' ? 'verified' : row.accountId === 'retry' ? 'unavailable' : 'waiting',
+    reason: row.accountId === 'verified' ? 'native_exact_finish' : row.accountId === 'retry' ? 'isolate_terminated' : '',
+    attempts: row.accountId === 'verified' ? 1 : 0,
+    checkedAt: now - 1000,
+    retryAt: row.accountId === 'verified' ? Number.MAX_SAFE_INTEGER : row.accountId === 'retry' ? now + 3600000 : 0
+  }]));
+  let reads = 0;
+  const db = {call: async () => assert.fail('Targeted report must not query collections'), get: async (collection, id) => {
+    reads++;
+    if (collection === VERIFICATION_COLLECTION) return {data: {trackId: knownTrack, notBefore: 0, slots}};
+    if (collection === '0.6.2_race_results') return {data: canonical.get(id)};
+    if (collection === '0.6.2_s1_leaderboards_track') return {data: {updatedAt: now - 2000,
+      entries: [...canonical.values()].map(row => ({accountId: row.accountId, timeMs: row.timeMs, uploadId: 1, runVerified: false}))}};
+    if (collection === '0.6.2_s1_verification_audit') return {data: {status: 'verified', reason: 'old_native_exact_finish', checkedAt: now - 2000}};
+    return null;
+  }};
+  const report = await createDiagnosticReport(db, {now, trackId: knownTrack, runLimit: 3, historyLimit: 0, eventLimit: 0});
+  assert.equal(reads, 9, 'Two exact queue reads, three canonical/audit pairs, one cached board read');
+  const verified = report.runs.find(row => row.accountId === 'verified');
+  assert.equal(verified.publicationState, 'verified_not_published');
+  assert.equal(verified.canonicalKeyMatches, true);
+  assert.equal(verified.acceptedProof, true);
+  assert.equal(verified.eligibility, 'not_retryable');
+  assert.equal(verified.retryAt, null, 'NEVER sentinel is not rendered as a date');
+  const retry = report.runs.find(row => row.accountId === 'retry');
+  assert.equal(retry.status, 'unavailable');
+  assert.equal(retry.reason, 'isolate_terminated');
+  assert.equal(retry.eligibility, 'retry_not_due');
+  assert.equal(retry.retryInMs, 3600000);
+  assert.equal(retry.attempts, 0);
+  assert.equal(retry.retryAt, new Date(now + 3600000).toISOString());
+  const requeued = report.runs.find(row => row.accountId === 'requeued');
+  assert.equal(requeued.status, 'waiting', 'Old audit must not mask the current requeued slot');
+  assert.equal(requeued.reason, null);
+  assert.equal(requeued.publicationState, 'not_verified');
+  assert.equal(requeued.eligibility, 'due');
+});

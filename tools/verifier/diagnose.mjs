@@ -38,9 +38,9 @@ function textReport(report) {
     `Waiting age: ${formatAge(report.summary.waitingAgeMs.averageMs)} average, ${formatAge(report.summary.waitingAgeMs.maxMs)} maximum`,
     `Scheduler: ${report.scheduler.status}${report.scheduler.finding ? ` (${report.scheduler.finding})` : ''}`,
     '',
-    'Runs: lane | accountId | trackId | status | reason | place | wait age | verification latency'
+    'Runs: lane | accountId | trackId | status | reason | native reason | eligibility | retry at | attempts | publication | place | wait age | verification latency'
   ];
-  for (const row of report.runs) lines.push(`${row.verificationLane || '-'} | ${row.accountId} | ${row.trackId} | ${row.status} | ${row.reason || '-'} | ${row.place?.rank ?? '-'}${row.place?.fieldSize ? `/${row.place.fieldSize}` : ''} | ${formatAge(row.waitAgeMs)} | ${formatAge(row.verificationLatencyMs)}`);
+  for (const row of report.runs) lines.push(`${row.verificationLane || '-'} | ${row.accountId} | ${row.trackId} | ${row.status} | ${row.reason || '-'} | ${row.nativeReason || '-'} | ${row.eligibility || '-'} | ${row.retryAt || '-'} | ${row.attempts ?? '-'} | ${row.publicationState || '-'} | ${row.place?.rank ?? '-'}${row.place?.fieldSize ? `/${row.place.fieldSize}` : ''} | ${formatAge(row.waitAgeMs)} | ${formatAge(row.verificationLatencyMs)}`);
   return lines.join('\n');
 }
 

@@ -31,7 +31,8 @@ function statusClass(status) {
 function rowHtml(row) {
   const cells = [
     row.kind || '-', row.verificationLane || '-', row.accountId, row.resultId, track(row), row.status, place(row),
-    duration(row.waitAgeMs), row.submittedAt || '-', row.verifiedAt || '-', duration(row.verificationLatencyMs)
+    duration(row.waitAgeMs), row.submittedAt || '-', row.verifiedAt || '-', duration(row.verificationLatencyMs),
+    row.reason || '-', row.nativeReason || '-', row.eligibility || '-', row.retryAt || '-', row.attempts ?? '-', row.publicationState || '-'
   ];
   return `<tr><td>${cells.slice(0, 5).map(escapeHtml).join('</td><td>')}</td><td class="status ${statusClass(row.status)}">${escapeHtml(cells[5])}</td><td>${cells.slice(6).map(escapeHtml).join('</td><td>')}</td></tr>`;
 }
@@ -64,7 +65,7 @@ export function renderHtmlReport(report) {
 <div class="card"><strong>${escapeHtml(duration(summary.waitingAgeMs?.averageMs))}</strong><span>average wait duration</span></div>
 </section>
 <h2>Runs</h2><div class="toolbar"><label for="search">Search runs</label><input id="search" type="search" placeholder="account, run, track, lane, status"></div>
-<table id="runs"><thead><tr><th>Kind</th><th>Lane</th><th>Account ID</th><th>Run ID</th><th>Track</th><th>Status</th><th>Place</th><th>Wait duration</th><th>Submitted</th><th>Verified</th><th>Verification latency</th></tr></thead><tbody>${rows.length ? rows.map(rowHtml).join('') : '<tr><td class="empty" colspan="11">No bounded report rows.</td></tr>'}</tbody></table>
+<table id="runs"><thead><tr><th>Kind</th><th>Lane</th><th>Account ID</th><th>Run ID</th><th>Track</th><th>Status</th><th>Place</th><th>Wait duration</th><th>Submitted</th><th>Verified</th><th>Verification latency</th><th>Reason</th><th>Native reason</th><th>Eligibility</th><th>Retry at (UTC)</th><th>Attempts</th><th>Publication</th></tr></thead><tbody>${rows.length ? rows.map(rowHtml).join('') : '<tr><td class="empty" colspan="17">No bounded report rows.</td></tr>'}</tbody></table>
 <script>(function(){const input=document.getElementById('search');const rows=[...document.querySelectorAll('#runs tbody tr')];input.addEventListener('input',function(){const query=input.value.trim().toLowerCase();rows.forEach(row=>{row.hidden=!!query&&!row.textContent.toLowerCase().includes(query);});});}());</script>
 </main></body></html>`;
 }

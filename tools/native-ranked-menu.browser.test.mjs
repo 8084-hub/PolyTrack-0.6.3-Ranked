@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import { installNativeRankedAuditFixture, auditNativeRankedClick } from './native-ranked-audit-fixture.mjs';
 
 const url = String(process.env.POLYTRACK_NATIVE_AUDIT_URL || '').trim();
@@ -8,7 +9,8 @@ const url = String(process.env.POLYTRACK_NATIVE_AUDIT_URL || '').trim();
 test('native home Ranked button opens the real panel with offline Firebase', { skip: !url }, async () => {
   const require = createRequire(new URL('./verifier/package.json', import.meta.url));
   const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true,
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? {executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE} : {}) });
   try {
     const page = await browser.newPage({ viewport: { width: 1366, height: 768 } });
     const localOrigin = new URL(url).origin;
@@ -33,6 +35,29 @@ test('native home Ranked button opens the real panel with offline Firebase', { s
     assert.deepEqual(result.pageErrors, []);
     assert.deepEqual(result.errors, []);
     assert.deepEqual(result.rejections, []);
+    await page.locator('#overallLeaderboardList .overall-entry').first().waitFor({state: 'visible', timeout: 45000});
+    for (const [width, height] of [[320, 568], [390, 844], [844, 390], [384, 216]]) {
+      await page.setViewportSize({width, height});
+      const layout = await page.evaluate(() => {
+        const panel = document.getElementById('overallLeaderboardPanel');
+        const status = panel.querySelector('#overallFreshness');
+        const shell = panel.querySelector('.overall-shell');
+        const filter = panel.querySelector('[data-personal-filter-button]');
+        const header = panel.querySelector('.overall-top').getBoundingClientRect();
+        const bounds = filter.getBoundingClientRect();
+        return {shellHeight: shell.clientHeight, shellContentHeight: shell.scrollHeight, shellOverflow: getComputedStyle(shell).overflowY,
+          statusHeight: status.clientHeight, statusContentHeight: status.scrollHeight,
+          filterLeft: bounds.left, filterRight: bounds.right, filterContentWidth: filter.scrollWidth, filterWidth: filter.clientWidth, headerHeight: header.height};
+      });
+      assert.ok(layout.statusContentHeight <= layout.statusHeight + 1, `refresh instructions must not clip at ${width}x${height}`);
+      assert.ok(layout.filterLeft >= 0 && layout.filterRight <= width, `filters fit at ${width}x${height}`);
+      assert.ok(layout.filterContentWidth <= layout.filterWidth + 1, `filter state stays readable at ${width}x${height}`);
+      assert.ok(layout.headerHeight <= 145, `header leaves room for racers at ${width}x${height}`);
+      assert.ok(layout.shellContentHeight <= layout.shellHeight + 2 || /auto|scroll/.test(layout.shellOverflow), `overflowing footer stays reachable at ${width}x${height}`);
+      if (process.env.POLYTRACK_NATIVE_AUDIT_SCREENSHOT_DIR) {
+        await page.screenshot({path: join(process.env.POLYTRACK_NATIVE_AUDIT_SCREENSHOT_DIR, `ranked-final-${width}.png`)});
+      }
+    }
   } finally {
     await browser.close();
   }

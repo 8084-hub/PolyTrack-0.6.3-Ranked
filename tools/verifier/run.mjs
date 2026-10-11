@@ -119,7 +119,7 @@ export async function runVerifier({check = false, drain = false, catchUp = false
       return {hasWork: null, deferred: true, reason: 'firestore_429'};
     }
   }
-  const roundOptions={env,log,eventRun,prioritizeNormal,selectNormal,verifyNormal,publishNormal,borrowUnusedEvents,reviewSimilarity:createSimilarityReviewer(root)};
+  const roundOptions={env,log,eventRun,prioritizeNormal,selectNormal,verifyNormal,publishNormal,borrowUnusedEvents,reviewSimilarity:createSimilarityReviewer(root),eventSelectionState:{}};
   if (!drain) {
     try { return await runRound(db,roundOptions); }
     catch (error) {
@@ -151,12 +151,12 @@ export async function runVerifier({check = false, drain = false, catchUp = false
   return summary;
 }
 
-export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNormal,verifyNormal,publishNormal,borrowUnusedEvents,reviewSimilarity}) {
+export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNormal,verifyNormal,publishNormal,borrowUnusedEvents,reviewSimilarity,eventSelectionState}) {
   const now = Date.now();
   // Events must get their reservation before normal canonical reads/commits. Otherwise
   // normal selection can spend the request budget and strand both sources.
   const eventLimit = TOTAL_JOB_LIMIT - NORMAL_JOB_LIMIT;
-  const events = await eventRun(db, root, {limit: eventLimit, intakeLimit: TOTAL_JOB_LIMIT, canSpend:db.canSpend});
+  const events = await eventRun(db, root, {limit: eventLimit, intakeLimit: TOTAL_JOB_LIMIT, canSpend:db.canSpend, selectionState:eventSelectionState});
   if (!Number.isInteger(events.checked) || events.checked<0 || events.checked>eventLimit) throw Error('Invalid event native count');
   let selectedJobs = [], canonicalAttempts = 0, selectionConflicts = 0;
   let normalQueueReturnedDocuments = 0;

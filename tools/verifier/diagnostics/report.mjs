@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import {decode} from '../firestore.mjs';
-import {EXTRA_VERIFICATION_COLLECTION, VERIFICATION_COLLECTION} from '../../../workers/ranked/src/verification.js';
+import {EXTRA_VERIFICATION_COLLECTION, VERIFICATION_COLLECTION, verificationKey, hasAcceptedVerifiedProof} from '../../../workers/ranked/src/verification.js';
 import {EXTRA_TRACK_IDS} from '../../../workers/ranked/src/extra-track-ids.js';
 
 export const REPORT_LIMITS = Object.freeze({trackLimit: 8, runLimit: 64, historyLimit: 64, eventLimit: 32, maxTrackLimit: 16, maxRunLimit: 128, maxHistoryLimit: 128, maxEventLimit: 64});
@@ -141,7 +141,7 @@ function selectedSlots(documents, runLimit) {
   for (const document of documents) {
     const values = Object.values(document.data?.slots || {}).filter(slot => slot && typeof slot === 'object');
     total += values.length;
-    for (const slot of values) slots.push({...slot, trackId: String(slot.trackId || document.data.trackId || documentTrackId(document)), queueCollection: document.queueCollection});
+    for (const slot of values) slots.push({...slot, trackId: String(slot.trackId || document.data.trackId || documentTrackId(document)), queueCollection: document.queueCollection, queueNotBefore: document.data.notBefore});
   }
   slots.sort((a, b) => (STATUS_ORDER.get(String(a.status)) ?? 9) - (STATUS_ORDER.get(String(b.status)) ?? 9) ||
     Number(a.checkedAt || 0) - Number(b.checkedAt || 0) || String(a.accountId || '').localeCompare(String(b.accountId || '')) ||
@@ -167,6 +167,17 @@ function matchingPublishedEntry(board, {accountId, timeMs, uploadId = 0}) {
 
 function bindingIdentity({key, resultId, accountId, trackId}) {
   return String(key || `${resultId || ''}|${accountId || ''}|${trackId || ''}`);
+}
+
+function queueEligibility(slot, now, source) {
+  if (source !== 'queue') return {eligibility: 'history_only', retryAt: null, retryInMs: null};
+  const retryAt = Number(slot.retryAt || 0);
+  const pending = ['waiting', 'unavailable'].includes(slot.status);
+  const terminal = !pending || retryAt >= Number.MAX_SAFE_INTEGER;
+  const eligibility = terminal ? 'not_retryable' : !Number.isFinite(retryAt) ? 'invalid_retry_time' :
+    retryAt > now ? 'retry_not_due' : Number(slot.queueNotBefore) > now ? 'queue_not_due' : 'due';
+  return {eligibility, retryAt: Number.isFinite(retryAt) && retryAt > 0 && retryAt < 8640000000000000
+    ? new Date(retryAt).toISOString() : null, retryInMs: !terminal && Number.isFinite(retryAt) ? Math.max(0, retryAt - now) : null};
 }
 
 function schedulerDiagnosis(lastRun) {
@@ -232,13 +243,21 @@ export async function createDiagnosticReport(db, {
     const canonicalData = canonical?.data || null;
     const currentTrackId = String(canonicalData?.trackId || slot.trackId || auditData?.trackId || '');
     const audit = auditData || (slot.key ? (await db.get(AUDIT_COLLECTION, auditId(slot.key)))?.data || null : null);
-    const publishedEntry = matchingPublishedEntry(await readBoard(currentTrackId), {
+    const board = await readBoard(currentTrackId);
+    const publishedEntry = matchingPublishedEntry(board, {
       accountId: String(canonicalData?.accountId || canonicalData?.userId || id),
       timeMs: Number(canonicalData?.timeMs),
       uploadId: Number(canonicalData?.uploadId || canonicalData?.id || 0)
     });
-    const status = String(audit?.status || slot.status || 'unknown');
-    const reason = String(audit?.reason || slot.reason || '') || null;
+    // Requeueing a binding can leave its older audit in place; the live slot wins.
+    const verdict = source === 'queue' ? slot : audit || slot;
+    const status = String(verdict.status || 'unknown');
+    const reason = String(verdict.reason || '') || null;
+    const canonicalKeyMatches = canonicalData ? verificationKey(canonicalData) === slot.key : false;
+    const acceptedProof = Boolean(canonicalData && hasAcceptedVerifiedProof(canonicalData, verdict));
+    const publicationState = !canonicalData ? 'canonical_missing' : acceptedProof ?
+      publishedEntry?.runVerified === true ? 'verified_published' : 'verified_not_published' :
+      !canonicalKeyMatches ? 'binding_changed' : 'not_verified';
     const submitted = submissionInfo(canonicalData);
     const checkedAt = firstMillis(audit, ['verifiedAt', 'checkedAt']) ?? firstMillis(slot, ['checkedAt']);
     const verifiedAt = status === 'verified' ? checkedAt : null;
@@ -249,6 +268,12 @@ export async function createDiagnosticReport(db, {
     return {
       kind: 'normal', source, verificationLane, accountId: id, resultId, trackId: currentTrackId, trackName: inventory?.name || null,
       trustedTrack: Boolean(inventory) || registeredExtra, status, reason, submissionTimestampSource: submitted.source,
+      nativeReason: String(verdict.nativeReason || '') || null,
+      attempts: Number.isSafeInteger(verdict.attempts) ? verdict.attempts : null,
+      ...queueEligibility(slot, at, source), canonicalKeyMatches, acceptedProof, publicationState,
+      publicRunVerified: publishedEntry ? publishedEntry.runVerified === true : null,
+      boardUpdatedAt: firstMillis(board?.data, ['updatedAt']),
+      checkedAt: firstMillis(verdict, ['checkedAt']),
       submittedAt: submitted.value === null ? null : new Date(submitted.value).toISOString(),
       waitAgeMs: submitted.value === null ? null : Math.max(0, at - submitted.value),
       verifiedAt: verifiedAt === null ? null : new Date(verifiedAt).toISOString(),
