@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=108',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=109',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='108';
+  const extraCatalogRevision='109';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -3327,15 +3327,24 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function closeRankedDialog(dialog){
     if(!dialog)return;
     dialog.style.display='none';
+    dialog.__focusToken=null;
     const target=overallDialogReturnFocus;
     overallDialogReturnFocus=null;
     if(target?.isConnected)target.focus({preventScroll:true});
   }
   function openRankedDialog(dialog,focusTarget){
     if(!dialog)return;
-    if(dialog.style.display==='none'||!isElementVisible(dialog))overallDialogReturnFocus=document.activeElement;
+    const opening=dialog.style.display==='none'||!isElementVisible(dialog);
+    if(opening)overallDialogReturnFocus=document.activeElement;
     dialog.style.display='flex';
-    requestAnimationFrame(()=>{(focusTarget||visibleDialogFocusables(dialog)[0])?.focus({preventScroll:true});});
+    if(!opening&&dialog.contains(document.activeElement))return;
+    const token={};dialog.__focusToken=token;
+    requestAnimationFrame(()=>{
+      if(dialog.__focusToken!==token||!isElementVisible(dialog))return;
+      // Do not steal focus if the player already selected a control while opening.
+      if(dialog.contains(document.activeElement))return;
+      (focusTarget||visibleDialogFocusables(dialog)[0])?.focus({preventScroll:true});
+    });
   }
   function trapRankedDialogFocus(event,dialog){
     if(event.key!=='Tab'||!dialog||!isElementVisible(dialog))return false;
@@ -3613,7 +3622,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
           profileSort=nextSort;
           profileSortDirection=nextSort==='weight'?-1:1;
         }
-        openRankedProfile(profileSortTarget.dataset.profileUser||'');
+        sortProfileTrackRows(profileSortTarget.closest('#overallProfileContent'));
         return;
       }
       const racerRow=event.target.closest?.('.overall-entry[data-userid]');
@@ -4684,7 +4693,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=108',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=109',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -4704,8 +4713,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=108',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=108',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=108',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=109',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=109',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=109',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -5272,6 +5281,24 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function profileSortArrow(key){
     if(profileSort!==key)return '';
     return profileSortDirection>0?' &#9650;':' &#9660;';
+  }
+  function sortProfileTrackRows(content){
+    if(!content)return;
+    const list=content.querySelector('.profile-track-list');
+    if(!list||!Array.isArray(content.__profileFinishes))return;
+    const nodes=new Map(Array.from(list.querySelectorAll('.profile-track-row'),node=>[node.dataset.trackId,node]));
+    const fragment=document.createDocumentFragment();
+    for(const finish of sortProfileFinishes(content.__profileFinishes)){
+      const node=nodes.get(finish.trackId);if(node)fragment.appendChild(node);
+    }
+    list.appendChild(fragment);
+    const labels={track:'Track',weight:'Weight & age',place:'Result',time:'Time'};
+    for(const button of content.querySelectorAll('[data-profile-sort]')){
+      const key=button.dataset.profileSort,active=key===profileSort;
+      button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
+      button.textContent=labels[key]+(active?(profileSortDirection>0?' \u25b2':' \u25bc'):'');
+      button.setAttribute('aria-label','Sort by '+labels[key].toLowerCase()+(active?(profileSortDirection>0?', ascending':', descending'):''));
+    }
   }
   const profileSnapshotResults=new Map(),profileSnapshotRequests=new Map(),profileSnapshotRetryAt=new Map();
   function loadProfileSnapshotResults(userId){
@@ -5898,6 +5925,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const copyPublicId=localStorage.getItem('polytrack-0.6.2-show-racer-codes')==='1'?`<button type="button" class="button" data-copy-public-id="${uid}">Copy public ID</button>`:'';
     const profileIdentityExtras=`${profileBadges}${profileTitle?`<span class="profile-racer-title">${escapeHtml(profileTitle)}</span>`:''}${favoriteTrack?`<button type="button" class="profile-favorite-chip" data-track-id="${escapeHtml(favoriteTrack.id)}" aria-label="Open favorite track ${escapeHtml(favoriteTrack.name)}">Favorite · ${escapeHtml(favoriteTrack.name)}</button>`:''}${copyPublicId}`;
     content.innerHTML=`<div class="profile-hero"><div class="profile-car-column">${carModelPreview(carStyle,entry.carColorId||entry.carColors,entry.userId)}<div class="profile-achievement-row"><span class="profile-achievement-label">ELIGIBLE PODIUMS</span><div class="profile-achievement-medals">${achievements}</div><span class="profile-ranked-count">${Number(entry.raceCount||0)} ${entry.localOnly?'saved':'ranked'} track${Number(entry.raceCount||0)===1?'':'s'}</span></div></div><div class="profile-identity"><span class="profile-kicker">${entry.localOnly?'LOCAL PB PROFILE':'RANKED PROFILE'}</span><h3>${escapeHtml(safeDisplayName(entry.name||'Guest',entry.userId))}${countryFlagMarkup(entry.countryCode)}${isSelf?'<span class="overall-you-tag">YOU</span>':''}</h3><div class="profile-identity-extras">${profileIdentityExtras}</div><div class="profile-stat-strip profile-stat-primary">${primaryStats}</div><details class="profile-more-stats"><summary>More profile stats</summary><div class="profile-stat-strip profile-stat-secondary">${secondaryStats}</div></details></div></div>${isSelf?profileCustomizerMarkup(entry):''}<div class="profile-results">${resultCards}</div>${guideMarkup}<section class="profile-track-history"><header><div><span class="profile-kicker">TRACK BREAKDOWN</span><h4>Loaded results</h4></div><span>${cachedFinishes.length} loaded on this device${entry.localOnly?' · Public Ranked totals unavailable':' · '+Number(entry.raceCount||0)+' counted in Ranked'}</span></header><div class="profile-track-head"><button type="button" data-profile-sort="track" data-profile-user="${uid}" class="${profileSort==='track'?'active':''}" aria-label="Sort by track name">Track${profileSortArrow('track')}</button><button type="button" data-profile-sort="weight" data-profile-user="${uid}" class="${profileSort==='weight'?'active':''}" aria-label="Sort by track weight">Weight & age${profileSortArrow('weight')}</button><button type="button" data-profile-sort="place" data-profile-user="${uid}" class="${profileSort==='place'?'active':''}" aria-label="Sort by finishing result">Result${profileSortArrow('place')}</button><button type="button" data-profile-sort="time" data-profile-user="${uid}" class="${profileSort==='time'?'active':''}" aria-label="Sort by personal best time">Time${profileSortArrow('time')}</button></div><div class="profile-track-list">${trackRows}</div></section><p class="profile-disclaimer">Saved results and local PBs are shown. Missing placements load from complete saved boards when available.</p>`;
+    content.__profileFinishes=cachedFinishes;
+    sortProfileTrackRows(content);
     applyProfileCosmetics(content.closest('.overall-profile-card'),profileCosmeticDrafts.get(cleanUserId(entry.userId||entry.accountId||''))||cosmeticsForEntry(entry));
     setupRacerStudio(content);
     const topButton=document.createElement('button');topButton.type='button';topButton.className='button overall-action-btn';topButton.textContent='Back to top';topButton.title='Scroll to the top of this racer profile';topButton.onclick=()=>{profileCard.scrollTo({top:0,behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});popup.querySelector('#overallProfileClose')?.focus({preventScroll:true});};content.appendChild(topButton);
@@ -6226,7 +6255,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     }
   }
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=108').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=109').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
       void reader('snapshot-meta').then(meta=>{const at=Date.parse(meta?.capturedAt||'');if(Number.isFinite(at)&&at>0&&at<=Date.now())publicSnapshotCapturedAt=at;}).catch(()=>{});
@@ -8213,7 +8242,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=108',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:108,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=109',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:109,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);

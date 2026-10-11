@@ -180,6 +180,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   sortChoices.push(['edited-first', 'Locally edited first'], ['unedited-first', 'Not edited first']);
   if (Array.isArray(entries) && entries.some(entry => Number.isFinite(Date.parse(entry?.submittedAt || entry?.codeModifiedAt)))) sortChoices.push(['date-newest', 'Newest Track'], ['date-oldest', 'Oldest Track']);
   const sortField = selectField('Sort', sortChoices);
+  sortField.count.remove();
   const curatedLabel = make('label', 'sq-extra-check');
   const curated = make('input');
   curated.type = 'checkbox';
