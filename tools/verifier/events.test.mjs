@@ -129,18 +129,33 @@ test('event exact-duplicate review runs on bound results before any event public
       replayHash,actualReplayHash:replayHash,trackContentHash:null,engineDigest:VERIFIER_ENGINE_DIGEST}}));
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'event-similarity-'));
   try{
-    const reviewer=createSimilarityReviewer(root);let publishedResults;
+    const reviewer=createSimilarityReviewer(root);let publishedResults,publicationComplete=false;const findings=[];
     const runtime={service:{processBatch:async(_period,verify)=>{
       publishedResults=await verify(jobs,period);
-      return publishedResults;
+      publicationComplete=true;
+      return publishedResults.map(row=>({...row}));
     },archivePeriod:async()=>assert.fail('unexpected archive')}};
     const result=await runEventCoordinator(runtime,root,{limit:2,consumeInbox:async()=>({consumed:0}),
       readWork:async()=>({periodIds:['daily'],archiveId:null}),verifyBatch:async()=>nativeResults,
-      reviewSimilarity:reviewer});
+      reviewSimilarity:reviewer,writeFinding:async(...args)=>{
+        assert.equal(publicationComplete,true,'finding write must follow publication');findings.push(args);return true;
+      }});
     assert.equal(result.checked,2);
     assert.equal(publishedResults[0].status,'mismatch');
     assert.equal(publishedResults[0].reason,'exact_duplicate_run');
     assert.equal(publishedResults[1].status,'verified','earliest trusted event receipt remains the winner');
+    assert.equal(findings.length,1,'only the published exact duplicate is recorded');
+    assert.equal(findings[0][1].runId,'run-later');assert.equal(findings[0][2].reason,'exact_duplicate_run');
+    assert.equal(result.eventFindingsAdded,1);assert.equal(result.eventFindingWriteFailed,0);
+
+    let mismatchedWrites=0;
+    const mismatchedRuntime={service:{processBatch:async(_period,verify)=>{
+      const rows=await verify(jobs,period);return rows.map((row,index)=>index===0?{...row,reason:'publication_reason_changed'}:{...row});
+    },archivePeriod:async()=>assert.fail('unexpected archive')}};
+    await runEventCoordinator(mismatchedRuntime,root,{limit:2,consumeInbox:async()=>({consumed:0}),
+      readWork:async()=>({periodIds:['daily'],archiveId:null}),verifyBatch:async()=>nativeResults,
+      reviewSimilarity:createSimilarityReviewer(root),writeFinding:async()=>{mismatchedWrites++;return true;}});
+    assert.equal(mismatchedWrites,0,'unmatched publication results never create findings');
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 
@@ -175,7 +190,7 @@ test('budget exhaustion defers event work before any lease or discovery read',as
 test('sustained intake preserves request allowance for a leased event batch',async()=>{
   let remaining=400,intakes=0,batches=0;
   const runtime={service:{processBatch:async(_period,_verify,limit)=>{
-    assert.ok(remaining>=128,'must reserve before lease');remaining-=128;batches++;
+    assert.ok(remaining>=136,'must reserve completion plus four possible findings before lease');remaining-=128;batches++;
     return Array.from({length:limit},()=>({reason:'native_exact_finish'}));
   },archivePeriod:async()=>assert.fail('archive must be deferred')}};
   const result=await runEventCoordinator(runtime,'/repo',{limit:4,canSpend:n=>n<=remaining,

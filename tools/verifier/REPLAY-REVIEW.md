@@ -54,11 +54,23 @@ of cheating. Event-only verification runs the same bounded local snapshot and
 same-batch comparisons after native verification but before event publication.
 The callback only reviews results whose binding matches the leased event run,
 trusted period track, exact time, and replay hash; Kodub results must also match
-the period's trusted track-content hash. Exact duplicates are denied before
-event RP is awarded. Event near-match evidence is not persisted by the event
-result schema, so those comparisons remain non-actionable hints. Event review adds
-no Firestore reads and does not create an account ban. Low-information patterns
+the period's trusted track-content hash. After event publication, matching exact
+duplicate and advisory near-match findings are written to the private review
+inbox. A finding is recorded only when the published result ID, status, and
+reason match the result reviewed by the callback. Exact duplicates are denied
+before event RP is awarded. Near-match evidence does not change the published
+verified status. Event review creates no account ban. Low-information patterns
 remain eligible for ordinary verification.
+
+The event path reserves up to eight additional Firestore requests before leasing
+a four-result batch: at most one inbox read and one inbox commit for each of four
+findings. Unflagged event results add no inbox requests. Event finding writes are
+after publication and therefore cannot be atomic with the award; if a persistence
+request fails, the event remains published and that finding may be absent. Event
+finding IDs are deterministic, and retries preserve existing inbox decisions.
+Exact duplicate records in either path use `category == exact_duplicate` and
+`status == open`, so they can be queried directly. The category describes a
+duplicate replay finding only; it is not an account ban or cheating verdict.
 
 The check uses local snapshot files and the existing audit write. Ordinary runs
 add no Firebase operations. A flagged run adds one inbox read and, if absent, one
@@ -75,6 +87,22 @@ It reads at most fifty findings by default, not the full audit. `--status=all`,
 `--status=resolved`, and `--status=dismissed` select other views. `--after=<cursor>`
 loads the next page; `--limit` is capped at one hundred. No automatic polling or
 public endpoint is added. The existing default-deny rules protect this collection.
+
+## Private Local Verification
+
+From `tools/verifier`, `npm run private-pending -- capture --file <private-absolute-path> --limit 4`
+captures up to four due normal/Extra submissions. The destination must be outside
+the repository. Capture is read-only and reports estimated document reads.
+Use a user-private directory; Windows files inherit its access permissions.
+
+`verify --file <same-path>` runs the pinned native simulator without connecting to
+Firebase. `publish --file <same-path>` repeats simulation, then checks current PB
+and queue versions before atomic publication. Both commands use the same npm
+script. Capture and publish require private service-account credentials; verify
+does not. Imported verdicts are ignored. Each online phase has a 100-request cap.
+This tool handles normal/Extra queues, not event-only intake. Pending captures
+are never bundled into public snapshots. Physics verification does not establish
+that a human entered the controls without assistance.
 
 `--backfill` copies at most twenty-five similarity flags and twenty-five mismatches
 from existing audits using two indexed queries. It does not scan normal runs,

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { preparePolyTrackOverallPlacements } from './record-placement.mjs';
 
 const source=fs.readFileSync(new URL('../polytrack_062_patch.js',import.meta.url),'utf8');
 function section(start,end){return source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)));}
@@ -134,6 +135,73 @@ test('newer published track metadata bypasses an apparently fresh local cache',(
   assert.equal(context.trackSnapshotMetadataIsNewer('track',{serverUpdatedAt:500}),false);
   assert.equal(context.trackSnapshotMetadataIsNewer('track',{serverUpdatedAt:600}),false);
 });
+
+test('menu placement merges only complete exact-PB profile snapshot rows without cloud data',()=>{
+  const accountId='h'.repeat(64),trackA='a'.repeat(64),trackB='b'.repeat(64);
+  const context=vm.createContext({cleanUserId:value=>String(value||'')});
+  vm.runInContext(section('  let profilePlacementMergeCache=null;', '  function ensureRecordPlacementUi('),context);
+  const overall={source:'edge',revision:8,sourceRevision:8,builtRevision:8,serverUpdatedAt:700,updatedAt:700,
+    algorithmVersion:'ranked-model',schemaVersion:5,entries:[{userId:accountId,resultSamples:[
+      {trackId:trackA,rank:8,fieldSize:20,timeMs:1100,snapshotCapturedAt:700}
+    ]},{userId:'other'}]};
+  const profile={accountId,updatedAt:900,results:[
+    {trackId:trackA,rank:4,fieldSize:20,timeMs:1000,snapshotCapturedAt:900,complete:true},
+    {trackId:trackB,rank:2,fieldSize:10,timeMs:800,complete:false}
+  ]};
+  let merged=context.mergeProfilePlacementSnapshot(overall,profile,accountId);
+  let placements=preparePolyTrackOverallPlacements(merged,accountId,{authoritative:true,expectedAlgorithmVersion:'ranked-model',minSchemaVersion:5});
+  assert.equal(placements.get(trackA).timeMs,1000);assert.equal(placements.get(trackA).rank,4);
+  assert.equal(placements.has(trackB),false,'an incomplete board must not supply placement metadata');
+  assert.ok(merged.entries.some(row=>row.userId==='other'),'other overall racers are retained');
+
+  merged=context.mergeProfilePlacementSnapshot(null,profile,accountId);
+  placements=preparePolyTrackOverallPlacements(merged,accountId,{authoritative:true});
+  assert.equal(placements.get(trackA).fieldSize,20);
+  assert.equal(placements.has(trackB),false);
+  const local=context.mergeProfilePlacementSnapshot({...overall,source:'local'},profile,accountId);
+  assert.equal(local.source,'public-backup','local state is not promoted to authoritative');
+});
+
+test('same-PB profile placement replaces overall only when its per-row observation is newer',()=>{
+  const accountId='h'.repeat(64),track='a'.repeat(64);
+  const context=vm.createContext({cleanUserId:value=>String(value||'')});
+  vm.runInContext(section('  let profilePlacementMergeCache=null;', '  function ensureRecordPlacementUi('),context);
+  const overall={source:'live',entries:[{userId:accountId,resultSamples:[
+    {trackId:track,rank:6,fieldSize:20,timeMs:1000,snapshotCapturedAt:900}
+  ]}]};
+  const profile={accountId,updatedAt:2000,results:[
+    {trackId:track,rank:4,fieldSize:20,timeMs:1000,snapshotCapturedAt:800,complete:true}
+  ]};
+  let merged=context.mergeProfilePlacementSnapshot(overall,profile,accountId);
+  assert.equal(merged.entries[0].resultSamples[0].rank,6,'stale profile rank cannot regress newer live observation');
+  profile.results=[{...profile.results[0],timeMs:900}];
+  merged=context.mergeProfilePlacementSnapshot(overall,profile,accountId);
+  assert.equal(merged.entries[0].resultSamples[0].timeMs,1000,'a faster but stale snapshot cannot resurrect an older PB');
+  profile.results=[{...profile.results[0],timeMs:1000,snapshotCapturedAt:1000}];
+  merged=context.mergeProfilePlacementSnapshot(overall,profile,accountId);
+  assert.equal(merged.entries[0].resultSamples[0].rank,4,'newer per-row observation may update the same PB placement');
+  const unknownFreshness={...overall,entries:[{...overall.entries[0],resultSamples:[{trackId:track,rank:6,fieldSize:20,timeMs:1000}]}]};
+  profile.results=[{...profile.results[0],snapshotCapturedAt:800}];
+  merged=context.mergeProfilePlacementSnapshot(unknownFreshness,profile,accountId);
+  assert.equal(merged.entries[0].resultSamples[0].rank,6,'unknown overall freshness is not treated as older');
+  assert.equal(context.mergeProfilePlacementSnapshot(unknownFreshness,{...profile,accountId:'x'.repeat(64)},accountId),unknownFreshness,
+    'a profile with a conflicting root account ID is rejected');
+});
+
+test('menu placement merge reuses its result until snapshot or profile results are replaced',()=>{
+  const accountId='h'.repeat(64),track='a'.repeat(64);
+  const context=vm.createContext({cleanUserId:value=>String(value||'')});
+  vm.runInContext(section('  let profilePlacementMergeCache=null;', '  function ensureRecordPlacementUi('),context);
+  const snapshot={source:'live',entries:[{userId:accountId,resultSamples:[]}]};
+  const profile={accountId,updatedAt:10,results:[{trackId:track,rank:3,fieldSize:12,timeMs:900,snapshotCapturedAt:20,complete:true}]};
+  const first=context.mergeProfilePlacementSnapshot(snapshot,profile,accountId);
+  assert.equal(context.mergeProfilePlacementSnapshot(snapshot,profile,accountId),first,'unchanged inputs reuse the merged object');
+  profile.results=[{trackId:track,rank:2,fieldSize:12,timeMs:900,snapshotCapturedAt:30,complete:true}];
+  const refreshed=context.mergeProfilePlacementSnapshot(snapshot,profile,accountId);
+  assert.notEqual(refreshed,first,'replacement results invalidate the memo even with unchanged updatedAt and count');
+  assert.equal(refreshed.entries[0].resultSamples[0].rank,2);
+});
+
 test('idle visitors and another account saved runs never unlock live standings',()=>{
   let now=Date.UTC(2026,9,7),rows=[];
   const context=vm.createContext({Date:{now:()=>now},activeRankedAccountId:()=> 'self',readOverallSnapshotCache:()=>null,

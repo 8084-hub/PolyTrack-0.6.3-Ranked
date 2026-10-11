@@ -230,7 +230,8 @@ function currentRaceState(bindings, fingerprint, invalid, previous) {
   if (!same) {
     state.pending = [];
     state.covered = {};
-    state.records = {};
+    state.records = Object.fromEntries(bindings.filter(binding => previous?.records?.[binding.signature]?.reason === 'binding-mismatch')
+      .map(binding => [binding.signature, previous.records[binding.signature]]));
     state.responseInvalid = 0;
   }
   state.fingerprint = fingerprint;
@@ -240,10 +241,12 @@ function currentRaceState(bindings, fingerprint, invalid, previous) {
 }
 
 export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directory, projectId = 'polytrack-052', maxDocuments = 2000,
-  pageSize = 100, log = () => {}, fullSnapshot = false, includeProfiles = true, snapshotDirectory = directory} = {}) {
+  pageSize = 100, log = () => {}, fullSnapshot = false, includeProfiles = true, snapshotDirectory = directory,
+  retryInvalidAfterMs = 0, now = Date.now()} = {}) {
   if (typeof fetchImpl !== 'function' || typeof directory !== 'string' || !directory || typeof snapshotDirectory !== 'string' ||
       !Number.isSafeInteger(maxDocuments) || maxDocuments < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 ||
       typeof includeProfiles !== 'boolean' || fullSnapshot && !includeProfiles ||
+      !Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(retryInvalidAfterMs) || retryInvalidAfterMs < 0 || retryInvalidAfterMs > 86400000 ||
       typeof projectId !== 'string' || !/^[a-z][a-z0-9-]{4,62}[a-z0-9]$/.test(projectId)) throw Error('Invalid public export options');
   maxDocuments = Math.min(maxDocuments, MAX_DOCUMENTS_PER_RUN);
   await fs.mkdir(directory, {recursive: true});
@@ -319,6 +322,7 @@ export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directo
   race.known = staged.bindings.length;
   race.invalid = staged.invalid;
   const bindingBySignature = new Map(staged.bindings.map(binding => [binding.signature, binding]));
+  const deferredBindings = new Set();
   for (const binding of staged.bindings) {
     const signature = binding.signature;
     if (await savedMatchExists(directory, binding)) {
@@ -326,11 +330,14 @@ export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directo
         canonicalPath: `canonical/${binding.trackId}/${binding.accountId}.json`};
       race.covered[signature] = true;
     } else {
-      delete race.records[signature];
+      const failure = race.records[signature];
+      if (failure?.reason === 'binding-mismatch' && Number.isSafeInteger(failure.checkedAt) && failure.checkedAt <= now &&
+          now - failure.checkedAt < retryInvalidAfterMs) deferredBindings.add(signature);
+      else delete race.records[signature];
       delete race.covered[signature];
     }
   }
-  race.pending = staged.bindings.map(binding => binding.signature).filter(signature => !race.covered[signature]).sort();
+  race.pending = staged.bindings.map(binding => binding.signature).filter(signature => !race.covered[signature] && !deferredBindings.has(signature)).sort();
   progress.raceExport = race;
   while (race.pending.length && usedThisRun < maxDocuments) {
     const count = Math.min(BATCH_GET_SIZE, pageSize, maxDocuments - usedThisRun, race.pending.length);
@@ -390,7 +397,7 @@ export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directo
         }
       }
       if (race.records[signature]?.available) race.covered[signature] = true;
-      else delete race.covered[signature];
+      else { delete race.covered[signature]; race.records[signature].checkedAt = now; }
       usedThisRun++;
     }
     race.pending = race.pending.slice(count);
@@ -420,6 +427,7 @@ export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directo
   const result = {counts: {profiles: progress.profileCount, canonical: available, recordings: available, missing,
       skipped: progress.profileSkipped + invalid}, scanned: progress.profiles.scanned + records.length,
     fetchedDocumentsThisRun: usedThisRun, knownVerifiedBindings: race.known,
+    deferredBindingRetries: deferredBindings.size,
     totalCoverage: {available, missing, invalid, complete: coverageComplete,
       scope: 'current-staged-track-snapshots'}, scanComplete, complete: coverageComplete, budgetReached, incompletePage};
   log(JSON.stringify({publicProfileReplayExport: result}));

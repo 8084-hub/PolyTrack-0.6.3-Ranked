@@ -195,6 +195,20 @@ test('previously missing bindings retry within each run document limit',async()=
   assert.equal(retryRequests[0].options.documents.length,1);
  });});
 
+test('unchanged invalid bindings back off without claiming completeness, even after unrelated snapshot edits',async()=>{
+ await withDirectory(async directory=>{
+  await stage(directory,[binding()]);const requests=[];
+  const fetchImpl=fixtureFetch(req=>batchResponse(req,raceFields({uploadId:int(999)})),requests);
+  await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1000,retryInvalidAfterMs:3600000,fetchImpl});
+  await stage(directory,[binding({name:'Updated display name'})]);requests.length=0;
+  const cached=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:2000,retryInvalidAfterMs:3600000,fetchImpl});
+  assert.equal(requests.length,0);assert.equal(cached.deferredBindingRetries,1);assert.equal(cached.complete,false);
+  assert.equal(cached.totalCoverage.invalid,1);
+  await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:3601000,retryInvalidAfterMs:3600000,fetchImpl});
+  assert.equal(requests.length,1);
+ });
+});
+
 test('bounds batchGet response and rejects mismatched document name',async()=>{
  await withDirectory(async directory=>{await stage(directory,[binding()]);
   await assert.rejects(exportPublicProfilesAndReplays({directory,fetchImpl:fixtureFetch(req=>

@@ -1,7 +1,9 @@
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 import { eventRuntime, eventWork, consumeEventInbox } from '../../workers/ranked/src/events-runtime.js';
 import { VERIFIER_ENGINE_DIGEST, VERIFIER_VERSION } from '../../workers/ranked/src/verification.js';
-import { createSimilarityReviewer } from './similarity.mjs';
+import { createSimilarityReviewer, similarityEvidence } from './similarity.mjs';
+import { reviewInboxWrite } from './review-inbox.mjs';
 
 export const EVENT_JOB_LIMIT = 16;
 function runtime(db, now = Date.now) {
@@ -14,13 +16,27 @@ export async function checkEventWork(db, { now = Date.now } = {}) {
 export async function runEventVerification(db, root, { now = Date.now, verifyBatch, limit = EVENT_JOB_LIMIT, intakeLimit = 16, canSpend = () => true, selectionState } = {}) {
   const r = runtime(db, typeof now === 'function' ? now : () => now);
   const verify = verifyBatch || createRequire(import.meta.url)('./verify.cjs').verifyBatch;
-  return runEventCoordinator(r, root, { verifyBatch: verify, reviewSimilarity:createSimilarityReviewer(root), limit, intakeLimit, canSpend, selectionState });
+  return runEventCoordinator(r, root, {
+    verifyBatch: verify, reviewSimilarity:createSimilarityReviewer(root), limit, intakeLimit, canSpend, selectionState,
+    writeFinding: async (periodId, job, verdict, evidence) => {
+      const resultId = job.runId || job.resultId;
+      const auditId = createHash('sha256').update(JSON.stringify([
+        'event-review-v1', periodId, resultId, job.trackId, job.timeMs, job.replayHash,
+      ])).digest('hex');
+      const write = await reviewInboxWrite(db, auditId, { ...job, periodId }, verdict, evidence);
+      if (!write) return false;
+      await db.call(':commit', { writes: [write] });
+      return true;
+    },
+  });
 }
 export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_JOB_LIMIT, intakeLimit = 16,
-  consumeInbox = consumeEventInbox, readWork = eventWork, canSpend = () => true, selectionState, reviewSimilarity } = {}) {
+  consumeInbox = consumeEventInbox, readWork = eventWork, canSpend = () => true, selectionState, reviewSimilarity,
+  writeFinding } = {}) {
   if (!Number.isInteger(limit) || limit < 1 || limit > EVENT_JOB_LIMIT) throw Error('Event job limit');
   if (!Number.isInteger(intakeLimit) || intakeLimit < 1 || intakeLimit > 16) throw Error('Event intake limit');
   let consumed = 0, rejected = false, budgetDeferred = false;
+  let eventFindingsAdded = 0, eventFindingWriteFailed = 0;
   for (let i = 0; i < intakeLimit; i++) {
     // Two bounded intake transactions plus discovery and one leased batch must fit.
     if (!canSpend(48 + 24 + 128)) { budgetDeferred = true; break; }
@@ -41,14 +57,26 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
   while (pending.length && checked < limit) {
     // Reserve before leasing: one lease and up to four completion transactions.
     // Existing adapter has no retries; each transaction uses at most sixteen reads.
-    if (!canSpend(128)) { budgetDeferred = true; break; }
+    // Four findings may each require one inbox read and one commit after publication.
+    if (!canSpend(136)) { budgetDeferred = true; break; }
     const periodId = pending.shift();
+    const reviewCandidates = new Map();
     const published = await r.service.processBatch(periodId, (jobs,period)=>{
         const verifyAndReview = async (trustedJobs, trustedPeriod, trustedTracks) => {
           const verified = await verifyBatch(root,trustedJobs,trustedTracks);
           if (reviewSimilarity) {
             assertBoundEventResults(trustedJobs,trustedPeriod,verified);
             await reviewSimilarity(trustedJobs,verified);
+            for (const job of trustedJobs) {
+              const resultId = job.runId || job.resultId;
+              const result = verified.find(row => row?.resultId === resultId);
+              const evidence = result && similarityEvidence(result);
+              if (evidence) reviewCandidates.set(resultId, {
+                job: { ...job, periodId: trustedPeriod.id || periodId },
+                verdict: { status: result.status, reason: result.reason },
+                evidence,
+              });
+            }
           }
           return verified;
         };
@@ -56,6 +84,16 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
         if(!jobs.every(job=>job.trackId===period.trackId))throw Error('Kodub verifier period mismatch');
         return verifyAndReview(jobs,period,[{trackId:period.trackId,code:period.kodub.trackCode,codeHash:period.kodub.trackCodeHash}]);
       }, Math.min(4, limit - checked));
+    // A finding is durable only after publication confirms the same result and verdict.
+    if (writeFinding) for (const result of published) {
+      const candidate = reviewCandidates.get(result?.resultId);
+      if (!candidate || candidate.verdict.status !== result.status || candidate.verdict.reason !== result.reason) continue;
+      try {
+        if (await writeFinding(periodId, candidate.job, candidate.verdict, candidate.evidence, result)) eventFindingsAdded++;
+      } catch {
+        eventFindingWriteFailed++;
+      }
+    }
     checked += published.length; results.push(...published);
     if (published.length && selectionState) selectionState.lastPeriodId = periodId;
     if (published.some(result => result.reason === 'engine_unavailable')) break;
@@ -64,7 +102,7 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
   let archived = null;
   if (work.archiveId && canSpend(24)) { await r.service.archivePeriod(work.archiveId); archived = work.archiveId; }
   else if (work.archiveId) budgetDeferred = true;
-  return { checked, consumed, rejected, archived, results, budgetDeferred };
+  return { checked, consumed, rejected, archived, results, budgetDeferred, eventFindingsAdded, eventFindingWriteFailed };
 }
 
 function assertBoundEventResults(jobs,period,results) {

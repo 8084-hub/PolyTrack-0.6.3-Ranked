@@ -2664,7 +2664,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=110',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
-  let recordPlacementOverallKey='',recordPlacementOverallPlacements=null;
+  let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
   const MAX_RETAINED_PLACEMENT_SNAPSHOTS=64;
   const placementCompleteSnapshotCache=new Map();
@@ -2743,6 +2743,31 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     provisionalPlacementCache.set(cacheKey,placement);
     return placement;
   }
+  let profilePlacementMergeCache=null;
+  function mergeProfilePlacementSnapshot(snapshot,profile,accountId){
+    const profileResults=Array.isArray(profile?.results)?profile.results:null;
+    const cached=profilePlacementMergeCache;
+    if(cached&&cached.snapshot===snapshot&&cached.profile===profile&&cached.profileResults===profileResults&&cached.accountId===accountId)return cached.value;
+    const remember=value=>{profilePlacementMergeCache={snapshot,profile,profileResults,accountId,value};return value;};
+    if(profile?.accountId&&cleanUserId(profile.accountId)!==accountId)return remember(snapshot);
+    const profileRows=(profileResults||[]).filter(row=>row?.complete===true&&
+      String(row.accountId||row.userId||accountId)===accountId&&Number.isSafeInteger(Number(row.rank))&&Number(row.rank)>0&&
+      Number.isSafeInteger(Number(row.fieldSize))&&Number(row.fieldSize)>=Number(row.rank)&&Number.isSafeInteger(Number(row.timeMs))&&Number(row.timeMs)>0);
+    if(!profileRows.length)return remember(snapshot);
+    const sourceIsLocal=/local|fallback|pending/i.test(String(snapshot?.source||''));
+    const base=sourceIsLocal?null:snapshot;
+    const entries=Array.isArray(base?.entries)?base.entries.filter(row=>cleanUserId(row.userId||row.accountId||'')!==accountId):[];
+    const existing=base?.entries?.find(row=>cleanUserId(row.userId||row.accountId||'')===accountId)||profile.publicProfile||{};
+    const byTrack=new Map((Array.isArray(existing.resultSamples)?existing.resultSamples:[]).filter(row=>row?.trackId).map(row=>[row.trackId,row]));
+    const observedAt=row=>Math.max(Number(row?.snapshotCapturedAt||0),Number(row?._snapshotCapturedAt||0),Number(row?.observedAt||0));
+    for(const row of profileRows){
+      const previous=byTrack.get(row.trackId);
+      const incomingObserved=observedAt(row),previousObserved=observedAt(previous);
+      if(!previous||previousObserved>0&&incomingObserved>previousObserved)byTrack.set(row.trackId,row);
+    }
+    entries.push({...existing,userId:accountId,accountId,resultSamples:[...byTrack.values()]});
+    return remember({...base,source:base?.source||'public-backup',updatedAt:Math.max(Number(base?.updatedAt||base?.serverUpdatedAt||0),Number(profile.updatedAt||0)),authoritative:true,entries});
+  }
   function ensureRecordPlacementUi(){
     if(recordPlacementUi)return Promise.resolve(recordPlacementUi);
     if(!recordPlacementUiPromise){
@@ -2797,7 +2822,17 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
           },
           readAuthoritativePlacements:()=>{
             const accountId=activeRankedAccountId();
-            const snapshot=readOverallSnapshotCache();
+            const overall=readOverallSnapshotCache();
+            const profile=profileSnapshotResults.get(accountId);
+            if(accountId&&isElementVisible(document.querySelector('.track-selection-ui'))&&!profile){
+              void loadProfileSnapshotResults(accountId).then(changed=>{
+                if(changed&&accountId===activeRankedAccountId()){
+                  recordPlacementOverallKey='';
+                  schedulePersonalBestPlacementRender();
+                }
+              });
+            }
+            const snapshot=mergeProfilePlacementSnapshot(overall,profile,accountId);
             if(!accountId||!snapshot){
               recordPlacementOverallKey='';
               recordPlacementOverallPlacements=null;
@@ -2810,10 +2845,13 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
               Number(snapshot.builtRevision||0),
               Number(snapshot.revision||0),
               Number(snapshot.serverUpdatedAt||0),
-              Number(snapshot.fetchedAt||0)
+              Number(snapshot.fetchedAt||0),
+              Number(profile?.updatedAt||0),
+              Number(profile?.results?.length||0)
             ]);
-            if(key!==recordPlacementOverallKey){
+            if(key!==recordPlacementOverallKey||snapshot!==recordPlacementOverallSnapshot){
               recordPlacementOverallKey=key;
+              recordPlacementOverallSnapshot=snapshot;
               recordPlacementOverallPlacements=module.preparePolyTrackOverallPlacements(
                 snapshot,
                 accountId,
@@ -6374,7 +6412,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   let snapshotTrackStatistics = {};
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=114').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=115').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
       void reader('track-statistics').then(data=>{if(!data)return;snapshotTrackStatistics=data.tracks;updateTrackFreshnessBanner();}).catch(()=>{});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
@@ -8392,7 +8430,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=114',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:114,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=115',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:115,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);

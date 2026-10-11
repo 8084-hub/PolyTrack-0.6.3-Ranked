@@ -216,7 +216,8 @@ export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNorma
   // Flagged publications can make six requests on each of three conflict attempts.
   if(db.remainingRequests)jobs=jobs.slice(0,Math.floor(db.remainingRequests()/18));
   const eventSummary = {checked: events.checked, consumed: events.consumed,
-    rejected: events.rejected, archived: events.archived, budgetDeferred:events.budgetDeferred===true};
+    rejected: events.rejected, archived: events.archived, budgetDeferred:events.budgetDeferred===true,
+    reviewInboxAdded:Number(events.eventFindingsAdded||0),reviewInboxWriteFailed:Number(events.eventFindingWriteFailed||0)};
   const idleCounts = {normalQueueReturnedDocuments,
     unusedEventReservedSlots: Math.max(0, eventLimit - events.checked),
     normalIdleSlots: Math.max(0, (borrowUnusedEvents ? TOTAL_JOB_LIMIT - events.checked : NORMAL_JOB_LIMIT) - jobs.length),

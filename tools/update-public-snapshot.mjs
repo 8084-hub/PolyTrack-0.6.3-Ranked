@@ -166,7 +166,7 @@ export async function updatePublicSnapshot({ root = moduleRoot, offline = false,
     const previousSummary = await readJsonIfPresent(path.join(stagingDirectory, 'public-export-summary.json'));
     const startFullSnapshot = fullPublic && previousProgress?.fullSnapshotPending !== true;
     exportResult = await exportPublic({ directory: stagingDirectory, snapshotDirectory: stagingDirectory, maxDocuments: fullPublic ? 2000 : 100,
-      fullSnapshot: startFullSnapshot, includeProfiles: fullPublic, log });
+      fullSnapshot: startFullSnapshot, includeProfiles: fullPublic, retryInvalidAfterMs:3600000, log });
     const capturedAt = new Date().toISOString();
     const summary={counts:exportResult.counts,scanned:exportResult.scanned,capturedAt,
       profilesCapturedAt:fullPublic ? capturedAt : previousSummary?.profilesCapturedAt || previousSummary?.capturedAt || null,

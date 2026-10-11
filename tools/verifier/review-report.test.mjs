@@ -14,6 +14,11 @@ test('private report escapes names, evidence and identifiers',()=>{
   const html=reviewHtml({rows:[{accountId:'<script>x</script>',evidence:{text:'<img src=x>'}}],status:'open',generatedAt:'now'});
   assert.doesNotMatch(html,/<script>|<img/);assert.match(html,/&lt;script&gt;/);
 });
+test('report labels the exact_duplicate category explicitly',()=>{
+  const html=reviewHtml({rows:[{id:'a'.repeat(64),category:'exact_duplicate',status:'open',reason:'exact_duplicate_run'}],
+    status:'open',generatedAt:'now'});
+  assert.match(html,/<h2>Exact duplicate · open<\/h2>/);
+});
 test('historical backfill uses only two filtered, bounded queries',async()=>{
   const queries=[];
   const result=await backfillReviewPage({call:async(_,body)=>{queries.push(body.structuredQuery);return [];}});
