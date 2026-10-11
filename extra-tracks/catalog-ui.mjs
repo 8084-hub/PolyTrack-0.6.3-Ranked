@@ -72,6 +72,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   if (!document?.createElement || !root?.append) throw new TypeError('document and root are required');
   let destroyed = false;
   let opened = false;
+  let viewGeneration = 0;
   let returnFocus = null;
   let submissionReturnFocus = null;
   let reportReturnFocus = null;
@@ -396,21 +397,23 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   submission.addEventListener('submit', submitForm);
 
   async function runAction(kind, callback, entry) {
-    if (pendingAction || destroyed) return;
+    if (destroyed) return;
+    if (pendingAction) { showStatus(ACTION_PENDING_MESSAGE); return; }
     if (typeof callback !== 'function') {
       showStatus(`${kind === 'play' ? 'Play' : 'Save'} is unavailable.`, true);
       return;
     }
+    const operationGeneration = viewGeneration;
     pendingAction = true;
     syncSendControls();
     showStatus(kind === 'play' ? 'Opening track...' : 'Saving track...');
     try {
-      await callback(entry);
-      if (destroyed) return;
+      await callback(entry, { isCurrent: () => !destroyed && opened && viewGeneration === operationGeneration });
+      if (destroyed || !opened || viewGeneration !== operationGeneration) return;
       if (kind === 'play') close();
       else showStatus('Track saved.');
     } catch {
-      if (!destroyed) showStatus(kind === 'play' ? 'Could not open this track. Please try again.' : 'Could not save this track. Please try again.', true);
+      if (!destroyed && opened && viewGeneration === operationGeneration) showStatus(kind === 'play' ? 'Could not open this track. Please try again.' : 'Could not save this track. Please try again.', true);
     } finally {
       pendingAction = false;
       syncSendControls();
@@ -937,6 +940,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   function close() {
     if (!opened || destroyed) return;
     opened = false;
+    viewGeneration++;
     clearCardMenu();
     overlay.hidden = true;
     closeSubmission(false);
@@ -963,6 +967,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
 
   function open() {
     if (destroyed || opened) return;
+    viewGeneration++;
     returnFocus = document.activeElement;
     opened = true;
     cachedRecords = null;

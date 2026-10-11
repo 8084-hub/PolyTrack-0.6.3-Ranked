@@ -2,7 +2,7 @@ const fs=require('node:fs'),vm=require('node:vm'),test=require('node:test'),asse
 const source=fs.readFileSync(path.join(__dirname,'..','polytrack_062_patch.js'),'utf8');
 function extract(name){const start=source.search(new RegExp('^  (?:async )?function '+name+'\\(','m'));assert(start>=0,name);const tail=source.slice(start),end=tail.indexOf('\n  }');assert(end>0,name);return tail.slice(0,end+4);}
 function setup(saved=null){
- const elements=new Map(),ctx={console,Date,Map,Set,Number,Promise,overallCategory:'events',overallPage:0,OVERALL_PAGE_SIZE:15,overallEntriesCache:[],rankedFilterResult:null,eventTotalsSnapshot:null,eventTotalsRequest:null,eventTotalsState:{status:'idle',checkedAt:0},EVENT_TOTALS_CACHE_KEY:'test',readJsonStorage:()=>saved,writeJsonStorage:(_k,v)=>{saved=v;},cleanUserId:x=>String(x),withTimeout:p=>p,renderEntries:()=>{},updateRankedFreshness:()=>{},eventCloudRead:async()=>({entries:[],updatedAt:1}),document:{getElementById:id=>elements.get(id),querySelector:()=>null,querySelectorAll:()=>[]},window:{},syncCategorySelect:()=>{},hydrateOverallCarModels:()=>{},escapeHtml:s=>String(s).replaceAll('<','&lt;').replaceAll('"','&quot;'),safeDisplayName:x=>x,formatRp:String,formatRaceTime:value=>`${value}ms`,durationLabel:value=>`${value}ms`,activeRankedAccountId:()=>'',racerCosmeticClasses:()=>'',carModelPreview:()=>'',countryFlagMarkup:()=>'',profileBadgeMarkup:()=>'',ageLabel:String};
+ const elements=new Map(),ctx={console,Date,Map,Set,Number,Promise,overallCategory:'events',overallPage:0,OVERALL_PAGE_SIZE:15,overallEntriesCache:[],rankedFilterResult:null,eventTotalsSnapshot:null,eventTotalsRequest:null,eventTotalsState:{status:'idle',checkedAt:0},EVENT_TOTALS_CACHE_KEY:'test',readJsonStorage:()=>saved,writeJsonStorage:(_k,v)=>{saved=v;},readPublicSnapshotBackup:async()=>null,snapshotOnlyForNewAccount:()=>false,profileSnapshotResults:new Map(),loadProfileSnapshotResults:async()=>false,warmProfileLocalPlacements:async()=>false,localPlannerProfileEntry:()=>null,cleanUserId:x=>String(x),withTimeout:p=>p,renderEntries:()=>{},updateRankedFreshness:()=>{},eventCloudRead:async()=>({entries:[],updatedAt:1}),document:{getElementById:id=>elements.get(id),querySelector:()=>null,querySelectorAll:()=>[]},window:{},syncCategorySelect:()=>{},hydrateOverallCarModels:()=>{},escapeHtml:s=>String(s).replaceAll('<','&lt;').replaceAll('"','&quot;'),safeDisplayName:x=>x,formatRp:String,formatRaceTime:value=>`${value}ms`,durationLabel:value=>`${value}ms`,activeRankedAccountId:()=>'',racerCosmeticClasses:()=>'',carModelPreview:()=>'',countryFlagMarkup:()=>'',profileBadgeMarkup:()=>'',ageLabel:String};
  ctx.syncRankedFilterRowsSafely=()=>null;ctx.applyPersonalFilters=rows=>({rows,active:false});ctx.personalFilterRuntime=null;ctx.rankedFilterSnapshotMeta={complete:false};
  vm.createContext(ctx);for(const name of ['normalizeEventTotals','savedEventTotals','fetchEventTotals','sortedEventEntries','renderEventEntryRow','renderEventEntries','updateEventFreshness','sortedOverallEntries','currentLeaderboardCount','updateOverallPager','changeOverallPage'])vm.runInContext(extract(name),ctx);
  return {ctx,elements,getSaved:()=>saved};
@@ -36,8 +36,16 @@ test('Rolling Hills totals preserve bounded optional contribution, time and adva
 });
 test('one shared totals read, correct public endpoint, refresh cache and no per-racer reads',async()=>{
  const {ctx,getSaved}=setup();let calls=0,release;ctx.eventCloudRead=(...args)=>{calls++;assert.deepEqual(args,['/v1/events/totals','0.6.2_event_public','totals']);return new Promise(resolve=>release=resolve);};
- const first=ctx.fetchEventTotals(),second=ctx.fetchEventTotals(true);release({updatedAt:5,entries:[row()]});await Promise.all([first,second]);assert.equal(calls,1);assert.equal(getSaved().entries.length,1);
+ const first=ctx.fetchEventTotals(),second=ctx.fetchEventTotals(true);await new Promise(resolve=>setImmediate(resolve));release({updatedAt:5,entries:[row()]});await Promise.all([first,second]);assert.equal(calls,1);assert.equal(getSaved().entries.length,1);
  await ctx.fetchEventTotals();assert.equal(calls,1);assert.equal(ctx.eventTotalsState.status,'cloud');
+});
+test('saved event totals snapshot is used before cloud access',async()=>{
+ const {ctx}=setup();const saved={updatedAt:5,entries:[row()]};let cloudReads=0,snapshotReads=0;
+ ctx.readPublicSnapshotBackup=async kind=>{assert.equal(kind,'event-totals');snapshotReads++;return saved;};
+ ctx.eventCloudRead=async()=>{cloudReads++;throw Error('cloud must not be read when a snapshot is available');};
+ await ctx.fetchEventTotals();
+ assert.equal(snapshotReads,1);assert.equal(cloudReads,0);
+ assert.equal(ctx.eventTotalsSnapshot.updatedAt,5);assert.equal(ctx.eventTotalsState.status,'snapshot');
 });
 test('indefinitely old saved snapshot survives failed and malformed responses',async()=>{
  const {ctx,getSaved}=setup({updatedAt:1,entries:[row()]});ctx.eventCloudRead=async()=>{throw Error('offline');};await ctx.fetchEventTotals(true);assert.equal(ctx.eventTotalsState.status,'stale');assert.equal(ctx.sortedEventEntries().length,1);
@@ -51,7 +59,7 @@ test('late older cloud snapshot never replaces newer event scores',async()=>{
  const {ctx}=setup({updatedAt:100,entries:[row('a',50)]});ctx.eventCloudRead=async()=>({updatedAt:99,entries:[row('a',1)]});await ctx.fetchEventTotals(true);assert.equal(ctx.sortedEventEntries()[0].rp,50);assert.equal(ctx.eventTotalsState.status,'stale');
 });
 test('category switch during fetch cannot repaint normal list',async()=>{
- const {ctx}=setup();let release;ctx.eventCloudRead=()=>new Promise(r=>release=r);const pending=ctx.fetchEventTotals();ctx.overallCategory='overall';ctx.renderEntries=()=>assert.fail('unexpected repaint');ctx.updateRankedFreshness=()=>assert.fail('unexpected freshness');release({updatedAt:1,entries:[row()]});await pending;
+ const {ctx}=setup();let release;ctx.eventCloudRead=()=>new Promise(r=>release=r);const pending=ctx.fetchEventTotals();ctx.overallCategory='overall';ctx.renderEntries=()=>assert.fail('unexpected repaint');ctx.updateRankedFreshness=()=>assert.fail('unexpected freshness');await new Promise(resolve=>setImmediate(resolve));release({updatedAt:1,entries:[row()]});await pending;
 });
 test('200 event racers paginate 15 per page with stable event rank and bounded buttons',()=>{
  const {ctx,elements}=setup({updatedAt:1,entries:Array.from({length:200},(_,i)=>row('user'+i,200-i,i+1))});ctx.LEADERBOARD_LABELS={events:'Event RP'};for(const id of ['overallPageStatus','overallPrevPage','overallNextPage'])elements.set(id,{});

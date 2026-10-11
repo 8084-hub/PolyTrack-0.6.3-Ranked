@@ -178,6 +178,30 @@ test('archive kind checkboxes combine locally and leave unrelated archive kinds 
   assert.deepEqual(visibleKinds(), ['custom']);
 });
 
+test('late archive standings do not restore filtered-out events to the summary', async () => {
+  const { root } = archiveFixture();
+  let resolveSnapshot;
+  const pendingSnapshot = new Promise(resolve => { resolveSnapshot = resolve; });
+  const periods = [
+    { id: 'daily', kind: 'daily', endsAt: 300, racerCount: 1 },
+    { id: 'weekly', kind: 'weekly', endsAt: 200, racerCount: 1 },
+    { id: 'custom', kind: 'custom', endsAt: 100, racerCount: 1 }
+  ];
+  mountArchiveView(root, { periods, loadSnapshot: () => pendingSnapshot });
+  const weekly = descendants(root, node => node.tagName === 'DETAILS').find(node => node.dataset.archiveEventId === 'weekly');
+  weekly.open = true;
+  weekly.emit('toggle');
+  const weeklyFilter = descendants(root, node => node.tagName === 'INPUT').find(node => node.value === 'weekly');
+  weeklyFilter.checked = false;
+  weeklyFilter.emit('change');
+  const stats = descendants(root, node => node.className === 'sq-archive-stats')[0];
+  assert.equal(stats.dataset.totalEvents, '2');
+  resolveSnapshot({ entries: [{ accountId: 'racer', timeMs: 1000 }] });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(stats.dataset.totalEvents, '2');
+  assert.equal(stats.dataset.loadedEvents, '0');
+});
+
 test('live selector yields Kodub, weekly and daily while permanent Rolling stays dedicated', () => {
   const periods = liveTimedEventPeriods([
     { id: 'weekly', kind: 'weekly', startsAt: 1, endsAt: 200 },

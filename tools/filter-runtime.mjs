@@ -66,7 +66,8 @@ export function createFilterRuntime({storage, getData = () => ({}), onChange = (
     const active = filter.enabled && hasGroupFilters(filter) && (context.overall || filter.scope === 'all');
     if (!active) return {rows:source,active:false,available:true,filter,sourceCount:source.length,filteredCount:source.length};
     const shared=data();
-    const key=`${revision}|${shared.key}|${context.trackId || ''}|${context.event ? 1 : 0}|${context.overall ? 1 : 0}|${context.category || ''}|${context.complete ? 1 : 0}`;
+    const maxRp = Number(context.maxRp);
+    const key=`${revision}|${shared.key}|${context.trackId || ''}|${context.event ? 1 : 0}|${context.overall ? 1 : 0}|${context.category || ''}|${context.complete ? 1 : 0}|${Number.isFinite(maxRp) ? maxRp : ''}`;
     const saved=results.get(source);
     if(saved?.key===key)return saved.value;
     const result=filterGroupRows(source, filter, {...context,profileIndex:shared.profileIndex,finishIndex:shared.finishIndex,

@@ -1,14 +1,23 @@
 // Public, same-origin backups never replace the authoritative PB submission path.
 export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now,packed=false}){
   const pending=new Map(),saved=new Map(),retryAt=new Map();let manifestValue=null;
-  let packageBase=new URL(baseUrl),indexRequest=null,pointerRecoveryAttempted=false,pointerRecoveryRequest=null;
+  const transientFetchErrors=new WeakSet();
+  const SHORT_RETRY_MS=30_000,LONG_RETRY_MS=15*60_000;
+  function markTransientFetchError(error){
+    if(error&&typeof error==='object'&&(error instanceof TypeError||error.name==='AbortError'||error.name==='TimeoutError'))transientFetchErrors.add(error);
+    return error;
+  }
+  function isTransientFailure(error){return Boolean(error&&(transientFetchErrors.has(error)||error.status===429||(error.status>=500&&error.status<=599)));}
+  async function fetchSnapshot(url,options){try{return await fetchImpl(url,options);}catch(error){throw markTransientFetchError(error);}}
+  async function responseBody(response,method){try{return await response[method]();}catch(error){throw markTransientFetchError(error);}}
+  let packageBase=new URL(baseUrl),indexRequest=null,pointerRecoveryAttempted=false,pointerRecoveryRequest=null,pointerRecoveryFailure=null;
   async function packageIndex(){
     if(!indexRequest){
       const requestedBase=packageBase;
       const request=(async()=>{
-        const response=await fetchImpl(new URL('index.json',requestedBase),{credentials:'omit',cache:'default',signal:AbortSignal.timeout(5000)});
+        const response=await fetchSnapshot(new URL('index.json',requestedBase),{credentials:'omit',cache:'default',signal:AbortSignal.timeout(5000)});
         if(!response.ok){const error=Error('Snapshot index unavailable');error.status=response.status;error.base=requestedBase.href;throw error;}
-        const text=await response.text();if(text.length>8*1024*1024)throw Error('Snapshot index too large');
+        const text=await responseBody(response,'text');if(text.length>8*1024*1024)throw Error('Snapshot index too large');
         const index=JSON.parse(text);
         if(index.schemaVersion!==1||index.encoding!=='gzip-xor-a7-v1'||!index.files||typeof index.files!=='object')throw Error('Unsupported snapshot encoding');
         return {index,base:requestedBase};
@@ -21,16 +30,20 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
   }
   async function recoverCurrentGeneration(){
     if(pointerRecoveryRequest)return pointerRecoveryRequest;
+    if(pointerRecoveryFailure){
+      if(now()<pointerRecoveryFailure.retryAt)throw pointerRecoveryFailure.error;
+      pointerRecoveryFailure=null;pointerRecoveryAttempted=false;
+    }
     if(pointerRecoveryAttempted)return false;
     pointerRecoveryAttempted=true;
     pointerRecoveryRequest=(async()=>{
       try{
         const parent=new URL('../',packageBase),pointerUrl=new URL('snapshot-current.json',parent);
         if(pointerUrl.origin!==packageBase.origin)return false;
-        const response=await fetchImpl(pointerUrl,{credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(5000)});
-        if(!response.ok)return false;
+        const response=await fetchSnapshot(pointerUrl,{credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(5000)});
+        if(!response.ok){if(response.status===429||response.status>=500&&response.status<=599){const error=Error('Snapshot pointer unavailable');error.status=response.status;throw error;}return false;}
         if(response.url){const finalUrl=new URL(response.url);if(finalUrl.origin!==pointerUrl.origin||finalUrl.href!==pointerUrl.href)return false;}
-        const text=await response.text();if(text.length>16384)return false;
+        const text=await responseBody(response,'text');if(text.length>16384)return false;
         const pointer=JSON.parse(text);
         if(typeof pointer.currentdir!=='string'||!/^public-snapshots[1-9]\d*$/.test(pointer.currentdir))return false;
         const nextBase=new URL(`${pointer.currentdir}/`,parent);
@@ -38,7 +51,7 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
         packageBase=nextBase;
         indexRequest=null;
         return true;
-      }catch{return false;}
+      }catch(error){if(isTransientFailure(error)){pointerRecoveryFailure={error,retryAt:now()+SHORT_RETRY_MS};throw error;}return false;}
     })();
     const request=pointerRecoveryRequest;
     request.then(()=>{if(pointerRecoveryRequest===request)pointerRecoveryRequest=null;},()=>{if(pointerRecoveryRequest===request)pointerRecoveryRequest=null;});
@@ -50,9 +63,9 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     const record=pack.index.files[logical];
     if(!record)return null;
     if(!/^[a-f0-9]{64}\.bin$/.test(record.path)||!Number.isSafeInteger(record.decodedBytes)||record.decodedBytes<1||record.decodedBytes>2*1024*1024)throw Error('Invalid snapshot record');
-    const response=await fetchImpl(new URL(record.path,pack.base),{credentials:'omit',cache:'force-cache',signal:AbortSignal.timeout(5000)});
+    const response=await fetchSnapshot(new URL(record.path,pack.base),{credentials:'omit',cache:'force-cache',signal:AbortSignal.timeout(5000)});
     if(!response.ok){const error=Error('Snapshot unavailable');error.status=response.status;error.base=pack.base.href;throw error;}
-    const bytes=new Uint8Array(await response.arrayBuffer());if(bytes.length>2*1024*1024)throw Error('Snapshot payload too large');
+    const bytes=new Uint8Array(await responseBody(response,'arrayBuffer'));if(bytes.length>2*1024*1024)throw Error('Snapshot payload too large');
     const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
     if(hash!==record.sha256)throw Error('Snapshot checksum mismatch');
     for(let i=0;i<bytes.length;i++)bytes[i]^=0xa7;
@@ -92,11 +105,12 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     const request=(async()=>{
       try{
         let body;
-        if(packed){body=await packedText(path);if(body===null){retryAt.set(path,now()+15*60000);if(retryAt.size>512)retryAt.delete(retryAt.keys().next().value);return null;}}
+        if(packed){body=await packedText(path);if(body===null){retryAt.set(path,now()+LONG_RETRY_MS);if(retryAt.size>512)retryAt.delete(retryAt.keys().next().value);return null;}}
         else{
-          const response=await fetchImpl(new URL(path,baseUrl),{credentials:'omit',cache:'default',signal:AbortSignal.timeout(5000)});
-          if(!response.ok||!String(response.headers.get('content-type')||'').includes('application/json'))throw Error('Public backup unavailable');
-          body=await response.text();
+          const response=await fetchSnapshot(new URL(path,baseUrl),{credentials:'omit',cache:'default',signal:AbortSignal.timeout(5000)});
+          if(!response.ok){const error=Error('Public backup unavailable');error.status=response.status;throw error;}
+          if(!String(response.headers.get('content-type')||'').includes('application/json'))throw Error('Public backup unavailable');
+          body=await responseBody(response,'text');
         }
         if(body.length>2*1024*1024)throw Error('Public backup exceeds size limit');
         const value=JSON.parse(body);
@@ -125,7 +139,7 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
         }
         retryAt.delete(path);
         return result;
-      }catch{retryAt.set(path,now()+15*60000);if(retryAt.size>512)retryAt.delete(retryAt.keys().next().value);return cached?.value||null;}
+      }catch(error){retryAt.set(path,now()+(isTransientFailure(error)?SHORT_RETRY_MS:LONG_RETRY_MS));if(retryAt.size>512)retryAt.delete(retryAt.keys().next().value);return cached?.value||null;}
     })();
     pending.set(path,request);
     request.finally(()=>{if(pending.get(path)===request)pending.delete(path);}).catch(()=>{});

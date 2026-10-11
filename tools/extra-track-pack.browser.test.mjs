@@ -10,7 +10,7 @@ const start=source.indexOf('  async function importExtraTrack('),end=source.inde
 assert.ok(start>=0&&end>start);
 test('all thirty collection tracks import serially with the native importer and remain saved',{skip:!chromium,timeout:120000},async()=>{
  const root=new URL('../',import.meta.url);const {fileURLToPath}=await import('node:url');
- const engine=snapshot(fileURLToPath(root)),server=await serve(engine),browser=await chromium.launch({headless:true});
+ const engine=snapshot(fileURLToPath(root)),server=await serve(engine),browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE}:{})});
  try{
  const page=await browser.newPage();await page.addInitScript(()=>localStorage.setItem('polytrack_v5_prod_startup_info',JSON.stringify({lastVersion:'0.6.3',isTutorialCompleted:true})));await page.route('**/*',route=>new URL(route.request().url()).origin===server.origin?route.continue():route.abort());
  await page.goto(server.origin,{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>globalThis.__vrRequire);

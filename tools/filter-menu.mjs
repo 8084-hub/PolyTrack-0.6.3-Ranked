@@ -1198,10 +1198,15 @@ export function mountFilterMenu({
       const parsed = JSON.parse(importExportArea.value);
       const incoming = Array.isArray(parsed) ? parsed : parsed?.presets;
       if (!Array.isArray(incoming)) throw new TypeError('Loadout data must contain a presets list.');
-      const collisions = incoming.filter(item => local.presets.some(saved => saved.name.toLocaleLowerCase() === cleanString(item?.name, 32).toLocaleLowerCase()));
+      const entries = incoming.slice(0, 30);
+      if (entries.some(item => {
+        const name = cleanString(item?.name, 32);
+        return name && (!item?.filter || typeof item.filter !== 'object' || Array.isArray(item.filter));
+      })) throw new TypeError('Each named loadout must contain a filter object.');
+      const collisions = entries.filter(item => local.presets.some(saved => saved.name.toLocaleLowerCase() === cleanString(item?.name, 32).toLocaleLowerCase()));
       if (collisions.length && !document.defaultView?.confirm?.(`Replace ${collisions.length} matching saved loadout(s)?`)) { setStatus('Loadout import canceled.'); return; }
       const merged = new Map(local.presets.map(item => [item.name.toLocaleLowerCase(), item]));
-      for (const item of incoming.slice(0, 30)) {
+      for (const item of entries) {
         const name = cleanString(item?.name, 32);
         if (!name || !item?.filter || typeof item.filter !== 'object') continue;
         merged.set(name.toLocaleLowerCase(), { name, filter: normalizeFilter(item.filter), favorite: item.favorite === true });

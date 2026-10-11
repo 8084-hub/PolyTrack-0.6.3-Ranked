@@ -224,6 +224,7 @@ export function mountArchiveView(root, options = {}) {
   const document = root.ownerDocument;
   const periods = normalizeArchivePeriods(options.periods);
   const enabledKinds = new Set(['daily', 'weekly', 'kodub']);
+  const visiblePeriods = () => periods.filter(period => !['daily', 'weekly', 'kodub'].includes(period.kind) || enabledKinds.has(period.kind));
   const snapshots = options.snapshots instanceof Map ? options.snapshots : new Map(Object.entries(options.snapshots || {}));
   const loadSnapshot = typeof options.loadSnapshot === 'function' ? options.loadSnapshot : null;
   const formatTime = typeof options.formatTime === 'function' ? options.formatTime : defaultTime;
@@ -381,7 +382,7 @@ export function mountArchiveView(root, options = {}) {
       }
       summary.setAttribute('aria-label', `${KIND_LABELS[period.kind]}: ${String(resolveName(period) || 'Archived event')}; ${counts.racers} ${counts.racers === 1 ? 'racer' : 'racers'}; ${counts.verified} verified${counts.winner ? `; winner ${counts.winner.name || 'Racer'}, ${formatTime(counts.winner.timeMs)}` : ''}`);
       renderRows(document, results, counts.verifiedEntries, formatTime, options.accountId || '');
-      renderStats(document, stats, periods, snapshots);
+      renderStats(document, stats, visiblePeriods(), snapshots);
     };
     if (snapshots.has(period.id)) showSnapshot(snapshots.get(period.id));
 
@@ -410,7 +411,7 @@ export function mountArchiveView(root, options = {}) {
 
   let currentPage = 1;
   function renderPage(page = currentPage) {
-    const filtered = periods.filter(period => !['daily', 'weekly', 'kodub'].includes(period.kind) || enabledKinds.has(period.kind));
+    const filtered = visiblePeriods();
     const pageInfo = paginateArchivePeriods(filtered, page);
     currentPage = pageInfo.page;
     events.replaceChildren();

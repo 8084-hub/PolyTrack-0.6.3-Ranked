@@ -179,6 +179,12 @@ test('filter menu works offline in a real browser: focus, preview, share and loa
     await page.getByRole('button', { name: 'Export loadouts' }).click();
     const exported = JSON.parse(await loadoutData.inputValue());
     assert.equal(exported.presets[0].name, 'Browser test');
+    await loadoutData.fill(JSON.stringify({ presets: [{ name: 'Browser test', filter: [] }] }));
+    await page.getByRole('button', { name: 'Import loadouts' }).click();
+    await page.getByRole('status').getByText('Each named loadout must contain a filter object').waitFor();
+    await page.getByRole('button', { name: 'Export loadouts' }).click();
+    assert.deepEqual(JSON.parse(await loadoutData.inputValue()).presets, exported.presets,
+      'an array-shaped filter cannot replace an existing saved loadout');
     await loadoutData.fill('{}');
     await page.getByRole('button', { name: 'Import loadouts' }).click();
     await page.getByRole('status').getByText('Loadout data must contain a presets list').waitFor();

@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=107',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=108',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='107';
+  const extraCatalogRevision='108';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -156,7 +156,7 @@
         }
       }catch{}
     }
-    const backup=await readPublicSnapshotBackup('event',id);
+    const backup=await readPublicSnapshotBackup(id==='totals'?'event-totals':'event',id);
     if(backup)return backup;
     if(eventRateLimited){const error=Error('Event service rate limited; retry after cooldown');error.eventRateLimited=true;throw error;}
     const database=await db();const snapshot=await database.collection(collection).doc(id).get();
@@ -335,11 +335,12 @@
       }).catch(error=>{extraTracksCatalogPromise=null;throw error;});
     return extraTracksCatalogPromise;
   }
-  async function importExtraTrack(entry,{saveOnly=false}={}){
+  async function importExtraTrack(entry,{saveOnly=false,isCurrent=()=>true}={}){
     if(!entry||!(/^extra-tracks\/track-data\/[a-z0-9-]+\/[a-z0-9-]+\.track$/.test(entry.trackPath||'')||entry.ranked===false&&/^extra-tracks\/challenges\/[a-z0-9-]+\.track$/.test(entry.trackPath||'')))throw Error('Track file is unavailable.');
     const response=await fetch(new URL('../'+entry.trackPath,extraTracksBaseUrl),{signal:AbortSignal.timeout(15000)});
     if(!response.ok||Number(response.headers.get('content-length'))>524288)throw Error('Track file is unavailable or too large.');
     const code=(await response.text()).trim();
+    if(!isCurrent())return;
     if(code.length>524288||!/^PolyTrack[0-9A-Za-z+/_=-]+$/.test(code))throw Error('Track code is invalid.');
     const decoded=__pt062WebpackRequire()?.(9117)?.A?.fromExportString(code);
     const trackId=String(decoded?.trackData?.getId?.()||'');
@@ -363,6 +364,7 @@
       if(dialog)break;
       await new Promise(resolve=>setTimeout(resolve,50));
     }
+    if(!isCurrent())return;
     const field=dialog?.querySelector('textarea:not([readonly])');
     const confirm=[...dialog?.querySelectorAll('button')||[]].find(button=>button.querySelector('img[src*="import.svg"]'));
     if(!field||!confirm)throw Error('The native importer did not open.');
@@ -372,7 +374,7 @@
     known[entry.id]=trackId;
     try{localStorage.setItem(extraTrackIdsKey,JSON.stringify(known));}catch{}
     extraTrackKnownIds=known;
-    if(!saveOnly)extraTracksUi?.close();
+    if(!saveOnly&&isCurrent())extraTracksUi?.close();
   }
   async function submitExtraTrack(payload){
     const user=window.firebase?.auth?.().currentUser;
@@ -1816,8 +1818,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function readRecordingStore(ids){
     try {
-      const raw = localStorage.getItem(RECORDING_STORE_KEY);
-      const data = raw ? JSON.parse(raw) : {};
+      const data = readJsonStorage(RECORDING_STORE_KEY,{}) || {};
       return ids.map((id)=>{
         const rec = data[String(id)];
         if (!rec || typeof rec.recording !== 'string' || !rec.recording) return null;
@@ -1850,10 +1851,17 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     while(nativeRecordingMemory.size>64||bytes>8*1024*1024){const oldest=nativeRecordingMemory.keys().next().value;bytes-=nativeRecordingMemory.get(oldest).recording.length*2;nativeRecordingMemory.delete(oldest);}
   }
   async function readNativeRecordings(ids){
-    const key=ids.join(',');
-    if(nativeRecordingRequests.has(key))return nativeRecordingRequests.get(key);
-    const request=loadNativeRecordings(ids);nativeRecordingRequests.set(key,request);
-    request.finally(()=>nativeRecordingRequests.delete(key)).catch(()=>{});return request;
+    // Overlapping selections share each replay, not just identical request batches.
+    const missing=[...new Set(ids)].filter(id=>!nativeRecordingRequests.has(id));
+    if(missing.length){
+      const batch=loadNativeRecordings(missing);
+      missing.forEach((id,index)=>{
+        const request=batch.then(rows=>rows[index]||null);
+        nativeRecordingRequests.set(id,request);
+        request.finally(()=>{if(nativeRecordingRequests.get(id)===request)nativeRecordingRequests.delete(id);}).catch(()=>{});
+      });
+    }
+    return Promise.all(ids.map(id=>nativeRecordingRequests.get(id)));
   }
   async function loadNativeRecordings(ids){
     const fromLocal=readRecordingStore(ids);
@@ -2319,6 +2327,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       @media(max-width:600px){.leaderboard-ui .button-wrapper:has(>[data-personal-filter-button])>.button{font-size:15px!important;padding-inline:5px!important}}
       .personal-racer-context{position:fixed;z-index:2147483001;display:grid;gap:4px;box-sizing:border-box;width:min(238px,calc(100vw - 16px));max-height:calc(100dvh - 16px);overflow:auto;padding:7px;background:#122649;border:1px solid #6585ac;box-shadow:0 8px 24px #0008}
       .personal-racer-context button{font:16px/1.3 ForcedSquare,sans-serif;min-height:36px;border:0;color:#e7efff;background:#203858;text-align:left;padding:7px 10px;clip-path:none;transform:none}
+      @media(pointer:coarse){.personal-racer-context button{min-height:44px}}
       .personal-racer-context button:hover,.personal-racer-context button:focus-visible{background:#34557a;outline:1px solid #93b4e3;outline-offset:-1px}
       .leaderboard-ui .button-wrapper>[data-personal-filter-button]{flex:0 1 auto!important;font-size:14px!important;padding:6px 9px!important;background:#233950!important;color:#c4d3e7!important;border:0;box-shadow:none!important}
       body.personal-filters-active .leaderboard-ui .button-wrapper>[data-personal-filter-button].selected{background:#284b48!important;color:#b9efd6!important;box-shadow:inset 0 -2px var(--personal-filter-color,#68efac)!important}
@@ -4249,6 +4258,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   let rankedFreshnessTimer = 0;
   function closeOverallPanel(panel){
     if(!panel)return;
+    document.getElementById('personalRacerActions')?.__close?.(false);
     panel.style.display='none';
     if(rankedFreshnessTimer){clearInterval(rankedFreshnessTimer);rankedFreshnessTimer=0;}
   }
@@ -4674,7 +4684,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=107',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=108',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -4694,8 +4704,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=107',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=107',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=107',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=108',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=108',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=108',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -4730,18 +4740,40 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     personalFilterRuntime.setFilter({...filter,enabled:true,blacklist:action==='exclude'?[...blacklist,id]:blacklist,forcedIncludes:action==='include'?[...forcedIncludes,id]:forcedIncludes});
   }
   function openPersonalRacerActions(id,event){
-    document.getElementById('personalRacerActions')?.remove();
+    document.getElementById('personalRacerActions')?.__close?.(false);
+    const returnFocus=event.target?.closest?.('button,[tabindex]')||document.activeElement;
     const menu=document.createElement('div');menu.id='personalRacerActions';menu.className='personal-racer-context';menu.setAttribute('role','dialog');menu.setAttribute('aria-label','Racer filter actions');
     const profile=async()=>{await openRankedPanel(false);if(overallEntriesCache.some(entry=>cleanUserId(entry.userId||entry.accountId)===id))openRankedProfile(id);else{const list=document.querySelector('#overallLeaderboardList');if(list)list.insertAdjacentHTML('afterbegin','<div class="overall-empty compact"><strong>This racer is not in the loaded rankings yet.</strong><span>Their event run is still saved in event standings.</span></div>');}};
     for(const [label,action] of [['Racer profile',profile],['Include in filters',()=>editPersonalRacer(id,'include')],['Exclude from filters',()=>editPersonalRacer(id,'exclude')],['Remove racer override',()=>editPersonalRacer(id,'remove')],['Edit filters',openPersonalFilterMenu],['Close',()=>{}]]){
       const button=document.createElement('button');button.type='button';button.className='button';button.textContent=label;
-      button.onclick=()=>{menu.remove();void action();};menu.appendChild(button);
+      button.onclick=()=>{close();void action();};menu.appendChild(button);
     }
+    const close=(restore=true)=>{
+      menu.remove();
+      document.removeEventListener('pointerdown',dismiss,true);
+      window.removeEventListener('resize',position);
+      if(restore&&returnFocus?.isConnected)returnFocus.focus({preventScroll:true});
+    };
+    const dismiss=event=>{if(!menu.contains(event.target))close(false);};
+    const position=()=>{
+      const bounds=menu.getBoundingClientRect();
+      menu.style.left=Math.max(8,Math.min(event.clientX,window.innerWidth-bounds.width-8))+'px';
+      menu.style.top=Math.max(8,Math.min(event.clientY,window.innerHeight-bounds.height-8))+'px';
+    };
+    menu.__close=close;
+    menu.onkeydown=event=>{
+      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();return;}
+      if(!['Tab','ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
+      const buttons=Array.from(menu.querySelectorAll('button'));
+      const index=buttons.indexOf(document.activeElement);
+      const backwards=event.key==='ArrowUp'||event.key==='Tab'&&event.shiftKey;
+      const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(backwards?-1:1)+buttons.length)%buttons.length;
+      event.preventDefault();event.stopPropagation();buttons[next]?.focus();
+    };
     document.body.appendChild(menu);
-    const bounds=menu.getBoundingClientRect();
-    menu.style.left=Math.max(8,Math.min(event.clientX,window.innerWidth-bounds.width-8))+'px';menu.style.top=Math.max(8,Math.min(event.clientY,window.innerHeight-bounds.height-8))+'px';menu.querySelector('button').focus();
-    menu.onkeydown=event=>{if(event.key==='Escape')menu.remove();};
-    const dismiss=event=>{if(!menu.contains(event.target))menu.remove();};document.addEventListener('pointerdown',dismiss,{capture:true,once:true});
+    position();menu.querySelector('button').focus();
+    document.addEventListener('pointerdown',dismiss,true);
+    window.addEventListener('resize',position);
   }
   function personalFilterNotice(result){
     if(!result?.active)return '';
@@ -5936,7 +5968,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         return;
       }
       const connected = overallLoadState.status === 'empty-cloud';
-      listEl.innerHTML = `<div class="overall-empty"><strong>${connected?'Community Ranked is initializing':'Community Ranked is temporarily unavailable'}</strong><span>${connected?'No complete production snapshot exists yet.':`The cloud refresh did not return a complete snapshot${overallLoadState.message?`: ${escapeHtml(overallLoadState.message)}`:'.'}`}</span><span>Your local PBs remain saved. No local record is discarded when Ranked is offline.</span><button class="button" type="button" data-rank-retry>Retry</button></div>`;
+      listEl.innerHTML = `<div class="overall-empty"><strong>${connected?'Community Ranked is initializing':'Community Ranked is temporarily unavailable'}</strong><span>${connected?'No complete production snapshot exists yet.':`Standings could not be loaded${overallLoadState.message?`: ${escapeHtml(overallLoadState.message)}`:'.'}`}</span><span>Your local PBs are still saved.</span><button class="button" type="button" data-rank-retry>Retry</button></div>`;
       return;
     }
     const start = overallPage * OVERALL_PAGE_SIZE;
@@ -6047,7 +6079,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       overallLoadState={status:'loading',message:'Showing saved rankings while checking the ranked service',fetchedAt:saved.serverUpdatedAt||saved.fetchedAt,serverUpdatedAt:saved.serverUpdatedAt||0,checkedAt:saved.fetchedAt||0,complete:saved.complete===true,totalEntries:saved.totalEntries,totalEntriesExact:saved.totalEntriesExact===true,publishedEntries:saved.publishedEntries,ranksExact:saved.ranksExact===true};
       updateRankedFreshness();
     } else {
-      listEl.innerHTML = `<div class="overall-loading"><strong>${tr('loading')}</strong><span>Checking the ranked service for the first snapshot</span><div class="overall-loading-bar"></div></div>`;
+      listEl.innerHTML = `<div class="overall-loading"><strong>${tr('loading')}</strong><span>Loading saved standings</span><div class="overall-loading-bar"></div></div>`;
     }
     const slowTimer=setTimeout(()=>{
       if(generation===overallLoadGeneration&&panel.style.display!=='none'&&overallLoadState.status==='loading'){
@@ -6194,7 +6226,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     }
   }
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=107').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=108').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
       void reader('snapshot-meta').then(meta=>{const at=Date.parse(meta?.capturedAt||'');if(Number.isFinite(at)&&at>0&&at<=Date.now())publicSnapshotCapturedAt=at;}).catch(()=>{});
@@ -8181,7 +8213,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=107',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:107,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=108',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:108,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);

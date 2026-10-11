@@ -120,6 +120,9 @@ export function eventRp(period, timeMs) {
   }
   return Math.min(period.maxRp, Number(BigInt(period.maxRp) * BigInt(period.targetMs) / BigInt(timeMs)));
 }
+export function exhaustedEventLease(slot, at) {
+  return slot.attempts >= L.verificationAttempts && slot.leaseUntil <= at;
+}
 export function prioritizedEventSlots(slots, period, at, limit, playbacks = []) {
   const metadata=new Map(playbacks.map(row=>[row.runId,row]));
   const due=slots.filter(s=>s.notBefore<=at&&s.leaseUntil<=at&&s.attempts<L.verificationAttempts).map(slot=>{
@@ -507,6 +510,41 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
         const archive = await tx.get(path(C.archives, periodId));
         if (archive?.cleaned) return [];
         const queuePath = path(C.queues, periodId), queue = await tx.get(queuePath);
+        const exhausted = queue.slots.filter(slot => exhaustedEventLease(slot, at)).slice(0, limit);
+        if (exhausted.length) {
+          // Cleanup-only pass: four shared reads plus three per run fit the 16-read cap.
+          // Do not spend verification allowance or lease more native attempts here.
+          const livePath = path(C.live, periodId), board = await tx.get(livePath);
+          const cleanup = [];
+          for (const slot of exhausted) {
+            const run = await readRun(tx, periodId, slot.runId);
+            demand(run.status === 'waiting' && typeof run.replay === 'string', 'event_run_corrupt', 503);
+            const receiptPath = path(C.receipts, `${periodId}_${run.accountId}`), receipt = await tx.get(receiptPath);
+            const playbackPath = path(C.replays, `${periodId}_run_${run.runId}`), playback = await tx.get(playbackPath);
+            demand(playback?.periodId === periodId && playback.runId === run.runId &&
+              playback.replayHash === run.replayHash, 'event_playback_corrupt', 503);
+            cleanup.push({ slot, run, receiptPath, receipt, playbackPath });
+          }
+          const status = 'unavailable_final', reason = 'event_final_lease_expired';
+          const removed = new Set(cleanup.map(({ run }) => run.runId));
+          for (const { slot, run, receiptPath, receipt, playbackPath } of cleanup) {
+            await tx.patch(path(C.runs, run.runId), { status, attempts: slot.attempts, replay: null,
+              proof: { key: run.eventKey, verifierVersion: VERIFIER_VERSION, engineDigest: null,
+                status: 'unavailable', checkedAt: at, reason },
+              eventImproved: false, canonicalImproved: false, canonicalDeferred: false, completedAt: at });
+            await tx.patch(playbackPath, { verificationStatus: status, verified: false,
+              eventRpEligible: false, eventRpAwarded: false, verifiedAt: null });
+            if (receipt?.attemptId === run.attemptId && receipt.timeMs === run.timeMs) await tx.patch(receiptPath,
+              { status, reason, eventImproved: false, canonicalImproved: false, updatedAt: at });
+          }
+          if (board && !archive && at < p.endsAt + p.graceMs) await tx.patch(livePath,
+            { pendingPlaybacks: visiblePendingPlaybacks(board.pendingPlaybacks || board.playbacks)
+              .filter(row => !removed.has(row.runId)), updatedAt: at });
+          await tx.set(queuePath, { ...queue,
+            replayBytes: Math.max(0, queue.replayBytes - cleanup.reduce((bytes, { run }) => bytes + run.replay.length, 0)),
+            slots: queue.slots.filter(slot => !removed.has(slot.runId)) });
+          return [];
+        }
         const budgetPath = path(C.quotas, 'verification_global'), budget = await tx.get(budgetPath);
         const day = Math.floor(at / 86400000), used = budget?.day === day ? budget.used : 0;
         const allowance = Math.min(limit, Math.max(0, p.capacity.verificationsPerDay - used));

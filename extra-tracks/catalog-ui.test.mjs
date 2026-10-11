@@ -514,6 +514,24 @@ test('Import and play waits for the native importer before hiding', async () => 
   assert.equal(cls(root, 'sq-extra-overlay')[0].hidden, true);
 });
 
+test('a late play completion cannot close a reopened catalog and pending actions explain themselves', async () => {
+  const request = deferred();
+  const { root, api } = fixture([entry(1)], { onPlay: () => request.promise });
+  api.open();
+  const pending = click(cls(root, 'sq-extra-play')[0]);
+  api.close();
+  api.open();
+
+  await click(cls(root, 'sq-extra-play')[0]);
+  assert.match(cls(root, 'sq-extra-status')[0].textContent, /Another request is still processing/);
+  assert.equal(cls(root, 'sq-extra-overlay')[0].hidden, false);
+
+  request.resolve();
+  await pending;
+  assert.equal(cls(root, 'sq-extra-overlay')[0].hidden, false, 'the old play action must not close the new catalog session');
+  api.destroy();
+});
+
 test('track reports expose exactly three reasons and report clear success or failure', async () => {
   const reports = [];
   const { root, api } = fixture([entry(1)], { onReport: async (item, reason) => { reports.push([item, reason]); } });

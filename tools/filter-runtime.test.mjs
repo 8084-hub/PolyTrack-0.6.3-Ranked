@@ -67,6 +67,15 @@ test('event group ERP uses linear canonical scaling and never overwrites publish
  assert.deepEqual(result.rows.map(row=>row.groupRp),[700,350]);
  assert.deepEqual(result.rows.map(row=>row.rp),[200,100]);assert.equal(source[0].rank,2);
 });
+
+test('event ERP cache distinguishes different maxRp caps',()=>{
+ const {runtime}=fixture();runtime.setFilter({mode:'smart',whitelist:['b','c']});
+ const source=[{accountId:'b',timeMs:2000,rp:200},{accountId:'c',timeMs:4000,rp:100}];
+ const high=runtime.apply(source,{trackId:'summer',event:true,maxRp:700,complete:true});
+ const low=runtime.apply(source,{trackId:'summer',event:true,maxRp:500,complete:true});
+ assert.deepEqual(high.rows.map(row=>row.groupRp),[700,350]);
+ assert.deepEqual(low.rows.map(row=>row.groupRp),[500,250]);
+});
 test('missing weights do not fabricate a ranked score',()=>{
  const unknown={trackId:'unknown',entries:[{accountId:'b',timeMs:1000}]};
  const result=groupScoreRows(players,[unknown],['b']);

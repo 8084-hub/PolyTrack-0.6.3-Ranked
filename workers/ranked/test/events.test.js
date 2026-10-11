@@ -682,6 +682,194 @@ test('mismatch never earns RP and unavailable retries have a finite budget', asy
   assert.deepEqual(f.data.get(`${C.queues}/day1`).slots, []);
 });
 
+async function finalEventLease(f, startsAt = 1000) {
+  let job, at = startsAt;
+  for (let attempt = 0; attempt < L.verificationAttempts; attempt++) {
+    f.time(at);
+    [job] = await f.service.leaseJobs('day1', 1);
+    assert(job);
+    at += L.leaseMs;
+  }
+  return { job, expiresAt: at };
+}
+function cleanupDiscovery(f, at) {
+  const calls = [];
+  return { calls, now: () => at, request: async (route, init) => {
+    calls.push(route);
+    if (route === ':runQuery') {
+      const query = JSON.parse(init.body).structuredQuery;
+      assert([C.inbox, C.retries].includes(query.from[0].collectionId), 'no cleanup collection scans');
+      assert.equal(query.limit, 1);
+      return [];
+    }
+    const value = f.data.get(route.slice(1));
+    return value ? { fields: eventEncode(value).mapValue.fields } : null;
+  } };
+}
+
+test('failed final event completion becomes discoverable cleanup at lease expiry without another native attempt', async () => {
+  const f = fixture(); await f.start(); const intake = await f.submit();
+  const { job, expiresAt } = await finalEventLease(f);
+  const beforeFailure = structuredClone(f.data);
+  f.store.fail(`${C.queues}/day1`);
+  await assert.rejects(f.service.completeJob('day1', job, verdict(job)), /simulated_write_failure/);
+  assert.deepEqual(f.data, beforeFailure);
+  f.store.fail(null); f.time(expiresAt);
+  await assert.rejects(f.service.completeJob('day1', job, verdict(job)), /event_lease_lost/);
+  const runtime = cleanupDiscovery(f, expiresAt);
+  const work = await eventWork(runtime);
+  assert.equal(work.hasWork, true); assert.deepEqual(work.periodIds, ['day1']);
+  assert.equal(runtime.calls.filter(route => route === `/${C.queues}/day1`).length, 1);
+  const budget = structuredClone(f.data.get(`${C.quotas}/verification_global`));
+  let nativeCalls = 0;
+  assert.deepEqual(await f.service.processBatch('day1', async () => { nativeCalls++; return []; }), []);
+  assert.equal(nativeCalls, 0);
+  const run = f.run(intake.runId), queue = f.data.get(`${C.queues}/day1`);
+  assert.equal(run.status, 'unavailable_final'); assert.equal(run.attempts, L.verificationAttempts);
+  assert.equal(run.replay, null); assert.equal(run.proof.status, 'unavailable');
+  assert.equal(run.proof.engineDigest, null);
+  assert.equal(run.eventImproved, false); assert.equal(run.canonicalImproved, false);
+  assert.deepEqual(queue.slots, []); assert.equal(queue.replayBytes, 0);
+  assert.equal(queue.admitted, 1);
+  assert.deepEqual(f.data.get(`${C.quotas}/verification_global`), budget);
+  const receipt = await f.service.ownReceipt('day1', 'user1', account);
+  assert.equal(receipt.status, 'unavailable_final'); assert.equal(receipt.reason, 'event_final_lease_expired');
+  const playback = f.data.get(`${C.replays}/day1_run_${intake.runId}`);
+  assert.equal(playback.verificationStatus, 'unavailable_final'); assert.equal(playback.verified, false);
+  assert.equal(playback.eventRpEligible, false); assert.equal(playback.eventRpAwarded, false);
+  assert.equal(playback.replay, replay);
+  assert.deepEqual(f.data.get(`${C.live}/day1`).pendingPlaybacks, []);
+  assert.deepEqual((await f.service.totals()).entries, []); assert.equal(f.canonical(), undefined);
+  assert.equal(f.data.has(`${C.pbs}/day1_${account}`), false);
+  assert.equal((await eventWork(cleanupDiscovery(f, expiresAt))).hasWork, false);
+});
+
+test('repeated and competing final lease cleanup cannot double-release bytes or accept a late award', async () => {
+  const f = fixture(); await f.start(); await f.submit();
+  const { job, expiresAt } = await finalEventLease(f); f.time(expiresAt);
+  await Promise.all([f.service.leaseJobs('day1'), f.service.leaseJobs('day1')]);
+  const completed = structuredClone(f.data);
+  await f.service.processBatch('day1', async () => assert.fail('no additional native attempt'));
+  assert.deepEqual(await f.service.completeJob('day1', job, verdict(job)),
+    { status: 'unavailable_final', duplicate: true });
+  assert.deepEqual(f.data, completed);
+  assert.equal(f.data.get(`${C.queues}/day1`).replayBytes, 0);
+  assert.deepEqual((await f.service.totals()).entries, []);
+});
+
+test('active final event lease is neither discovered nor changed by cleanup', async () => {
+  const f = fixture(); await f.start(); await f.submit();
+  const { expiresAt } = await finalEventLease(f); f.time(expiresAt - 1);
+  const before = structuredClone(f.data);
+  assert.equal((await eventWork(cleanupDiscovery(f, expiresAt - 1))).hasWork, false);
+  await f.service.processBatch('day1', async () => assert.fail('active lease must not be simulated twice'));
+  assert.deepEqual(f.data, before);
+});
+
+test('final lease cleanup rolls back run receipt playback and byte release together', async () => {
+  const f = fixture(); await f.start(); const intake = await f.submit();
+  const { expiresAt } = await finalEventLease(f); f.time(expiresAt);
+  const before = structuredClone(f.data);
+  f.store.fail(`${C.queues}/day1`);
+  await assert.rejects(f.service.leaseJobs('day1'), /simulated_write_failure/);
+  assert.deepEqual(f.data, before);
+  assert.equal((await eventWork(cleanupDiscovery(f, expiresAt))).hasWork, true);
+  f.store.fail(null); await f.service.leaseJobs('day1');
+  assert.equal(f.run(intake.runId).status, 'unavailable_final');
+  assert.equal(f.data.get(`${C.queues}/day1`).replayBytes, 0);
+});
+
+test('final lease cleanup preserves a newer receipt pending run and existing RP', async () => {
+  const f = fixture(); await f.start(); await f.submit(30000, 'verified'); await f.publish();
+  const canonical = structuredClone(f.canonical()), totals = await f.service.totals();
+  f.advance(); const old = await f.submit(20000, 'exhausted');
+  const { expiresAt } = await finalEventLease(f, 2000);
+  f.time(expiresAt); const newer = await f.submit(15000, 'newer');
+  const receipt = structuredClone(f.data.get(`${C.receipts}/day1_${account}`));
+  const entries = structuredClone(f.data.get(`${C.live}/day1`).entries);
+  assert.deepEqual(await f.service.leaseJobs('day1'), []);
+  assert.equal(f.run(old.runId).status, 'unavailable_final');
+  assert.equal(f.run(newer.runId).status, 'waiting');
+  assert.deepEqual(f.data.get(`${C.receipts}/day1_${account}`), receipt);
+  assert.deepEqual(f.data.get(`${C.live}/day1`).entries, entries);
+  assert.deepEqual(f.data.get(`${C.live}/day1`).pendingPlaybacks.map(row => row.runId), [newer.runId]);
+  const queue = f.data.get(`${C.queues}/day1`);
+  assert.equal(queue.replayBytes, replay.length); assert.equal(queue.slots[0].attempts, 0);
+  assert.deepEqual(f.canonical(), canonical); assert.deepEqual(await f.service.totals(), totals);
+  assert.equal((await eventWork(cleanupDiscovery(f, expiresAt))).hasWork, true);
+});
+
+test('archived final lease cleanup changes no frozen archive public scores or totals', async () => {
+  const f = fixture(); await f.start(); const intake = await f.submit();
+  await finalEventLease(f);
+  const at = p.endsAt + p.graceMs; f.time(at); await f.service.archivePeriod('day1');
+  const archive = structuredClone(f.data.get(`${C.archives}/day1`));
+  const board = structuredClone(f.data.get(`${C.live}/day1`));
+  assert.deepEqual((await eventWork(cleanupDiscovery(f, at))).periodIds, ['day1']);
+  await f.service.processBatch('day1', async () => assert.fail('cleanup cannot invoke native verifier'));
+  assert.equal(f.run(intake.runId).status, 'unavailable_final');
+  assert.deepEqual(f.data.get(`${C.archives}/day1`), archive);
+  assert.deepEqual(f.data.get(`${C.live}/day1`), board);
+  assert.deepEqual((await f.service.totals()).entries, []);
+  assert.equal(f.canonical(), undefined);
+});
+
+test('final lease cleanup stays within real adapter limits and ignores exhausted daily native budget', async () => {
+  const f = fixture(); await f.start();
+  const runIds = [];
+  for (let i = 0; i < 5; i++) {
+    const accountId = String(i + 1).repeat(64), ownerUid = 'racer' + i;
+    f.data.set(`${C.profiles}/${accountId}`, { accountId, ownerUid, name: ownerUid });
+    await f.service.bindOwner(ownerUid, accountId);
+    const intake = await f.service.submit('day1', ownerUid, { accountId, trackId: track,
+      attemptId: 'bounded', timeMs: 20000 + i, frames: 20000 + i, replay, carStyle: '' });
+    runIds.push(intake.runId);
+  }
+  // Five genuine final leases, including more cleanup work than fits one pass.
+  for (let attempt = 0; attempt < L.verificationAttempts; attempt++) {
+    f.time(1000 + attempt * L.leaseMs);
+    assert.equal((await f.service.leaseJobs('day1')).length, 4);
+    assert.equal((await f.service.leaseJobs('day1')).length, 1);
+  }
+  const at = 1000 + L.verificationAttempts * L.leaseMs;
+  f.data.set(`${C.quotas}/verification_global`, { day: 0, used: capacity.verificationsPerDay });
+  const budget = structuredClone(f.data.get(`${C.quotas}/verification_global`));
+  const reads = [], commits = [];
+  const store = createEventFirestoreStore({ projectId: 'polytrack-052', retries: 0, request: async (route, init) => {
+    if (route === ':beginTransaction') return { transaction: 'cleanup-test' };
+    if (route.startsWith('/')) {
+      const key = route.slice(1).split('?')[0]; reads.push(key);
+      const value = f.data.get(key);
+      return value ? { fields: eventEncode(value).mapValue.fields, updateTime: '2026-10-10T00:00:00Z' } : null;
+    }
+    assert.equal(route, ':commit');
+    const commit = JSON.parse(init.body); commits.push(commit);
+    for (const write of commit.writes) {
+      const key = write.update.name.split('/documents/')[1];
+      const value = eventDecode({ mapValue: { fields: write.update.fields } });
+      f.data.set(key, write.updateMask ? { ...f.data.get(key), ...value } : value);
+    }
+    return {};
+  } });
+  const service = createEventService({ store, now: () => at, hash, randomId: () => 'cleanup' });
+  await service.processBatch('day1', async () => assert.fail('cleanup must not spend native attempts'));
+  assert.equal(reads.length, 16); assert.equal(new Set(reads).size, 16);
+  assert.equal(reads.filter(key => key === `${C.queues}/day1`).length, 1);
+  assert.equal(reads.includes(`${C.quotas}/verification_global`), false);
+  assert.equal(commits.length, 1); assert.equal(commits[0].writes.length, 14);
+  assert.equal(runIds.filter(runId => f.run(runId).status === 'unavailable_final').length, 4);
+  assert.equal(f.data.get(`${C.queues}/day1`).replayBytes, replay.length);
+  assert.equal((await eventWork(cleanupDiscovery(f, at))).hasWork, true);
+  reads.length = 0;
+  await service.leaseJobs('day1', 1);
+  assert.equal(reads.length, 7); assert.equal(commits[1].writes.length, 5);
+  assert.equal(f.data.get(`${C.queues}/day1`).replayBytes, 0);
+  assert(runIds.every(runId => f.run(runId).attempts === L.verificationAttempts));
+  assert.deepEqual(f.data.get(`${C.quotas}/verification_global`), budget);
+  assert.equal((await eventWork(cleanupDiscovery(f, at))).hasWork, false);
+});
+
+
 test('invalid batch is rejected before any result publication, even with valid first result', async () => {
   const f = fixture(); await f.start(); await f.submit(); f.advance(); await f.submit(20000, 'r2');
   await assert.rejects(f.service.processBatch('day1', async jobs => [verdict(jobs[0]), verdict(jobs[1], { timeMs: 1 })]), /verifier_input/);

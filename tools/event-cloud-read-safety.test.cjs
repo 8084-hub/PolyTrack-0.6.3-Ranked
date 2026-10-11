@@ -12,8 +12,9 @@ const edgeEnd=source.indexOf('  const jsonStorageCache=new Map();',edgeStart);
 assert.ok(start>=0&&end>start,'production event cloud read functions exist');
 assert.ok(edgeStart>=0&&edgeEnd>edgeStart,'production ranked edge availability tracker exists');
 
-function harness({status=200,fetchError=null,backup=null}={}){
+function harness({status=200,fetchError=null,backup=null,snapshotOnly=false}={}){
   let now=100000,workerCalls=0,firestoreReads=0,quotaNotes=0;
+  const backupReads=[];
   const context={
     Date:{now:()=>now},Math,Number,Error,Promise,Map,JSON,Array,String,
     eventCloudRequests:new Map(),eventCloudCache:new Map(),eventCloudRetryAt:new Map(),
@@ -21,12 +22,13 @@ function harness({status=200,fetchError=null,backup=null}={}){
     fetch:async url=>{workerCalls++;if(fetchError)throw fetchError;const responseStatus=typeof status==='function'?status(String(url)):status;return {status:responseStatus,ok:responseStatus>=200&&responseStatus<300,headers:{get:name=>name==='Retry-After'?'120':'application/json'},json:async()=>({worker:true})};},
     RANKED_EDGE_STATE_KEY:'ranked-edge',RANKED_EDGE_BACKOFF_MS:300000,
     sessionStorage:{getItem:()=>null,setItem:()=>{},removeItem:()=>{}},log:()=>{},noteFirebaseQuota:()=>{quotaNotes++;},
-    readPublicSnapshotBackup:async()=>backup,
+    snapshotOnlyForNewAccount:()=>snapshotOnly,
+    readPublicSnapshotBackup:async(kind,id)=>{backupReads.push({kind,id});return typeof backup==='function'?backup(kind,id):backup;},
     db:async()=>({collection:()=>({doc:()=>({get:async()=>{firestoreReads++;return {exists:true,data:()=>({firestore:true})};}})})}),
     eventsModuleUrl:'https://game.test/',localEventCatalog:async()=>{throw Error('not used');},
   };
   vm.createContext(context);vm.runInContext(source.slice(edgeStart,edgeEnd),context);vm.runInContext(source.slice(start,end),context);
-  return {context,get workerCalls(){return workerCalls;},get firestoreReads(){return firestoreReads;},get quotaNotes(){return quotaNotes;},advance:ms=>{now+=ms;}};
+  return {context,backupReads,get workerCalls(){return workerCalls;},get firestoreReads(){return firestoreReads;},get quotaNotes(){return quotaNotes;},advance:ms=>{now+=ms;}};
 }
 
 test('event Worker 429 without backup sets cooldown and never reads Firestore or Firebase quota',async()=>{
@@ -60,4 +62,19 @@ test('genuine Worker fetch failure retains direct Firestore fallback',async()=>{
   const value=await h.context.eventCloudRead('/v1/events/test/snapshot','events','test');
   assert.deepEqual(JSON.parse(JSON.stringify(value)),{firestore:true});
   assert.equal(h.firestoreReads,1);assert.equal(h.quotaNotes,0);
+});
+
+for(const condition of ['blocked','limited'])test('Event RP totals use the correct static backup when Worker is '+condition,async()=>{
+ const backup={updatedAt:100,entries:[{accountId:'racer',eventRp:400}]};
+ const h=harness({fetchError:condition==='blocked'?Error('network unavailable'):null,status:condition==='limited'?429:200,backup:kind=>kind==='event-totals'?backup:null});
+ const value=await h.context.eventCloudRead('/v1/events/totals','0.6.2_event_public','totals');
+ assert.deepEqual(JSON.parse(JSON.stringify(value)),backup);
+ assert.deepEqual(h.backupReads,[{kind:'event-totals',id:'totals'}]);
+ assert.equal(h.firestoreReads,0,'existing static totals avoid a billable fallback read');
+});
+test('protected accounts use event totals snapshot without contacting either live service',async()=>{
+ const backup={updatedAt:100,entries:[]};
+ const h=harness({snapshotOnly:true,backup:kind=>kind==='event-totals'?backup:null});
+ assert.deepEqual(await h.context.eventCloudRead('/v1/events/totals','0.6.2_event_public','totals'),backup);
+ assert.equal(h.workerCalls,0);assert.equal(h.firestoreReads,0);
 });

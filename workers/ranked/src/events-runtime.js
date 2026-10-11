@@ -1,6 +1,6 @@
 import {utcEventCandidates} from '../../../events/schedule.mjs';
 export {utcEventCandidates} from '../../../events/schedule.mjs';
-import { createEventService, EVENT_COLLECTIONS as C, EVENT_LIMITS as L, eventPeriod } from './events.js';
+import { createEventService, EVENT_COLLECTIONS as C, EVENT_LIMITS as L, eventPeriod, exhaustedEventLease } from './events.js';
 import { createEventFirestoreStore, eventDecode } from './events-store.js';
 
 export function eventRuntime(request, { projectId = 'polytrack-052', now = Date.now } = {}) {
@@ -138,7 +138,7 @@ export async function eventWork(runtime, { projectedInbox = true } = {}) {
   const due = [];
   for (const p of active) {
     const queue = await runtime.request('/' + C.queues + '/' + p.id);
-    if (queue && (decode(queue).slots || []).some(s => s.notBefore <= at && s.leaseUntil <= at && s.attempts < L.verificationAttempts)) due.push(p.id);
+    if (queue && (decode(queue).slots || []).some(s => exhaustedEventLease(s, at) || s.notBefore <= at && s.leaseUntil <= at && s.attempts < L.verificationAttempts)) due.push(p.id);
   }
   const inbox = await inboxPage(runtime, { projected: projectedInbox });
   const retry = inbox.documents.length ? null : await dueRetry(runtime);

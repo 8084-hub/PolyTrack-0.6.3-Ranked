@@ -3,12 +3,12 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync(require('node:path').join(__dirname,'../polytrack_062_patch.js'),'utf8');
-function fixture(get){
+function fixture(get,readSnapshot=async()=>null){
   let now=1000,reads=0,quotaErrors=0;
   const context={Map,Date:{now:()=>now},db:async()=>({collection:name=>{
     assert.equal(name,'0.6.2_event_public');
     return {doc:id=>({get:()=>{reads++;return get(id);}})};
-  }}),noteFirebaseQuota:()=>quotaErrors++};
+  }}),readPublicSnapshotBackup:readSnapshot,snapshotOnlyForNewAccount:()=>false,noteFirebaseQuota:()=>quotaErrors++};
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('  const archiveMonthReads=new Map();'),source.indexOf('  const eventReplayRequests=new Map();')),context);
   return {read:context.readEventArchiveMonth,reads:()=>reads,quotaErrors:()=>quotaErrors,advance:ms=>now+=ms};
@@ -25,6 +25,15 @@ test('archive refreshes share one read and reuse results for ten minutes',async(
 test('missing archive is cached instead of repeatedly reading an absent document',async()=>{
   const f=fixture(async()=>({exists:false}));
   await f.read('2026-09');await f.read('2026-09');assert.equal(f.reads(),1);
+});
+test('saved archive snapshot is used before Firestore',async()=>{
+  const saved={periods:[{id:'saved'}]},snapshotReads=[];
+  const f=fixture(()=>assert.fail('Firestore must not be read when the archive snapshot exists'),async(kind,id)=>{
+    snapshotReads.push([kind,id]);return saved;
+  });
+  assert.strictEqual(await f.read('2026-09'),saved);
+  assert.deepEqual(snapshotReads,[['archive-month','2026-09']]);
+  assert.equal(f.reads(),0);
 });
 test('errors back off and notify the shared Firebase quota guard',async()=>{
   const f=fixture(async()=>{throw Error('resource-exhausted');});
@@ -46,5 +55,6 @@ test('cache capacity bounds simultaneous archive reads',async()=>{
   const releases=[],f=fixture(()=>new Promise(resolve=>releases.push(resolve)));
   const requests=[];for(let year=2000;year<2024;year++)requests.push(f.read(year+'-01'));
   await assert.rejects(f.read('2024-01'),/requests busy/);
+  await new Promise(resolve=>setImmediate(resolve));
   for(const release of releases)release({exists:false});await Promise.all(requests);assert.equal(f.reads(),24);
 });

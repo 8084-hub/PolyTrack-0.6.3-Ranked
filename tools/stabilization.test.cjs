@@ -20,7 +20,7 @@ test('Racer Studio starts with 30 choices and honors trusted Extra and playtime 
  const clientBlock=source.match(/  const PROFILE_COSMETIC_OPTIONS=(\{[\s\S]*?\});\r?\n  const profileCosmeticDrafts=/)?.[1];
  const options=vm.runInNewContext('('+clientBlock+')');
  assert.equal(Object.values(options).flat().filter(([, ,requirement])=>requirement===0).length,30);
- const unlocked=run('cosmeticUnlocked');
+ const unlocked=run('cosmeticUnlocked',{localExtraTrackCount:()=>0});
  assert.equal(unlocked('extra:1',{extraCount:0}),false);
  assert.equal(unlocked('extra:1',{extraCount:1}),true);
  assert.equal(unlocked('playtime:3600000',{totalPlaytimeMs:3599999}),false);

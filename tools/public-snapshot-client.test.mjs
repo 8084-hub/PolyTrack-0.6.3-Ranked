@@ -234,6 +234,55 @@ test('missing backup has negative cooldown and invalid identifiers never fetch',
   assert.equal(await read('track','../private'),null);assert.equal(calls,0);
   await read('overall');await read('overall');assert.equal(calls,1);
 });
+test('transient network failures use a short explicit-read cooldown without amplifying concurrent reads',async()=>{
+  let now=0,calls=0,release;
+  const blocked=new Promise(resolve=>{release=resolve;});
+  const read=createPublicSnapshotReader({baseUrl:'https://example.test/public-snapshots/',now:()=>now,fetchImpl:async()=>{
+    calls++;if(calls===1){await blocked;throw new TypeError('network unavailable');}
+    return Response.json({updatedAt:2,entries:[]});
+  }});
+  const first=read('overall'),duplicates=Array.from({length:20},()=>read('overall'));
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);release();
+  const results=await Promise.all([first,...duplicates]);assert.ok(results.every(value=>value===null));
+  now=29_999;await read('overall');assert.equal(calls,1);
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);
+  now=30_000;
+  const recovered=await Promise.all(Array.from({length:20},()=>read('overall')));
+  assert.ok(recovered.every(value=>value.updatedAt===2));assert.equal(calls,2);
+});
+
+test('timeout failures use the short cooldown and recover on an explicit read',async()=>{
+  let now=0,calls=0;
+  const read=createPublicSnapshotReader({baseUrl:'https://example.test/',now:()=>now,fetchImpl:async()=>{
+    calls++;if(calls===1)throw Object.assign(new Error('request timed out'),{name:'TimeoutError'});
+    return Response.json({updatedAt:5,entries:[]});
+  }});
+  assert.equal(await read('overall'),null);assert.equal(calls,1);
+  now=29_999;assert.equal(await read('overall'),null);assert.equal(calls,1);
+  now=30_000;assert.equal((await read('overall')).updatedAt,5);assert.equal(calls,2);
+});
+
+test('HTTP 429 and 5xx failures retry only after the short cooldown',async()=>{
+  for(const status of [429,503]){
+    let now=0,calls=0;
+    const read=createPublicSnapshotReader({baseUrl:'https://example.test/',now:()=>now,fetchImpl:async()=>{
+      calls++;return calls===1?new Response('',{status}):Response.json({updatedAt:3,entries:[]});
+    }});
+    assert.equal(await read('overall'),null);assert.equal(calls,1);
+    now=30_000;assert.equal((await read('overall')).updatedAt,3);assert.equal(calls,2);
+  }
+});
+
+test('packed checksum corruption keeps the long cooldown',async()=>{
+  const value={updatedAt:4,entries:[]},entry=await packedEntry(value);entry.record.sha256='0'.repeat(64);
+  let now=0,calls=0;
+  const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/public-snapshots1/',now:()=>now,fetchImpl:async url=>{
+    calls++;return String(url).endsWith('index.json')?packedIndex(entry.record):new Response(entry.bytes);
+  }});
+  assert.equal(await read('overall'),null);assert.equal(calls,2);
+  now=30_000;assert.equal(await read('overall'),null);assert.equal(calls,2);
+  now=15*60_000;assert.equal(await read('overall'),null);assert.equal(calls,3);
+});
 test('mismatched track backup is rejected',async()=>{
   const read=createPublicSnapshotReader({baseUrl:'https://example.test/public-snapshots/',fetchImpl:async()=>new Response(JSON.stringify({trackId:'b'.repeat(64),updatedAt:1}),{headers:{'content-type':'application/json'}})});
   assert.equal(await read('track','a'.repeat(64)),null);
@@ -249,4 +298,22 @@ test('event replay backup must match period and racer and shares repeat loads',a
   await read('event-replay','w_test',accountId);assert.equal(calls,1);
   assert.equal(await read('event-replay','w_other',accountId),null);
   assert.equal(await read('event-replay','w_test','b'.repeat(64)),null);
+});
+
+test('transient current-pointer failure can recover later without concurrent pointer spam',async()=>{
+  const entry=await packedEntry({updatedAt:8,entries:[]});let now=0,pointers=0;
+  const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/public-snapshots7/',now:()=>now,fetchImpl:async url=>{
+    const p=new URL(url).pathname;
+    if(p==='/public-snapshots7/index.json')return new Response('',{status:404});
+    if(p==='/snapshot-current.json'){pointers++;return pointers===1?new Response('',{status:503}):Response.json({currentdir:'public-snapshots8'});}
+    if(p==='/public-snapshots8/index.json')return packedIndex(entry.record);
+    if(p==='/public-snapshots8/'+entry.record.path)return new Response(entry.bytes);
+    throw Error('Unexpected asset '+p);
+  }});
+  assert.equal(await read('overall'),null);assert.equal(pointers,1);
+  for(const kind of ['manifest','event-totals','overall-results'])assert.equal(await read(kind),null);
+  assert.equal(pointers,1,'different missing assets share the pointer failure cooldown');
+  now=29_999;assert.equal(await read('overall'),null);assert.equal(pointers,1);
+  now=30_000;const results=await Promise.all(Array.from({length:20},()=>read('overall')));
+  assert.ok(results.every(r=>r.updatedAt===8));assert.equal(pointers,2);
 });

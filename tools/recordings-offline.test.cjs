@@ -18,7 +18,7 @@ function extract(name){
   throw Error('Could not extract '+name);
 }
 
-function harness(localRows){
+function harness(localRows,readSnapshot=async()=>null){
   let dbCalls=0;
   const context={
     Map,Promise,nativeRecordingMemory:new Map(),nativeRecordingRequests:new Map(),nativeRecordingRetryAt:new Map(),rememberNativeRecording:()=>{},noteFirebaseQuota:()=>{},
@@ -26,6 +26,7 @@ function harness(localRows){
     normalizeReplayPayloadString:value=>String(value),
     safePositiveInt:(value,fallback)=>Number.isSafeInteger(Number(value))&&Number(value)>0?Number(value):fallback,
     __pt062NormalizeStyle:value=>value||'default-style',
+    readPublicSnapshotBackup:readSnapshot,
     getDefaultCarStyle:()=> 'default-style',
     safeRecordingId:value=>Number.isSafeInteger(Number(value))&&Number(value)>0?Number(value):null,
     canonicalRaceTimeMs:row=>Number(row.timeMs)||0,
@@ -53,6 +54,13 @@ test('mixed offline recording batches preserve cached rows and leave only misses
   assert.equal(fixture.dbCalls(),1);
   assert.deepEqual(JSON.parse(JSON.stringify(rows)),[{recording:'cached',frames:123,verifiedState:0,carStyle:'style'},null]);
   assert.equal(rows[0].verifiedState,0);
+});
+test('saved replay snapshot fills an offline cache miss without querying the database',async()=>{
+  const saved={recording:'snapshot-replay',frames:456,verifiedState:0,carStyle:'snapshot-style'};let snapshotReads=0;
+  const fixture=harness(new Map(),async(kind,id)=>{assert.equal(kind,'recording');assert.equal(id,'8');snapshotReads++;return saved;});
+  const rows=await fixture.read([8]);
+  assert.equal(snapshotReads,1);assert.equal(fixture.dbCalls(),0);
+  assert.deepEqual(JSON.parse(JSON.stringify(rows)),[saved]);
 });
 
 test('repeated unavailable recording clicks do not repeat the failed database lookup',async()=>{
