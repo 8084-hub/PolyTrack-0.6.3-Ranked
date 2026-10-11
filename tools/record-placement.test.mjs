@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   computeRecordPlacement,
+  createPlacementSnapshotWarmer,
   installRecordPlacement,
   normalizeAuthoritativeSnapshot,
   parseDisplayedRecordTime,
@@ -531,4 +532,48 @@ test('native official and community cards badge cached and Overall placements wi
   assert.equal(emptyCards.reduce((sum, card) => sum + card.mutations.length, 0), 0,
     'unbadged native records must not receive no-op class removals');
   api.destroy();
+});
+
+test('bundled complete standings support both policies without claiming a live check',()=>{
+  const raw=snapshot([row('fast',900),row('me',1000,{runVerified:true}),row('last',1100,{runVerified:true})],4,
+    {source:'public-backup',fetchedAt:200,checkedAt:0,snapshotCapturedAt:100});
+  const prepared=preparePolyTrackCachedSnapshot(raw,{algorithmVersion:'rank-v1',schemaVersion:5});
+  assert.equal(prepared.complete,true);
+  assert.equal(prepared.checkedAt,0);
+  assert.equal(computeRecordPlacement({snapshot:prepared,trackId:TRACK,accountId:'me'}).label,'2/3');
+  assert.equal(computeRecordPlacement({snapshot:prepared,trackId:TRACK,accountId:'me',policy:'verified'}).label,'1/2');
+  assert.equal(preparePolyTrackCachedSnapshot({...raw,complete:false}).complete,false);
+  assert.equal(preparePolyTrackCachedSnapshot({...raw,totalEntries:99}).complete,false);
+});
+
+test('newly loaded competitors update both badge numbers with an unchanged personal best',()=>{
+  const api=installRecordPlacement({autoUpdate:false,render(){},tracks:[{id:TRACK}],prepareSnapshot:raw=>preparePolyTrackCachedSnapshot(raw,{algorithmVersion:'rank-v1',schemaVersion:5}),expectedAlgorithmVersion:'rank-v1'});
+  const old=snapshot([row('me',1000),row('slow',1100)],4,{source:'public-backup',fetchedAt:200,checkedAt:0});
+  assert.equal(api.update({accountId:'me',snapshots:{[TRACK]:old}}).get(TRACK).label,'1/2');
+  const live=snapshot([row('first',800),row('second',900),row('me',1000),row('slow',1100)],5,{fetchedAt:300,checkedAt:300});
+  assert.equal(api.update({accountId:'me',snapshots:{[TRACK]:live}}).get(TRACK).label,'3/4');
+  assert.equal(api.update({accountId:'me',snapshots:{[TRACK]:old}}).get(TRACK).label,'3/4','late snapshot cannot undo loaded standings');
+});
+
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+test('menu snapshot warmup coalesces, limits concurrency and stops queued work outside menus',async()=>{
+  let active=true;const reads=[],accepts=[],resolvers=new Map();
+  const warm=createPlacementSnapshotWarmer({active:()=>active,read:id=>{reads.push(id);return new Promise(done=>resolvers.set(id,done));},accept:(id,value)=>accepts.push([id,value])});
+  const a=warm('a'),duplicate=warm('a'),b=warm('b'),c=warm('c');
+  assert.equal(a,duplicate);
+  await flush();assert.deepEqual(reads,['a','b']);
+  active=false;resolvers.get('a')({complete:true});resolvers.get('b')({complete:true});
+  assert.deepEqual(await Promise.all([a,b,c]),[true,true,null]);
+  assert.deepEqual(reads,['a','b']);assert.equal(accepts.length,2);
+  active=true;const retried=warm('c');await flush();assert.deepEqual(reads,['a','b','c']);
+  resolvers.get('c')({complete:true});await retried;await flush();
+  await warm('a');assert.equal(reads.length,3,'successful public file not repeatedly fetched');
+});
+
+test('menu snapshot failure has bounded retries and successful jobs retain no payload',async()=>{
+  let now=0,reads=0;const warm=createPlacementSnapshotWarmer({now:()=>now,read:async()=>{reads++;if(reads===1)throw Error('offline');return {entries:[{large:'payload'}]};},accept(){}});
+  assert.equal(await warm('a'),null);await flush();
+  await warm('a');assert.equal(reads,1);
+  now=30001;assert.equal(await warm('a'),true);await flush();
+  assert.equal(await warm('a'),true);assert.equal(reads,2);
 });

@@ -88,6 +88,24 @@ test('mount is hidden until open, paginates exact counts and restores focus', ()
   assert.equal(root.children.length, 0);
 });
 
+test('page navigation scrolls cards into view and keeps focus on the replacement control', async () => {
+  const { root, api } = fixture(Array.from({ length: 26 }, (_, i) => entry(i + 1)));
+  api.open();
+  const list = cls(root, 'sq-extra-grid')[0];
+  const scrolls = [];
+  list.scrollIntoView = options => scrolls.push(options);
+  let next = tag(cls(root, 'sq-extra-pagination')[0], 'button')[1];
+  await click(next);
+  next = tag(cls(root, 'sq-extra-pagination')[0], 'button')[1];
+  assert.match(cls(root, 'sq-extra-pagination')[0].textContent, /Page 2 of 3/);
+  assert.deepEqual(scrolls, [{ block: 'start' }]);
+  assert.equal(root.children[0].document.activeElement, next);
+  await click(next);
+  assert.match(cls(root, 'sq-extra-pagination')[0].textContent, /Page 3 of 3/);
+  assert.equal(root.children[0].document.activeElement, tag(cls(root, 'sq-extra-pagination')[0], 'button')[0], 'last page focuses the remaining enabled control');
+  api.destroy();
+});
+
 test('local picks toggle, rating changes and export callback stay device-scoped', async () => {
   const saved = new Map(), exported = [];
   const item = entry(1, { trackId: 'a'.repeat(64) });

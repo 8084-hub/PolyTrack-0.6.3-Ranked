@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=109',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=110',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='109';
+  const extraCatalogRevision='110';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -833,6 +833,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     writeJsonStorage(TRACK_CACHE_KEY,store);
     trackCacheGeneration++;
     syncCachedRecordingVerification(normalizedEntries);
+    schedulePersonalBestPlacementRender();
     trackOverlayCache=null;
     return true;
   }
@@ -2298,7 +2299,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     rankedPolish.textContent += "\n.overall-page-status{min-width:0!important;white-space:normal!important;overflow-wrap:anywhere;line-height:1.35!important;text-align:center!important}\n@media(max-width:620px){.profile-car-column{display:grid!important;grid-template-columns:110px minmax(0,1fr)!important;gap:8px!important;align-items:center!important;margin-top:36px!important}.profile-car-column>.overall-car-model{width:110px!important;height:110px!important;min-height:110px!important;margin:0!important}.profile-achievement-row{margin:0!important;padding:6px!important}.profile-achievement-medals{gap:3px!important}.profile-achievement-medals>span{padding:3px!important}.profile-achievement-medals svg,.profile-achievement-medals img{width:22px!important;height:22px!important}.profile-ranked-count{padding:4px!important;font-size:12px!important}.profile-achievement-label{font-size:11px!important}}\n@media(min-width:701px) and (max-width:1100px){#overallLeaderboardPanel .overall-competition{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;gap:6px!important;padding:6px!important}#overallLeaderboardPanel .overall-footer-right{grid-column:2!important;grid-row:1!important;padding:5px!important}#overallLeaderboardPanel .overall-center-tools{grid-column:1!important;grid-row:1!important;padding:5px!important}}\n";
     rankedPolish.textContent += "\n@media(max-width:600px) and (orientation:portrait){\nbody>div:has(>.menu-ui>.track-selection-ui){transform:none!important;width:100%!important;height:100%!important}\n.menu-ui>.track-selection-ui{inset:0!important;width:100%!important;height:100dvh!important;box-sizing:border-box;display:flex!important;flex-direction:column!important;padding:8px!important;margin:0!important}\n.track-selection-ui>.safe-area-left,.track-selection-ui>.safe-area-right{display:none!important}\n.track-selection-ui>.bar{position:static!important;display:grid!important;grid-template-columns:1fr 1fr!important;gap:6px!important;height:auto!important;min-height:98px!important;margin:0!important;padding:0!important}\n.track-selection-ui>.bar>.search-bar-container{grid-row:2;grid-column:1/-1;min-width:0!important;width:100%!important;margin:0!important}\n.track-selection-ui>.bar input{box-sizing:border-box;width:100%!important;height:44px!important;font-size:17px!important;padding:8px!important}\n.track-selection-ui>.bar>.button{min-width:0!important;width:100%!important;height:44px!important;font-size:20px!important;transform:none!important;margin:0!important}\n.track-selection-ui>.bar>.button img{width:20px!important;height:20px!important}\n.track-selection-ui>.category-container{position:static!important;display:flex!important;width:100%!important;height:auto!important;margin:6px 0!important;gap:4px!important}\n.track-selection-ui>.category-container>.button{flex:1;min-width:0!important;width:auto!important;white-space:normal!important;min-height:48px!important;height:auto!important;font-size:17px!important;padding:4px!important;margin:0!important;transform:none!important}\n.track-selection-ui>.tracks-container.open{position:static!important;flex:1;min-height:0!important;width:100%!important;height:auto!important;overflow-y:auto!important;overflow-x:hidden!important;padding:0!important;margin:0!important}\n.track-selection-ui>.tracks-container.open>div:not(.empty){display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important;margin:0 0 10px!important;padding:0!important}\n.track-selection-ui .group-title{grid-column:1/-1;font-size:24px!important;margin:6px 0!important;padding:0!important}\n.track-selection-ui .track{width:auto!important;height:auto!important;margin:0!important;padding:0!important;min-width:0!important}\n.track-selection-ui .track>.button{box-sizing:border-box!important;width:100%!important;height:174px!important;min-height:174px!important;margin:0!important;padding:32px 6px 26px!important;transform:none!important;position:relative!important;overflow:hidden!important}\n.track-selection-ui .track-title{position:absolute!important;top:4px!important;left:0!important;width:100%!important;height:26px!important;margin:0!important;padding:0!important}\n.track-selection-ui .track-title p{font-size:20px!important;line-height:24px!important;padding:0 4px!important;margin:0!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.track-selection-ui .track>.button>img:not(.environment){position:static!important;width:100%!important;height:112px!important;object-fit:contain!important;transform:none!important}\n.track-selection-ui .track>.button>.environment{position:absolute!important;right:6px!important;bottom:28px!important;top:auto!important;left:auto!important;width:22px!important;height:22px!important}\n.track-selection-ui .track .record{position:absolute!important;bottom:5px!important;left:0!important;right:0!important;margin:0!important;padding:0!important;font-size:17px!important;height:22px!important}\n.track-info-ui .side-panel .thumbnail>.share{width:44px!important;height:44px!important;min-height:44px!important;padding:8px!important}\n}\n";
     rankedPolish.textContent += '\n.leaderboard-ui .verified-state.pending{background:#473419!important;border:1px solid #ffc978!important;color:#ffe4b5!important}.leaderboard-ui .verified-state .sq-integrity-label{font-family:Arial,sans-serif;font-weight:700;letter-spacing:.04em}';
-    rankedPolish.textContent+='\nhtml body #polytrackTrackFreshness.polytrack-track-freshness{position:fixed!important;left:max(10px,env(safe-area-inset-left))!important;right:auto!important;bottom:max(8px,env(safe-area-inset-bottom))!important;max-width:min(calc(500px * var(--sq-ui-scale, 1)),calc(100vw - 20px))!important;box-sizing:border-box!important;transform:none!important;clip-path:none!important;border:1px solid rgba(205,226,255,.46)!important;border-left:4px solid #7ee7ff!important;overflow-wrap:anywhere;pointer-events:none}html body #polytrackTrackFreshness.polytrack-track-freshness strong,html body #polytrackTrackFreshness.polytrack-track-freshness span{white-space:normal!important}html body #polytrackTrackFreshness.polytrack-track-freshness .track-data-snapshot-age{font-weight:900!important;color:#fff!important}';
+    rankedPolish.textContent+='html body #polytrackTrackFreshness.polytrack-track-freshness strong,html body #polytrackTrackFreshness.polytrack-track-freshness span{white-space:normal!important}';
     rankedPolish.textContent += '\n.multiplayer-ui:has(>.join:not(.hidden),>.host:not(.hidden)){overflow-x:hidden!important}.multiplayer-ui .invite-code-container{position:relative!important;min-width:0!important}.multiplayer-ui .connecting-text{position:absolute!important;margin:0!important;transform:none!important;left:0!important;right:0!important;width:100%!important;max-width:100%!important;box-sizing:border-box!important;font-size:20px!important;white-space:normal!important;padding:8px!important}.multiplayer-ui .connecting-text .loading-spinner-ui{width:24px!important;height:24px!important;flex-shrink:0}.multiplayer-ui>.join>.error-box{width:100%!important;max-width:100%!important;box-sizing:border-box;overflow-wrap:anywhere}.multiplayer-ui>.join>.error-box p{white-space:normal!important;font-size:16px!important}.sq-multiplayer-intro{margin:8px 0!important}.sq-multiplayer-relay-head strong{font-size:21px!important}@media(max-width:1100px){.sq-multiplayer-backup-drawer{grid-template-columns:minmax(0,1fr)!important}.sq-multiplayer-code{grid-template-columns:minmax(0,1fr) auto auto!important}.sq-multiplayer-discord{grid-column:1/-1!important}}@media(max-width:450px){.sq-multiplayer-code{grid-template-columns:minmax(0,1fr) auto!important}.sq-multiplayer-code input{grid-column:1/-1!important;min-width:0!important}.sq-multiplayer-save{min-width:0!important}}';
     rankedPolish.textContent += ".sq-settings-grid>.sq-setting-row{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(110px,42%)!important;gap:10px!important;box-sizing:border-box!important;min-width:0!important;height:auto!important}.sq-settings-grid>.sq-setting-row>p,.sq-settings-grid>.sq-setting-row>label{margin:0!important;min-width:0!important;white-space:normal!important;font-size:17px!important;line-height:1.3!important;overflow-wrap:anywhere}.sq-settings-grid>.sq-setting-row .button-wrapper{min-width:0!important;width:100%!important;margin:0!important}.sq-settings-grid>.sq-setting-row .button{width:100%!important;min-width:0!important;height:auto!important;min-height:44px!important;font-size:17px!important;white-space:normal!important;padding:8px 14px!important;box-sizing:border-box!important}.sq-rp-precision{width:100%!important;min-width:0!important;box-sizing:border-box!important;font:16px/1.3 ForcedSquare,sans-serif!important;padding:8px 6px!important}.sq-settings-grid>.sq-setting-secret{grid-template-columns:minmax(0,1fr)!important}.sq-setting-range .sq-range-controls{min-width:0!important}.profile-guide-body header small{font:14px/1.4 sans-serif!important}.profile-guide-metric{font-size:18px!important;flex-wrap:wrap}.profile-guide-metric select{font-size:18px!important;max-width:100%!important}.profile-guide-track .guide-placement{font:15px/1.45 sans-serif!important}.profile-guide-grid:has(>.profile-guide-empty){grid-template-columns:1fr!important}.profile-guide-empty{margin:0!important}.multiplayer-ui>.join:not(.hidden),.multiplayer-ui>.host:not(.hidden),.multiplayer-ui>.sq-multiplayer-relay{width:min(620px,100%)!important}@media(max-width:600px){.sq-settings-grid>.sq-setting-row{grid-template-columns:minmax(0,1fr) minmax(100px,42%)!important}.sq-settings-grid>.sq-setting-secret{grid-template-columns:minmax(0,1fr)!important}.profile-guide-body{padding:12px!important}.profile-guide-metric select{width:100%}.profile-guide-body header h4{font-size:24px!important}}";
     rankedPolish.textContent += '\n.sq-rp-precision,.profile-guide-metric select{font:inherit;color:#fff;background:#14254d;border:1px solid #8aaddb;padding:8px;min-height:44px;max-width:100%}.profile-guide-metric{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:16px}.profile-guide-metric select:focus-visible,.sq-rp-precision:focus-visible{outline:2px solid #7ee7ff;outline-offset:2px}';
@@ -2624,7 +2625,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=110',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null;
   let placementSnapshotGeneration=-1;
@@ -2638,6 +2639,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const revision=Math.max(0,Number(candidate?.sourceRevision)||0,Number(candidate?.revision)||0);
     const previousRevision=Math.max(0,Number(previous?.sourceRevision)||0,Number(previous?.revision)||0);
     if(revision&&previousRevision&&revision!==previousRevision)return revision>previousRevision;
+    const changedAt=Number(candidate?.serverUpdatedAt)||0,previousChangedAt=Number(previous.serverUpdatedAt)||0;
+    if(changedAt&&previousChangedAt&&changedAt!==previousChangedAt)return changedAt>previousChangedAt;
     const freshness=Math.max(0,Number(candidate?.serverUpdatedAt)||0,Number(candidate?.checkedAt)||0,Number(candidate?.fetchedAt)||0);
     const previousFreshness=Math.max(0,Number(previous.serverUpdatedAt)||0,Number(previous.checkedAt)||0,Number(previous.fetchedAt)||0);
     return freshness>=previousFreshness;
@@ -2693,6 +2696,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       const id=cleanUserId(row?.accountId||row?.userId||'');
       const ms=canonicalRaceTimeMs(row);
       if(!id||id===accountId||ms<=0)continue;
+      if([row.status,row.runStatus,row.validationState,row.verificationStatus].some(value=>/^(rejected|unavailable(?:_.*)?)$/i.test(String(value||''))))continue;
       const prior=otherBest.get(id);
       if(prior==null||ms<prior)otherBest.set(id,ms);
     }
@@ -2706,6 +2710,28 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(recordPlacementUi)return Promise.resolve(recordPlacementUi);
     if(!recordPlacementUiPromise){
       recordPlacementUiPromise=import(recordPlacementModuleUrl).then((module)=>{
+        const warmSnapshot=module.createPlacementSnapshotWarmer({
+          read:trackId=>readPublicSnapshotBackup('track',trackId),
+          active:()=>!document.hidden&&isElementVisible(document.querySelector('.track-selection-ui')),
+          accept:(trackId,data)=>{
+            if(data.trackId!==trackId||data.complete!==true||!Array.isArray(data.entries)||data.totalEntries!==data.entries.length)return;
+            const fields=['accountId','userId','trackId','status','runStatus','validationState','verificationStatus','runVerified'];
+            const entries=data.entries.map(row=>{
+              const compact={timeMs:canonicalRaceTimeMs(row),timingVersion:2};
+              for(const field of fields)if(row?.[field]!=null)compact[field]=row[field];
+              return compact;
+            });
+            const snapshot={entries,complete:true,totalEntries:entries.length,revision:data.revision,sourceRevision:data.sourceRevision,algorithmVersion:data.algorithmVersion,schemaVersion:data.schemaVersion,source:'public-backup',fetchedAt:Date.now(),checkedAt:0,serverUpdatedAt:Number(data.updatedAt)||0,snapshotCapturedAt:Number(data._snapshotCapturedAt)||0};
+            if(!module.preparePolyTrackCachedSnapshot(snapshot,{algorithmVersion:RANK_MODEL,schemaVersion:TRACK_CACHE_SCHEMA}).complete)return;
+            const previous=recordPlacementSnapshots()[trackId];
+            if(previous?.complete===true&&!isNewerPlacementSnapshot(snapshot,previous))return;
+            placementCompleteSnapshotCache.delete(trackId);
+            placementCompleteSnapshotCache.set(trackId,snapshot);
+            while(placementCompleteSnapshotCache.size>MAX_RETAINED_PLACEMENT_SNAPSHOTS)placementCompleteSnapshotCache.delete(placementCompleteSnapshotCache.keys().next().value);
+            trackCacheGeneration++;
+            schedulePersonalBestPlacementRender();
+          }
+        });
         recordPlacementUi=module.installRecordPlacement({
           autoUpdate:false,
           document,
@@ -2714,9 +2740,16 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
           readSnapshots:recordPlacementSnapshots,
           readAccountId:activeRankedAccountId,
           estimatePlacement:estimateLocalRecordPlacement,
+          requestSnapshot:(trackId,title)=>{
+            const card=title.closest('button');
+            if(!isElementVisible(card))return;
+            const rect=card.getBoundingClientRect();
+            if(rect.bottom>0&&rect.top<window.innerHeight&&rect.right>0&&rect.left<window.innerWidth)void warmSnapshot(trackId);
+          },
           mapPlacement:(placement,trackId)=>{
             const snapshot=readTrackSnapshotCache(trackId),filter=personalFilterRuntime?.getFilter();
-            if(!snapshot||!personalFilterRuntime?.active()||filter.scope!=='all')return placement;
+            if(!personalFilterRuntime?.active()||filter.scope!=='all')return placement;
+            if(!snapshot||snapshot.complete!==true)return null;
             const result=applyPersonalFilters(snapshot.entries||[],{trackId,complete:snapshot.complete===true});
             const mine=result.rows.find(row=>String(row.accountId||row.userId)===placement.accountId);
             if(!mine)return null;
@@ -2759,6 +2792,9 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
           minSchemaVersion:TRACK_CACHE_SCHEMA,
           prepareSnapshot:(snapshot)=>module.preparePolyTrackCachedSnapshot(snapshot,{algorithmVersion:RANK_MODEL,schemaVersion:TRACK_CACHE_SCHEMA})
         });
+        document.addEventListener('scroll',event=>{
+          if(event.target?.closest?.('.track-selection-ui'))schedulePersonalBestPlacementRender();
+        },{capture:true,passive:true});
         return recordPlacementUi;
       });
     }
@@ -2779,7 +2815,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     });
   }
 
-  let lastPlacementUpdateAt=0,lastPlacementTrackGeneration=-1,lastPlacementOverallGeneration=-1,lastPlacementSettings='',lastPlacementMenu=null,lastPlacementMenuVisible=false;
+  let lastPlacementUpdateAt=0,lastPlacementTrackGeneration=-1,lastPlacementOverallGeneration=-1,lastPlacementSettings='',lastPlacementMenu=null,lastPlacementMenuVisible=false,lastPlacementLocalGeneration=-1,lastPlacementAccount='';
   function applyUiPreferences(){
     const reduced = localStorage.getItem('polytrack-0.6.2-reduced-effects') === '1';
     document.documentElement.classList.toggle('sq-reduced-effects', reduced);
@@ -2798,8 +2834,10 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       const menu=document.querySelector('.track-selection-ui');
       const settings=String(localStorage.getItem('polytrack-0.6.2-pb-podiums'))+'|'+String(localStorage.getItem('polytrack-0.6.2-pb-podiums-verified-only'));
       const visible=menu&&isElementVisible(menu);
-      const changed=lastPlacementTrackGeneration!==trackCacheGeneration||lastPlacementOverallGeneration!==overallCacheGeneration||lastPlacementSettings!==settings||lastPlacementMenu!==menu||lastPlacementMenuVisible!==!!visible;
+      const accountId=activeRankedAccountId();
+      const changed=lastPlacementLocalGeneration!==localRaceGeneration||lastPlacementAccount!==accountId||lastPlacementTrackGeneration!==trackCacheGeneration||lastPlacementOverallGeneration!==overallCacheGeneration||lastPlacementSettings!==settings||lastPlacementMenu!==menu||lastPlacementMenuVisible!==!!visible;
       if(changed||visible&&Date.now()-lastPlacementUpdateAt>=5000){
+        lastPlacementLocalGeneration=localRaceGeneration;lastPlacementAccount=accountId;
         lastPlacementTrackGeneration=trackCacheGeneration;lastPlacementOverallGeneration=overallCacheGeneration;
         lastPlacementSettings=settings;lastPlacementMenu=menu;lastPlacementMenuVisible=!!visible;lastPlacementUpdateAt=Date.now();
         recordPlacementUi.update();
@@ -4475,7 +4513,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(overallCategory==='casual'){
       const count=Number.isSafeInteger(entry?.casualCompletionCount)?entry.casualCompletionCount:null;
       if(count===null)return '<span class="overall-best-line muted">This saved snapshot predates Casual RP.</span>';
-      return `<span class="overall-best-line"><b>${count} distinct track${count===1?'':'s'}</b> with verified completion</span><span class="overall-best-line muted">10–100 Casual RP per best placement · rivals can change your total</span>`;
+      return `<span class="overall-best-line"><b>${count} distinct track${count===1?'':'s'}</b> with verified completion</span><span class="overall-best-line muted">Casual RP scales with track weight and best placement · rivals can change your total</span>`;
     }
     if(overallCategory==='medals'){
       const podiums=normalizedFinishSamples(entry).filter((finish)=>medalForRank(finish?.rank,finish?.fieldSize,finish?.trackId));
@@ -4693,7 +4731,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=109',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=110',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -4713,8 +4751,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=109',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=109',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=109',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=110',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=110',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=110',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -6255,7 +6293,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     }
   }
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=109').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=110').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
       void reader('snapshot-meta').then(meta=>{const at=Date.parse(meta?.capturedAt||'');if(Number.isFinite(at)&&at>0&&at<=Date.now())publicSnapshotCapturedAt=at;}).catch(()=>{});
@@ -8045,11 +8083,21 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // CSS fits the text; measure the card instead of reserving its maximum width.
     banner.style.removeProperty('width');
     banner.style.removeProperty('bottom');
+    banner.style.removeProperty('--sq-track-data-room');
+    banner.style.removeProperty('--sq-track-data-width');
     delete banner.dataset.layout;
     const pages=leaderboard.querySelector(':scope > .pages');
     const footer=leaderboard.querySelector(':scope > .button-wrapper');
     const back=footer?.querySelector(':scope > .back');
     let bannerRect=banner.getBoundingClientRect();
+    const list=leaderboard.querySelector(':scope > .container');
+    const listRect=list?.getBoundingClientRect();
+    if(listRect&&list.offsetWidth>0){
+      // Leave the native scrollbar exposed even when the leaderboard is scaled.
+      const room=listRect.left+list.clientWidth*(listRect.width/list.offsetWidth)-bannerRect.left-inset;
+      if(room>80)banner.style.setProperty('--sq-track-data-width',room+'px');
+      bannerRect=banner.getBoundingClientRect();
+    }
     const backRect=back?.getBoundingClientRect();
     const intersects=(a,b)=>a&&b&&a.left<b.right+inset&&a.right>b.left-inset&&a.top<b.bottom+inset&&a.bottom>b.top-inset;
     const wouldCoverBack=intersects(bannerRect,backRect);
@@ -8242,7 +8290,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=109',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:109,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=110',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:110,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);

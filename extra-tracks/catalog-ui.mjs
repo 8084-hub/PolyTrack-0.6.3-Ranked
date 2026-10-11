@@ -924,9 +924,19 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       }
     }
     pagination.replaceChildren();
-    const previous = button('Previous', '', () => { page--; render(); });
+    const changePage = (offset, focusButton = false) => {
+      page += offset;
+      render();
+      list.scrollIntoView?.({ block: 'start' });
+      if (focusButton) {
+        const controls = [...pagination.children].filter(child => child.tagName === 'BUTTON' && !child.disabled);
+        const replacement = controls.find(child => child.textContent === (offset < 0 ? 'Previous' : 'Next')) || controls[0];
+        replacement?.focus({ preventScroll: true });
+      }
+    };
+    const previous = button('Previous', '', () => changePage(-1, true));
     previous.disabled = page <= 1;
-    const next = button('Next', '', () => { page++; render(); });
+    const next = button('Next', '', () => changePage(1, true));
     next.disabled = page >= pages;
     pagination.append(previous, make('span', '', `Page ${page} of ${pages}`), next);
   }
@@ -1030,12 +1040,12 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       if (!expandedCardMenu && event.shiftKey && digit) {
         const requested = digit[1] === '0' ? 10 : Number(digit[1]);
         // The render path clamps against the filtered result count.
-        page = requested; event.preventDefault(); render(); return;
+        page = requested; event.preventDefault(); render(); list.scrollIntoView?.({ block: 'start' }); return;
       }
       if (['ArrowRight', 'ArrowLeft', 'a', 'A', 'd', 'D'].includes(event.key)) {
         page += ['ArrowRight', 'd', 'D'].includes(event.key) ? 1 : -1;
         page = Math.max(1, page);
-        event.preventDefault(); render(); return;
+        event.preventDefault(); render(); list.scrollIntoView?.({ block: 'start' }); return;
       }
     }
     if (event.key !== 'Tab') return;

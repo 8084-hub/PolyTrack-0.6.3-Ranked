@@ -161,3 +161,11 @@ test('placement render scheduling coalesces repeated PB refresh requests', () =>
   assert.equal(renders, 1);
   assert.equal(context.placementRenderTimer, undefined, 'timer state remains private to the source closure');
 });
+
+test('an old cached board checked recently cannot override newer bundled content at the same revision',()=>{
+  const context=vm.createContext({Number,Math});vm.runInContext(extract('isNewerPlacementSnapshot'),context);
+  const older={revision:4,serverUpdatedAt:100,checkedAt:900,fetchedAt:900};
+  const newer={revision:4,serverUpdatedAt:200,checkedAt:0,fetchedAt:500};
+  assert.equal(context.isNewerPlacementSnapshot(newer,older),true);
+  assert.equal(context.isNewerPlacementSnapshot(older,newer),false);
+});

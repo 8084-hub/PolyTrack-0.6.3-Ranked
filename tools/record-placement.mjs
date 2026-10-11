@@ -10,7 +10,7 @@ export const RECORD_PLACEMENT_SETTINGS = Object.freeze({
   policy: 'polytrack-0.6.2-pb-podiums-verified-only'
 });
 
-const AUTHORITATIVE_SOURCES = new Set(['edge', 'firestore-snapshot', 'canonical-firestore']);
+const AUTHORITATIVE_SOURCES = new Set(['edge', 'firestore-snapshot', 'canonical-firestore', 'public-backup']);
 
 function own(object, key) {
   return Object.prototype.hasOwnProperty.call(object, key);
@@ -217,7 +217,7 @@ export function preparePolyTrackCachedSnapshot(snapshot, options = {}) {
     snapshot.bestEffort !== true &&
     revisionOf(snapshot) > 0 &&
     Number.isFinite(Number(snapshot.fetchedAt)) && Number(snapshot.fetchedAt) > 0 &&
-    Number.isFinite(Number(snapshot.checkedAt)) && Number(snapshot.checkedAt) > 0 &&
+    (source === 'public-backup' || Number.isFinite(Number(snapshot.checkedAt)) && Number(snapshot.checkedAt) > 0) &&
     Number(snapshot.schemaVersion || 0) >= minimumSchemaVersion &&
     declaredSizeMatches &&
     (!expectedAlgorithmVersion || snapshot.algorithmVersion === expectedAlgorithmVersion)
@@ -432,6 +432,9 @@ function renderDom(document, tracks, placements, options, state) {
     const displayedTime = options.readDisplayedTime
       ? options.readDisplayedTime(record, trackId)
       : parseDisplayedRecordTime(displayedRecordText(record));
+    if (state?.settings?.enabled && state.accountId && trackId && Number(displayedTime) > 0) {
+      options.requestSnapshot?.(trackId, title);
+    }
     if (Number.isSafeInteger(Number(displayedTime)) && Number(displayedTime) > 0 && (!placement || Number(displayedTime) !== placement.timeMs) && state?.settings?.policy !== 'verified') {
       placement = options.estimatePlacement?.(trackId, Number(displayedTime), state.accountId) || null;
     }
@@ -473,6 +476,43 @@ function renderDom(document, tracks, placements, options, state) {
 function resolveValue(input, key, fallback) {
   if (own(input, key)) return input[key];
   return typeof fallback === 'function' ? fallback() : fallback;
+}
+
+// Public file reads only. Limit concurrency, coalesce duplicates, and pause off-menu.
+export function createPlacementSnapshotWarmer({ read, accept, active = () => true, now = Date.now }) {
+  const requests = new Map(), queue = [];
+  let running = 0;
+  function pump() {
+    while (running < 2 && queue.length) {
+      const job = queue.shift();
+      if (!active()) { requests.delete(job.id); job.resolve(null); continue; }
+      running++;
+      Promise.resolve().then(() => read(job.id)).then(value => {
+        if (value) accept(job.id, value);
+        job.retryAt = value ? Infinity : now() + 30000;
+        job.resolve(Boolean(value));
+      }).catch(() => { job.retryAt = now() + 30000; job.resolve(null); }).finally(() => {
+        running--;
+        job.done = true;
+        // Keep only a bounded history; the snapshot reader has its own byte-bounded cache.
+        for (const [id, entry] of requests) {
+          if (requests.size <= 64) break;
+          if (entry.done) requests.delete(id);
+        }
+        pump();
+      });
+    }
+  }
+  return function request(id) {
+    const prior = requests.get(id);
+    if (prior && (!prior.done || now() < prior.retryAt)) return prior.promise;
+    if (!active() || queue.length >= 32) return Promise.resolve(null);
+    let resolve;
+    const promise = new Promise(done => { resolve = done; });
+    const job = { id, promise, resolve, done: false, retryAt: 0 };
+    requests.delete(id); requests.set(id, job); queue.push(job); pump();
+    return promise;
+  };
 }
 
 export function installRecordPlacement(options = {}) {

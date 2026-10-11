@@ -32,3 +32,8 @@ test('event stylesheet and module preload use the same release as the client', (
   assert.match(next.index,/events\/events\.css\?v=46/);
   assert.match(next.index,/events\/client\.mjs\?v=46/);
 });
+
+test('placement module changes receive the client release cache key',()=>{
+  const input=patch+"const placements=new URL('../tools/record-placement.mjs?v=109',eventsModuleUrl).href;";
+  assert.match(stampClientRelease(input,index,110).patch,/record-placement\.mjs\?v=110/);
+});
