@@ -374,6 +374,7 @@ test('cosmetic saves update the public overall snapshot before background propag
     body:JSON.stringify({accountId,cosmetics:{version:2,theme:'forest',stage:'night',stripe:'circuit',emblem:'target',badge:'auto',overridePodium:true}})
   }),{
     ALLOWED_ORIGINS:'https://staticquasar931.github.io',
+    BETA_CUTOFF_MS:String(Date.now()+60000),
     __TEST_UID:'signed-in-user',
     __TEST_FIRESTORE:async(path,init={})=>{
       if(path===':commit'){for(const write of JSON.parse(init.body).writes){guardedPaths.push(write.currentDocument.updateTime);if(write.update.name.includes('cosmetic_entitlements'))entitlementFields=write.update.fields;if(write.update.name.includes('s1_leaderboards_overall')){overallWrite=JSON.stringify(write.update);overallFields=write.update.fields;}}return {writeResults:[{updateTime:'2026-09-09T00:00:00Z'}]};}
@@ -384,7 +385,7 @@ test('cosmetic saves update the public overall snapshot before background propag
       }
       if(path===':runQuery')return [];
       if(path.includes('cosmetic_entitlements'))return entitlementFields?{updateTime:'2026-09-09T00:00:00Z',fields:entitlementFields}:null;
-      if(path.includes('profiles_public'))return {updateTime:'2026-09-05T00:00:00Z',fields:{accountId:{stringValue:accountId},ownerUid:{stringValue:'signed-in-user'},name:{stringValue:'Racer'},nickname:{stringValue:'Racer'},carStyle:{stringValue:'style'},isVerifier:{booleanValue:false},updatedAt:{integerValue:'1'}}};
+      if(path.includes('profiles_public'))return {updateTime:'2026-09-05T00:00:00Z',fields:{accountId:{stringValue:accountId},ownerUid:{stringValue:'signed-in-user'},accountCreatedAt:{integerValue:String(Date.now()-5000)},name:{stringValue:'Racer'},nickname:{stringValue:'Racer'},carStyle:{stringValue:'style'},isVerifier:{booleanValue:false},updatedAt:{integerValue:'1'}}};
       if(path.includes('s1_leaderboards_overall'))return {updateTime:'2026-09-05T00:00:00Z',fields:
         wire({...compacted,revision:7}).mapValue.fields};
       return null;
@@ -1807,13 +1808,14 @@ test('a legacy server entitlement retains beta for a returning racer absent from
   assert.equal(beta.betaEntitlement.issuedAt,Date.parse('2026-09-01T00:00:00Z'));
 });
 
-test('open beta defaults on and server-issues beta to current racers without migration', async () => {
+test('open beta defaults on and server-issues eligible racers before cutoff without migration', async () => {
+  const cutoff=Date.now()+10000,registeredAt=cutoff-1000;
   const boards=[{trackId:TRACK,entries:[
-    {accountId:'new-063-racer',timeMs:20000,integrityVerified:true,runVerified:true},
+    {accountId:'new-063-racer',timeMs:20000,createdAt:1,accountCreatedAt:registeredAt,integrityVerified:true,runVerified:true},
     {accountId:'other',timeMs:21000,integrityVerified:true,runVerified:true}
   ]}];
   let commit;
-  const env={__TEST_FIRESTORE:async(path,init={})=>{
+  const env={BETA_CUTOFF_MS:String(cutoff),__TEST_FIRESTORE:async(path,init={})=>{
     if(path===':runQuery')return boards.map(board=>({document:{fields:wire(board).mapValue.fields}}));
     if(path===':batchGet')return [];
     if(path===':commit'){commit=JSON.parse(init.body);return {};}
@@ -1828,7 +1830,86 @@ test('open beta defaults on and server-issues beta to current racers without mig
   assert.equal(beta.badges.betaTester,true);
   assert.equal(beta.betaEntitlement.source,'open-beta-release');
   assert.equal(beta.betaEntitlement.sourceRevision,7);
+  assert.equal(beta.betaEntitlement.cutoffAt,cutoff);
   assert.ok(beta.betaEntitlement.issuedAt>0);
+});
+
+test('client PB createdAt cannot backdate a beta grant past the server registration cutoff',async()=>{
+  const cutoff=Date.now()-10000,registrationTime=cutoff+1;
+  const boards=[{trackId:TRACK,entries:[
+    {accountId:'late-racer',timeMs:20000,createdAt:1,integrityVerified:true,runVerified:true},
+    {accountId:'other-late',timeMs:21000,createdAt:2,integrityVerified:true,runVerified:true}
+  ]}];
+  let commit;
+  const env={BETA_CUTOFF_MS:String(cutoff),__TEST_FIRESTORE:async(path,init={})=>{
+    if(path===':runQuery')return boards.map(board=>({document:{fields:wire(board).mapValue.fields}}));
+    if(path===':batchGet')return [{found:{name:'projects/test/databases/(default)/documents/0.6.2_s1_beta_registration/late-racer',
+      fields:wire({accountId:'late-racer',source:'ranked-worker',firstRegisteredAt:registrationTime,schemaVersion:1}).mapValue.fields,updateTime:'registered-after-cutoff'}}];
+    if(path===':commit'){commit=JSON.parse(init.body);return {};}
+    if(path.includes('s1_release_meta'))return {fields:wire({dirty:true,revision:9}).mapValue.fields,updateTime:'v1'};
+    return null;
+  }};
+  await rebuildOverall(env,true);
+  const main=commit.writes.find(write=>write.update.name.endsWith('/0.6.2_s1_leaderboards_overall/main'));
+  const saved=await restoredOverall(main.update.fields);
+  const racer=saved.entries.find(entry=>entry.userId==='late-racer');
+  assert.equal(racer.betaEntitlement,null);
+  assert.equal(racer.badges,null);
+});
+
+test('post-cutoff open-beta grants and snapshot badges are not grandfathered by rebuild',async()=>{
+  const cutoff=Date.now()-10000,postCutoff=cutoff+1000;
+  const boards=[{trackId:TRACK,entries:[
+    {accountId:'window-grant',timeMs:20000,createdAt:1,accountCreatedAt:postCutoff,integrityVerified:true,runVerified:true},
+    {accountId:'snapshot-only',timeMs:21000,createdAt:2,accountCreatedAt:postCutoff,integrityVerified:true,runVerified:true},
+    {accountId:'old-unissued',timeMs:22000,createdAt:3,accountCreatedAt:cutoff-1,integrityVerified:true,runVerified:true}
+  ]}];
+  let commit;
+  const prior={updatedAt:Date.now(),sourceRevision:12,entries:[{userId:'snapshot-only',badges:{betaTester:true}}]};
+  const env={BETA_CUTOFF_MS:String(cutoff),__TEST_FIRESTORE:async(path,init={})=>{
+    if(path===':runQuery')return boards.map(board=>({document:{fields:wire(board).mapValue.fields}}));
+    if(path===':batchGet')return [{found:{name:'projects/test/databases/(default)/documents/0.6.2_s1_cosmetic_entitlements/window-grant',
+      fields:wire({serverIssued:{beta:{id:'beta-tester',source:'open-beta-release',sourceRevision:11,issuedAt:postCutoff,cutoffAt:cutoff}}}).mapValue.fields,updateTime:'after-cutoff'}}];
+    if(path===':commit'){commit=JSON.parse(init.body);return {};}
+    if(path.includes('s1_leaderboards_overall/main'))return {fields:wire(prior).mapValue.fields,updateTime:'prior-v1'};
+    if(path.includes('s1_release_meta'))return {fields:wire({dirty:true,revision:13}).mapValue.fields,updateTime:'meta-v1'};
+    return null;
+  }};
+  await rebuildOverall(env,true);
+  const main=commit.writes.find(write=>write.update.name.endsWith('/0.6.2_s1_leaderboards_overall/main'));
+  const saved=await restoredOverall(main.update.fields);
+  for(const accountId of ['window-grant','snapshot-only','old-unissued']){
+    const racer=saved.entries.find(entry=>entry.userId===accountId);
+    assert.equal(racer.betaEntitlement,null,accountId);
+    assert.equal(racer.badges,null,accountId);
+  }
+});
+
+test('profile first registration is server-stamped and a client backdated profile cannot get beta',async()=>{
+  const cutoff=Date.now()-1000,accountId='late-profile';const commits=[],tasks=[];
+  const response=await handleRequest(new Request('https://ranked.example/v1/profile/notify',{
+    method:'POST',headers:{Origin:'https://staticquasar931.github.io','Content-Type':'application/json'},
+    body:JSON.stringify({accountId})
+  }),{ALLOWED_ORIGINS:'https://staticquasar931.github.io',BETA_CUTOFF_MS:String(cutoff),__TEST_UID:'owner-uid',
+    __TEST_FIRESTORE:async(path,init={})=>{
+      if(path===':commit'){
+        const writes=JSON.parse(init.body).writes;commits.push(...writes);
+        return {writeResults:writes.map(()=>({updateTime:'written'}))};
+      }
+      if(init.method==='PATCH')return {updateTime:'job-written'};
+      if(path.includes('/0.6.2_profiles_public/'))return {updateTime:'profile-v1',fields:wire({accountId,ownerUid:'owner-uid',createdAt:1,accountCreatedAt:cutoff+1}).mapValue.fields};
+      if(path.includes('/0.6.2_s1_cosmetic_entitlements/'))return null;
+      if(path.includes('/0.6.2_s1_worker_jobs/'))return null;
+      if(path.includes('/0.6.2_s1_group_tags/'))return null;
+      if(path===':runQuery')return [];
+      return null;
+    }
+  },{waitUntil(task){tasks.push(task);}});
+  assert.equal(response.status,202);
+  assert.equal((await response.json()).betaEntitlement,null);
+  await Promise.all(tasks);
+  assert.equal(commits.some(write=>write.update.name.includes('/beta_registration/')),false);
+  assert.equal(commits.some(write=>write.update.name.includes('/cosmetic_entitlements/')),false);
 });
 
 test('closing open beta excludes new racers but retains persisted server entitlement', async () => {

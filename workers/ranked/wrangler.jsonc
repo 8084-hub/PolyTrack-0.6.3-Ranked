@@ -13,7 +13,7 @@
   "vars": {
     "FIREBASE_PROJECT_ID": "polytrack-052",
     "ALLOWED_ORIGINS": "https://staticquasar931.github.io,http://localhost:8080,http://127.0.0.1:8080",
-    "BETA_CUTOFF_MS": "1788656400000",
+    "BETA_CUTOFF_MS": "1791759954000",
     "RANKED_WRITES_ENABLED": "true",
     "MULTIPLAYER_ENABLED": "true",
     "EVENTS_ENABLED": "true",

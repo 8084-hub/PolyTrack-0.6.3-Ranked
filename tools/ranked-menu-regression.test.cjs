@@ -111,3 +111,27 @@ test('Ranked render callbacks preserve a loading state before the first snapshot
  for(const status of ['idle','loading']){context.overallLoadState={status};context.renderEntries();assert.match(list.innerHTML,/overall-loading/);assert.doesNotMatch(list.innerHTML,/unavailable|No racers|initializing/);}
  context.overallLoadState={status:'error',message:'offline'};context.renderEntries();assert.match(list.innerHTML,/temporarily unavailable/);
 });
+
+test('overall pager jumps directly and clamps first/last through bounded page state',()=>{
+ let renders=0;const context=vm.createContext({overallPage:0,OVERALL_PAGE_SIZE:10,currentLeaderboardCount:()=>95,renderEntries:()=>{renders++;},flashOverallPage(){}});
+ vm.runInContext(`${extract('jumpOverallPage')};`,context);
+ assert.equal(context.jumpOverallPage(7),true);assert.equal(context.overallPage,6);
+ assert.equal(context.jumpOverallPage(11),false);assert.equal(context.jumpOverallPage(1.5),false);
+ assert.equal(context.jumpOverallPage(1),true);assert.equal(context.overallPage,0);
+ assert.equal(context.jumpOverallPage(10),true,'last available page is reachable');
+ assert.equal(context.overallPage,9);assert.equal(context.jumpOverallPage(11),false,'out-of-range pages are rejected');
+ assert.equal(context.jumpOverallPage(9),true);assert.equal(context.overallPage,8);assert.equal(renders,4);
+ assert.match(source,/id="overallFirstPage"[\s\S]*?id="overallPageJump"[\s\S]*?id="overallLastPage"/);
+ assert.match(source,/event\.target\?\.id!=='overallPageJump'[\s\S]*?jumpOverallPage\(page\)/);
+});
+
+test('specific normalized display-name identities are blocked without catching similar handles',()=>{
+ const constantsStart=source.indexOf('  const DEFAULT_NAME_BLOCKLIST');
+ const constantsEnd=source.indexOf('  function readProfileMap',constantsStart);
+ assert.ok(constantsStart>=0&&constantsEnd>constantsStart);
+ const context=vm.createContext({});
+ vm.runInContext(`${source.slice(constantsStart,constantsEnd)};${extract('sanitizeDisplayName')};${extract('normalizeNameForCheck')};${extract('moderationDecision')};`,context);
+ for(const name of ['Kim Jong Un','K1m J0ng Un','Ngrachio445','Ngr4chi0445','Nigervaan','N1g3rv44n','Stephen Hawking','St3ph3n H4wk1ng'])
+   assert.equal(context.moderationDecision(name).reason,'blocked-name-identity',`${name} should normalize to the explicit blocked identity`);
+ for(const name of ['BLACKBEAUTY','CheatingMiguel'])assert.equal(context.moderationDecision(name).blocked,false,`${name} remains allowed`);
+});

@@ -669,7 +669,8 @@ function rankTitle(score, tracks) {
 }
 
 function betaCutoff(env) {
-  return Math.max(0, Number(env.BETA_CUTOFF_MS || 0));
+  const cutoff = Number(env.BETA_CUTOFF_MS || 0);
+  return Number.isSafeInteger(cutoff) && cutoff > 0 ? cutoff : 0;
 }
 
 function openBetaEnabled(env) {
@@ -686,39 +687,59 @@ function validBetaEntitlement(value) {
     cutoffAt: Math.max(0, Number(value?.cutoffAt || 0)) };
 }
 
-function betaEntitlementFor(accountId, priorEntry, priorEntitlement, migration, priorSnapshot, openBetaIssue) {
-  const preserved = validBetaEntitlement(priorEntitlement?.data?.serverIssued?.beta || priorEntry?.betaEntitlement);
+function betaEntitlementFor(accountId, accountCreatedAt, priorEntry, priorEntitlement, migration, priorSnapshot) {
+  const createdAt = Number(accountCreatedAt);
+  const cutoffAt = betaCutoff({BETA_CUTOFF_MS:migration?.cutoffAt});
+  const knownPostCutoffAccount = cutoffAt > 0 && Number.isSafeInteger(createdAt) && createdAt > cutoffAt;
+  const storedEntitlement = validBetaEntitlement(priorEntitlement?.data?.serverIssued?.beta || priorEntry?.betaEntitlement);
+  // Open-beta grants must themselves predate the cutoff. The prior deployment may
+  // have issued them during the post-cutoff/pre-deploy window.
+  const preserved = storedEntitlement?.source === 'open-beta-release' && cutoffAt > 0 && storedEntitlement.issuedAt > cutoffAt
+    ? null : storedEntitlement;
   if (preserved) return preserved;
-  const migrationIds = new Set([...(migration?.awardedBadgeIds || []), ...(migration?.pendingBadges || [])]
-    .map(value => safeText(value, 128)).filter(Boolean));
-  if (migrationIds.has(accountId)) return {
+  const awardedMigrationIds = new Set((migration?.awardedBadgeIds || []).map(value => safeText(value, 128)).filter(Boolean));
+  if (awardedMigrationIds.has(accountId)) return {
     id: 'beta-tester', source: 'release-migration', sourceRevision: Math.max(1, Number(migration.migrationVersion || MIGRATION_VERSION)),
     issuedAt: Math.max(1, Number(migration.completedAt || migration.updatedAt || migration.createdAt || priorSnapshot?.updatedAt || Date.now())),
     cutoffAt: Math.max(0, Number(migration.cutoffAt || 0))
   };
-  if (Array.isArray(priorEntitlement?.data?.badge) && priorEntitlement.data.badge.includes('betaTester')) return {
+  const eligibleAtCutoff = migration?.open === true && cutoffAt > 0
+    && Number.isSafeInteger(createdAt) && createdAt > 0 && createdAt <= cutoffAt
+    && Number(migration?.issuedAt || 0) > 0 && Number(migration.issuedAt) <= cutoffAt;
+  if ((migration?.pendingBadges || []).some(value => safeText(value, 128) === accountId) && eligibleAtCutoff) return {
+    id: 'beta-tester', source: 'release-migration', sourceRevision: Math.max(1, Number(migration.migrationVersion || MIGRATION_VERSION)),
+    issuedAt: Math.max(1, Number(migration.completedAt || migration.updatedAt || migration.createdAt || priorSnapshot?.updatedAt || Date.now())),
+    cutoffAt: Math.max(0, Number(migration.cutoffAt || 0))
+  };
+  const legacyEntitlementAt = Date.parse(priorEntitlement?.updateTime || '');
+  if (!knownPostCutoffAccount && Array.isArray(priorEntitlement?.data?.badge) && priorEntitlement.data.badge.includes('betaTester')
+      && (!cutoffAt || (Number.isFinite(legacyEntitlementAt) && legacyEntitlementAt <= cutoffAt))) return {
     id: 'beta-tester', source: 'legacy-cosmetic-entitlement', sourceRevision: 2,
-    issuedAt: Math.max(1, Date.parse(priorEntitlement.updateTime || '') || Number(priorSnapshot?.updatedAt || Date.now())),
+    issuedAt: Math.max(1, legacyEntitlementAt || Number(priorSnapshot?.updatedAt || Date.now())),
     cutoffAt: 0
   };
-  if (priorEntry?.badges?.betaTester === true) return {
+  if (!knownPostCutoffAccount && priorEntry?.badges?.betaTester === true
+      && (!cutoffAt || Number(priorSnapshot?.updatedAt || 0) <= cutoffAt)) return {
     id: 'beta-tester', source: 'ranked-overall-snapshot',
     sourceRevision: Math.max(1, Number(priorSnapshot?.sourceRevision || priorSnapshot?.revision || 1)),
     issuedAt: Math.max(1, Number(priorSnapshot?.updatedAt || priorEntry?.latestPbAt || Date.now())),
     cutoffAt: 0
   };
-  if (openBetaIssue) return {
-    id: 'beta-tester', source: 'open-beta-release', sourceRevision: openBetaIssue.sourceRevision,
-    issuedAt: openBetaIssue.issuedAt, cutoffAt: 0
+  if (eligibleAtCutoff) return {
+    id: 'beta-tester', source: 'open-beta-release', sourceRevision: Math.max(1, Number(migration?.sourceRevision || MIGRATION_VERSION)),
+    issuedAt: Math.max(1, Number(migration?.issuedAt || Date.now())), cutoffAt: Number(migration.cutoffAt)
   };
   return null;
 }
 
-async function ensureProfileBetaEntitlement(env, accountId) {
+async function ensureProfileBetaEntitlement(env, accountId, accountCreatedAt) {
   const document = await readDocument(env, '0.6.2_s1_cosmetic_entitlements', accountId);
   const preserved = validBetaEntitlement(document?.data?.serverIssued?.beta);
   if (preserved || !openBetaEnabled(env)) return preserved;
-  const beta = {id: 'beta-tester', source: 'open-beta-release', sourceRevision: 1, issuedAt: Date.now(), cutoffAt: 0};
+  const cutoffAt = betaCutoff(env);
+  const createdAt = Number(accountCreatedAt);
+  if (!cutoffAt || Date.now() > cutoffAt || !Number.isSafeInteger(createdAt) || createdAt <= 0 || createdAt > cutoffAt) return null;
+  const beta = {id: 'beta-tester', source: 'open-beta-release', sourceRevision: 1, issuedAt: Date.now(), cutoffAt};
   const baseline = cosmeticEntitlement({betaEntitlement: beta}, true);
   const prior = document?.data || {};
   const include = (kind, value) => [...new Set([...(baseline[kind] || []), ...(Array.isArray(prior[kind]) ? prior[kind] : []), value])];
@@ -762,13 +783,12 @@ export function computeTrackEntries(rows, trackId, env = {}, verdicts = {}) {
       totalPlaytimeMs: Math.max(0, Number(row.totalPlaytimeMs || 0)),
       pbAt: Math.max(0, Number(row.pbAt || row.createdAt || 0)),
       createdAt: Math.max(0, Number(row.pbAt || row.createdAt || 0)),
-      accountCreatedAt: Math.max(0, Number(row.accountCreatedAt || row.createdAt || 0)),
+      accountCreatedAt: Math.max(0, Number(row.accountCreatedAt || 0)),
       verified: verifiedVerdict(row, verdicts[accountId]),
       runVerified: verifiedVerdict(row, verdicts[accountId]),
       verifiedState: verifiedVerdict(row, verdicts[accountId]) ? 1 : 0,
       integrityVerified: row.integrityVerified === true,
       validationState: row.integrityVerified === true ? 'integrity' : 'pending',
-      betaTester: betaCutoff(env) > 0 && Number(row.createdAt || 0) > 0 && Number(row.createdAt) <= betaCutoff(env)
     });
   }
   return rankTrustedTrackEntries([...best.values()], trackId);
@@ -937,7 +957,7 @@ export function computeOverall(trackDocuments, priorEntries = [], betaTesterIds 
       user.pbCount = Math.max(user.pbCount, Number(entry.pbCount || 0));
       user.totalPlaytimeMs = Math.max(user.totalPlaytimeMs, Number(entry.totalPlaytimeMs || 0));
       user.latestPbAt = Math.max(user.latestPbAt, Number(entry.pbAt || 0));
-      const created = Number(entry.accountCreatedAt || entry.createdAt || 0);
+        const created = Number(entry.accountCreatedAt || 0);
       if (created) user.accountCreatedAt = user.accountCreatedAt ? Math.min(user.accountCreatedAt, created) : created;
       user.betaTester ||= betaTesterIds.has(accountId) || prior.get(accountId)?.badges?.betaTester === true;
       const type = trackType(trackId);
@@ -1398,11 +1418,10 @@ async function buildOverallSnapshot(env, metaDoc, meta, now) {
     ownerPublicId: OWNER_PUBLIC_ID,
     now
   });
-  const migrationSource = {...migration, cutoffAt: betaCutoff(env)};
-  const openBetaIssue = openBetaEnabled(env) ? {sourceRevision: Math.max(1, revision), issuedAt: now} : null;
+  const migrationSource = {...migration, open:openBetaEnabled(env), sourceRevision:Math.max(1, revision), issuedAt:now, cutoffAt: betaCutoff(env)};
   const computedEntries = aggregated.entries.map(row => {
     const oldEntry = priorById.get(row.userId) || {};
-    const betaEntitlement = betaEntitlementFor(row.userId, oldEntry, priorEntitlements.get(row.userId), migrationSource, prior, openBetaIssue);
+    const betaEntitlement = betaEntitlementFor(row.userId, row.accountCreatedAt, oldEntry, priorEntitlements.get(row.userId), migrationSource, prior);
     const rowCodeAt = Number(row.groupCodeUpdatedAt || 0), oldCodeAt = Number(oldEntry.groupCodeUpdatedAt || 0);
     const selectedCode = rowCodeAt > oldCodeAt ? row.groupCode : oldCodeAt > rowCodeAt ? oldEntry.groupCode
       : /^\d{6}$/.test(row.groupCode || '') ? row.groupCode : oldEntry.groupCode;
@@ -1501,7 +1520,7 @@ async function notifyProfile(request, env, context, uid, body) {
   if (!profile || profile.data.ownerUid !== uid || safeText(profile.data.accountId, 128) !== accountId) {
     return json(request.headers.get('Origin') || '', env, 403, { error: 'profile_not_owned' });
   }
-  const betaEntitlement = await ensureProfileBetaEntitlement(env, accountId);
+  const betaEntitlement = await ensureProfileBetaEntitlement(env, accountId, profile.data.accountCreatedAt);
   const results = await runQuery(env, COLLECTIONS.raceResults, { field: 'accountId', value: accountId }, 100);
   const identity = {
     accountId,
@@ -1621,7 +1640,7 @@ async function updateProfileCosmetics(request, env, context, uid, body) {
   if (!profile || profile.data.ownerUid !== uid || safeText(profile.data.accountId, 128) !== accountId) {
     return json(origin, env, 403, { error: 'profile_not_owned' });
   }
-  const issuedBeta = await ensureProfileBetaEntitlement(env, accountId);
+  const issuedBeta = await ensureProfileBetaEntitlement(env, accountId, profile.data.accountCreatedAt);
   const cosmetics = sanitizeProfileCosmetics(body.cosmetics);
   if(profile.data.cosmeticsSyncedAt && JSON.stringify(cosmetics)!==JSON.stringify(sanitizeProfileCosmetics(profile.data.profileCosmetics)))return json(origin,env,409,{error:'cosmetics_superseded'});
   const [overall, badge] = await Promise.all([
@@ -1706,7 +1725,7 @@ async function processCosmeticJobs(env) {
       continue;
     }
     const cosmetics = sanitizeProfileCosmetics(job.data.cosmetics);
-    const issuedBeta = await ensureProfileBetaEntitlement(env, accountId);
+    const issuedBeta = await ensureProfileBetaEntitlement(env, accountId, profile.data.accountCreatedAt);
     const [overall, badge] = await Promise.all([
       readOverallSnapshot(env),
       readDocument(env, COLLECTIONS.badges, accountId)
@@ -1740,11 +1759,8 @@ async function createMigrationJob(env, prior = null) {
     ...betaBoards.map((board) => safeText(board.data.trackId || board.id, 80)),
     ...canonicalResults.map((result) => safeText(result.data.trackId, 80))
   ].filter(Boolean))].sort();
-  const cutoff=betaCutoff(env);
-  const betaCandidateIds=[...new Set(betaBoards.flatMap((board)=>Array.isArray(board.data.entries)?board.data.entries:[]).filter((entry)=>{
-    const timestamp=Number(entry.pbAt||entry.createdAt||entry.timestamp||0);
-    return safeText(entry.accountId||entry.userId,128)&&timestamp>0&&timestamp<=cutoff;
-  }).map((entry)=>safeText(entry.accountId||entry.userId,128)))];
+  // PB timestamps are not trusted account-creation evidence and cannot seed beta grants.
+  const betaCandidateIds=[];
   const previouslyAwarded = Array.isArray(prior?.awardedBadgeIds) ? prior.awardedBadgeIds.map((value) => safeText(value, 128)).filter(Boolean) : [];
   const job = { kind: 'migration', migrationVersion: MIGRATION_VERSION, pendingTrackIds: trackIds, betaCandidateIds, pendingBadges: [], awardedBadgeIds: previouslyAwarded, processedTracks: 0, awardedBadges: previouslyAwarded.length, createdAt: Date.now(), updatedAt: Date.now(), completedAt: 0 };
   await writeDocument(env, COLLECTIONS.jobs, 'release_migration', job);
@@ -1764,14 +1780,16 @@ async function processMigrationJob(env, supplied = null) {
   const job = supplied || (await readDocument(env, COLLECTIONS.jobs, 'release_migration'))?.data;
   if (!job || job.kind !== 'migration' || Number(job.completedAt || 0) > 0) return { active: false };
   const pendingTracks = Array.isArray(job.pendingTrackIds) ? job.pendingTrackIds : [];
-  const candidates = new Set(Array.isArray(job.betaCandidateIds) ? job.betaCandidateIds.map((value) => safeText(value, 128)).filter(Boolean) : []);
-  const pendingBadges = new Set(Array.isArray(job.pendingBadges) ? job.pendingBadges.map((value) => safeText(value, 128)).filter(Boolean) : []);
+  const pendingBadges = new Set();
   const awardedBadgeIds = new Set(Array.isArray(job.awardedBadgeIds) ? job.awardedBadgeIds.map((value) => safeText(value, 128)).filter(Boolean) : []);
   const batch = pendingTracks.slice(0, MIGRATION_TRACK_BATCH);
   const rebuiltTracks = await mapConcurrent(batch, 3, (trackId) => rebuildTrack(env, trackId));
   let processedTracks = 0;
   for (const result of rebuiltTracks) {
-    for (const entry of result.entries) if ((entry.betaTester || candidates.has(entry.accountId)) && !awardedBadgeIds.has(entry.accountId)) pendingBadges.add(entry.accountId);
+    for (const entry of result.entries) {
+      const createdAt = Number(entry.accountCreatedAt || 0);
+      if (createdAt > 0 && createdAt <= betaCutoff(env) && !awardedBadgeIds.has(entry.accountId)) pendingBadges.add(entry.accountId);
+    }
     processedTracks += 1;
   }
   const remainingTracks = pendingTracks.slice(processedTracks);
@@ -1779,8 +1797,9 @@ async function processMigrationJob(env, supplied = null) {
   if (!remainingTracks.length) {
     const badgeWrites=[];
     for (const accountId of [...pendingBadges].slice(0, MIGRATION_BADGE_BATCH)) {
-      badgeWrites.push({collection:COLLECTIONS.badges,id:accountId,data:{accountId,betaTester:true,awardedAt:Date.now(),cutoffAt:betaCutoff(env),source:'release-migration'},unconditional:true});
       pendingBadges.delete(accountId);
+      if (!openBetaEnabled(env) || !betaCutoff(env)) continue;
+      badgeWrites.push({collection:COLLECTIONS.badges,id:accountId,data:{accountId,betaTester:true,awardedAt:Date.now(),cutoffAt:betaCutoff(env),source:'release-migration'},unconditional:true});
       awardedBadgeIds.add(accountId);
       awardedBadges += 1;
     }

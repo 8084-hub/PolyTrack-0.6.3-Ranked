@@ -37,6 +37,20 @@ function fixtureFetch(handler,requests=[]){return async(url,options)=>{
 const emptyProfiles=[{readTime:'2026-10-06T00:00:00Z'}];
 const batchResponse=(request,fields=raceFields())=>request.options.documents.map(name=>({found:{name,fields}}));
 
+test('private progress larger than the public payload limit is saved rather than silently dropped',async()=>{
+ await withDirectory(async directory=>{
+  await stage(directory,[binding()]);
+  await fs.writeFile(path.join(directory,'export-progress.json'),JSON.stringify({profiles:{complete:true,ids:Array(40000).fill(accountId)},profileCount:40000}));
+  await exportPublicProfilesAndReplays({directory,includeProfiles:false,fetchImpl:fixtureFetch(req=>batchResponse(req))});
+  const file=await fs.readFile(path.join(directory,'export-progress.json'),'utf8');
+  const saved=JSON.parse(file);
+  assert.ok(Buffer.byteLength(file)>2*1024*1024);
+  assert.equal(saved.profiles.ids.length,40000);
+  assert.equal(saved.raceExport.known,1);
+  assert.equal(Object.values(saved.raceExport.records)[0].available,true);
+ });
+});
+
 test('replay-only refresh skips profile queries and reuses unchanged recordings',async()=>{
  await withDirectory(async directory=>{
   await stage(directory,[binding()]);const requests=[];

@@ -65,7 +65,11 @@ function decodeDocument(document) {
 async function atomicWrite(directory, relative, value) {
   const destination = path.join(directory, relative);
   const data = Buffer.from(`${JSON.stringify(value)}\n`, 'utf8');
-  if (data.byteLength > MAX_FILE_BYTES) return false;
+  const privateCheckpoint = relative === 'export-progress.json';
+  if (data.byteLength > (privateCheckpoint ? MAX_RESPONSE_BYTES : MAX_FILE_BYTES)) {
+    if (privateCheckpoint) throw Error('Private export checkpoint exceeds its size limit');
+    return false;
+  }
   await fs.mkdir(path.dirname(destination), {recursive: true});
   const temporary = `${destination}.${process.pid}.${crypto.randomUUID()}.tmp`;
   try {

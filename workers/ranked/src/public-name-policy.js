@@ -4,6 +4,8 @@ const DEFAULT_NAME_BLOCKLIST = ["admin","moderator","owner","staff","support","s
 const MODERN_HIGH_RISK_TERMS = ['gooning','gooner','goonette','edging','edgeplay','gyatt','gyat','onlyfans','ofans','discordmod','heilhitler','gasjews','killall','kms','killyourself','kys','unaliveyourself','csam','cporn','childlover','minorlover','lolicon','shotacon'];
 const COMPACT_SEVERE_TERMS = ['nigger','niggre','nigre','nigga','faggot','chink','kike','spic','wetback','beaner','coon','gook','tranny','fuck','bitch','cunt','rape','rapist','pedophile','molester','childporn','csam','killyourself','whitepower','heilhitler','pornhub','onlyfans','gooning','masterbait','masterbaiting','masterofbaiting'];
 const RESERVED_NAME_TERMS = ['admin','administrator','moderator','modteam','owner','staff','support','system','developer','devteam','verified','official','staticquasar931'];
+const TARGETED_EXACT_NAMES = Object.freeze(['Kim Jong Un','Ngrachio445','Nigervaan','Stephen Hawking']
+  .map(value => normalizeNameForCheck(value).replace(/ /g, '')));
 
 function sanitizeDisplayName(value) {
   const name = String(value || '').normalize('NFKC')
@@ -37,12 +39,26 @@ const PREPARED_SEVERE_NEEDLES = Object.freeze(
   COMPACT_SEVERE_TERMS.map(value => normalizeNameForCheck(value).replace(/ /g, '')).filter(value => value.length >= 4)
 );
 
+export function isRequestedBlockedName(value) {
+  const clean = sanitizeDisplayName(value);
+  const compact = normalizeNameForCheck(clean).replace(/ /g, '');
+  if (TARGETED_EXACT_NAMES.includes(compact)) return true;
+  const rawCompact = clean.normalize('NFKC').toLowerCase().replace(/[^a-z0-9\u0400-\u04ff\u3040-\u30ff\u4e00-\u9fff]/g, '');
+  const suffixLength = rawCompact.match(/\d+$/)?.[0]?.length || 0;
+  for (let length = 1; length <= Math.min(6, suffixLength); length += 1) {
+    const prefix = normalizeNameForCheck(rawCompact.slice(0, -length)).replace(/ /g, '');
+    if (TARGETED_EXACT_NAMES.includes(prefix)) return true;
+  }
+  return false;
+}
+
 export function moderatePublicName(value) {
   const clean = sanitizeDisplayName(value);
   const normalized = normalizeNameForCheck(clean);
   const tokens = normalized.split(' ').filter(Boolean);
   const compact = tokens.join('');
   const sourceLooksObfuscated = /[^a-zA-Z\s]/.test(clean) || tokens.length > 1;
+  if (isRequestedBlockedName(clean)) return { blocked: true, reason: 'targeted-exact-name', clean };
   for (const reserved of PREPARED_RESERVED_NAMES) {
     if (compact === reserved) return { blocked: true, reason: 'reserved-name', clean };
   }
