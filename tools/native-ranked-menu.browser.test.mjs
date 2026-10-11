@@ -36,6 +36,17 @@ test('native home Ranked button opens the real panel with offline Firebase', { s
     assert.deepEqual(result.errors, []);
     assert.deepEqual(result.rejections, []);
     await page.locator('#overallLeaderboardList .overall-entry').first().waitFor({state: 'visible', timeout: 45000});
+    const initialRows=await page.locator('#overallLeaderboardList .overall-entry').count();
+    for(let visit=0;visit<3;visit++){
+      await page.locator('#closeOverallLeaderboard').click();
+      await page.locator('#injectedRankingsBtn').click();
+      await page.locator('#overallLeaderboardList .overall-entry').first().waitFor({state:'visible',timeout:15000});
+      assert.equal(await page.locator('#overallLeaderboardPanel').count(),1,'reopening reuses the Ranked panel');
+      assert.equal(await page.locator('#overallLeaderboardList .overall-entry').count(),initialRows,'reopening does not accumulate rows');
+    }
+    const errorsAfterReopen=await page.evaluate(()=>window.__ptNativeRankedAudit);
+    assert.deepEqual(errorsAfterReopen.errors,[]);
+    assert.deepEqual(errorsAfterReopen.rejections,[]);
     for (const [width, height] of [[320, 568], [390, 844], [844, 390], [384, 216]]) {
       await page.setViewportSize({width, height});
       const layout = await page.evaluate(() => {

@@ -760,6 +760,8 @@ test('Escape closes menu and CSS defines narrow responsive layout', () => {
   assert.match(css, /\.sq-extra-more-menu\[hidden\]\{display:none\}/);
   assert.match(css, /\.sq-extra-grid\{[^}]*gap:12px/);
   assert.match(css, /\.sq-extra-card\{[^}]*linear-gradient/);
+  assert.match(css, /\.sq-extra-menu \.sq-extra-tag-picker summary:focus-visible\{outline:3px solid #fff2a3/);
+  assert.ok(css.includes('@media(max-width:560px),(pointer:coarse){.sq-extra-more-menu .sq-extra-picks{grid-template-columns:44px 44px;gap:8px}.sq-extra-more-menu button:has(.sq-extra-vote-icon){min-width:44px;min-height:44px}.sq-extra-review-done,.sq-extra-review-reset,.sq-extra-tag-picker summary,.sq-extra-tag-search,.sq-extra-tag-choice{min-height:44px}.sq-extra-review-ratings .sq-extra-rating select{min-height:44px}.sq-extra-more-menu .sq-extra-menu-favorite,.sq-extra-more-menu .sq-extra-report-button{min-height:44px}}'));
   const image = cls(root, 'sq-extra-visual')[0].children.find(node => node.tagName === 'IMG');
   assert.equal(image.loading, 'lazy');
   assert.equal(image.decoding, 'async');

@@ -407,3 +407,42 @@ html.sq-reduced-effects body #injectedRankingsBtn.button-spawn { animation-durat
   #overallLeaderboardPanel #overallLeaderboardList { flex:0 0 auto!important;min-height:90px!important;max-height:45dvh!important;overflow-y:auto!important; }
   #overallLeaderboardPanel .overall-pager { flex:0 0 auto!important; }
 }
+
+/* The toolbar now owns the close button; its old clearance wastes space on phones. */
+@media(max-width:620px) {
+  #overallProfilePopup .profile-car-column {margin-top:0!important;padding-top:0!important;}
+  #overallProfilePopup .profile-hero {gap:16px!important;}
+}
+#overallProfilePopup .profile-dialog-toolbar > span {min-width:0;overflow-wrap:anywhere;}
+#overallProfilePopup .profile-dialog-toolbar > button {flex-shrink:0;}
+#overallProfilePopup .overall-profile-card {scroll-padding-top:76px;overscroll-behavior:contain;}
+#overallProfilePopup .studio-tabs {scroll-margin-top:76px;}
+#overallLeaderboardPanel #overallDataNotice {
+  font:14px/1.4 ForcedSquare,sans-serif;
+  text-align:left;
+  padding:8px 12px;
+  overflow-wrap:anywhere;
+}
+
+#overallProfilePopup .studio-tabs {display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));}
+#overallProfilePopup .studio-tab {min-width:0;white-space:normal;overflow-wrap:anywhere;letter-spacing:.4px;}
+@media(max-width:460px) {
+  #overallProfilePopup .studio-tabs {grid-template-columns:repeat(2,minmax(0,1fr));position:static;}
+}
+
+/* Honor both the operating-system preference and the game's Reduced Effects setting. */
+html.sq-reduced-effects #overallLeaderboardPanel :is(.overall-shell,.overall-entry,.overall-help-card) {
+  animation:none!important;opacity:1!important;transform:none!important;transition:none!important;
+}
+html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after,
+html.sq-reduced-effects #overallLeaderboardPanel .overall-loading-bar::after,
+html.sq-reduced-effects #overallLeaderboardPanel .overall-freshness::before {animation:none!important;}
+@media(prefers-reduced-motion:reduce) {
+  #overallLeaderboardPanel .overall-help-card,
+  #overallLeaderboardPanel .overall-entry::after,
+  #overallLeaderboardPanel .overall-loading-bar::after,
+  #overallLeaderboardPanel .overall-freshness::before {animation:none!important;transition:none!important;}
+}
+
+html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:100%;}
+@media(prefers-reduced-motion:reduce) {#overallLeaderboardPanel .overall-entry::after {width:100%;}}

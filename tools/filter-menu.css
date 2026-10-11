@@ -73,7 +73,7 @@ body.pt-group-filter-menu-open { overflow: hidden; }
 .fm-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .fm-chip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 5px 7px 5px 10px; border: 1px solid rgba(95, 136, 213, .8); background: #122650; overflow-wrap: anywhere; }
 .fm-initials { display: inline-grid; flex: 0 0 27px; width: 27px; height: 27px; place-items: center; border: 1px solid #7294d6; border-radius: 50%; color: var(--fm-green); background: #0b1730; font-size: 11px; font-weight: 700; letter-spacing: .03em; }
-.fm-chip-remove { border: 0; padding: 2px 5px; color: var(--fm-green); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
+.fm-chip-remove { display: inline-grid; min-width: 42px; min-height: 42px; place-items: center; border: 0; padding: 2px 5px; color: var(--fm-green); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
 .fm-user-picker { position: relative; margin-top: 15px; }
 .fm-suggestions { position: absolute; z-index: 2; inset: calc(100% - 2px) 0 auto; max-height: 240px; overflow: auto; border: 1px solid #7294d6; background: #0d1934; box-shadow: 0 12px 24px rgba(0,0,0,.4); }
 .fm-suggestions[hidden] { display: none; }
@@ -136,7 +136,7 @@ body.pt-group-filter-menu-open { overflow: hidden; }
 .fm-suggestions[data-mode="top"]::before { content: "TOP OVERALL RP RACERS"; display: block; padding: 8px 12px; color: #9fb4dd; font-size: 12px; letter-spacing: .08em; }
 .fm-suggestion-person { display: inline-flex; min-width: 0; align-items: center; gap: 12px; }
 .fm-suggestion-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fm-suggestion-id { flex: 0 0 auto; color: #9fb4dd; font-size: 13px; }
+.fm-suggestion-id { flex: 0 0 auto; min-width: 0; max-width: 45%; overflow-wrap: anywhere; color: #9fb4dd; font-size: 13px; text-align: right; }
 .fm-racer-preview { width: 54px; height: 42px; object-fit: contain; }
 .fm-racer-native-preview { display: inline-flex; width: 58px; height: 46px; align-items: center; justify-content: center; flex: 0 0 58px; overflow: hidden; }
 .fm-racer-native-preview .overall-car-model.image-container { position: relative !important; width: 58px !important; height: 46px !important; min-width: 58px !important; min-height: 46px !important; overflow: hidden !important; transform: none !important; }

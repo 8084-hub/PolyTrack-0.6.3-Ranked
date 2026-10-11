@@ -111,7 +111,7 @@ test('Extra Tracks nested dialogs contain focus, close correctly, and restore th
 test('track cards show full previews and keep feedback in an accessible three-dot disclosure', {skip: browserSkip}, async () => {
   const browser = await chromium.launch({headless: true});
   try {
-    const page = await browser.newPage({viewport: {width: 960, height: 900}});
+    const page = await browser.newPage({viewport: {width: 960, height: 900}, hasTouch: true});
     await page.route('**/*', async route => {
       const url = route.request().url();
       if (url === 'http://extra-tracks.test/review.mjs') await route.fulfill({contentType: 'text/javascript', body: reviewSource});
@@ -264,6 +264,28 @@ test('track cards show full previews and keep feedback in an accessible three-do
     const bounds = await previewCard.boundingBox();
     assert.ok(bounds && bounds.width <= 360 && bounds.x >= 0, `card fits narrow viewport: ${JSON.stringify(bounds)}`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    if (await more.getAttribute('aria-expanded') === 'true') await more.click();
+    await more.click();
+    const mobileMenu = page.locator('.sq-extra-more-menu');
+    const mobileMenuBounds = await mobileMenu.boundingBox();
+    assert.ok(mobileMenuBounds && mobileMenuBounds.x >= 8 && mobileMenuBounds.y >= 8 && mobileMenuBounds.x + mobileMenuBounds.width <= 352 && mobileMenuBounds.y + mobileMenuBounds.height <= 732, 'mobile review menu stays inside 360x740 viewport');
+    const tagSummary = mobileMenu.locator('.sq-extra-tag-picker summary');
+    for (let i = 0; i < 5; i++) await page.keyboard.press('Tab');
+    assert.equal(await tagSummary.evaluate(el => el === document.activeElement), true, 'Tab reaches Edit tags after the review controls');
+    assert.equal(await tagSummary.evaluate(el => el.matches(':focus-visible') && getComputedStyle(el).outlineStyle !== 'none'), true, 'keyboard focus on Edit tags is visibly outlined');
+    await page.keyboard.press('Enter');
+    assert.equal(await mobileMenu.locator('.sq-extra-tag-picker').evaluate(el => el.open), true, 'Enter opens the tag picker');
+    const mobileTargets = await mobileMenu.locator('.sq-extra-pick, .sq-extra-review-done, .sq-extra-menu-favorite, .sq-extra-report-button, .sq-extra-tag-picker summary, .sq-extra-tag-search, .sq-extra-tag-choice, .sq-extra-review-reset, .sq-extra-review-ratings select').evaluateAll(nodes => nodes.map(el => ({name: el.getAttribute('aria-label') || el.textContent.trim(), height: el.getBoundingClientRect().height})));
+    assert.ok(mobileTargets.length >= 10, 'review menu exposes its touch targets');
+    assert.ok(mobileTargets.every(target => target.height >= 44), 'all review and tag controls are at least 44px tall');
+    assert.equal(await mobileMenu.evaluate(el => el.scrollWidth <= el.clientWidth), true, 'expanded tags do not create horizontal menu clipping');
+    await page.setViewportSize({width: 844, height: 390});
+    await page.waitForTimeout(80);
+    assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), true, 'fixture represents a touch device');
+    const landscapeBounds = await mobileMenu.boundingBox();
+    assert.ok(landscapeBounds && landscapeBounds.x >= 8 && landscapeBounds.y >= 8 && landscapeBounds.x + landscapeBounds.width <= 836 && landscapeBounds.y + landscapeBounds.height <= 382, 'expanded review menu fits a landscape phone');
+    assert.ok(await mobileMenu.locator('.sq-extra-pick, .sq-extra-review-ratings select').evaluateAll(nodes => nodes.every(el => el.getBoundingClientRect().height >= 44)), 'landscape touch controls remain large enough');
+
     await page.evaluate(() => window.catalog.destroy());
   } finally {
     await browser.close();

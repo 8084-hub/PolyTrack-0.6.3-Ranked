@@ -783,10 +783,13 @@ export function mountFilterMenu({
     input.addEventListener('keydown', event => {
       if (event.key === 'Escape' && !popup.hidden) {
         event.preventDefault();
+        event.stopPropagation();
         popup.hidden = true; input.setAttribute('aria-expanded', 'false'); clearActiveSuggestion();
       }
-      if (!popup.hidden && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
+        event.stopPropagation();
+        if (popup.hidden) renderSuggestions();
         setActiveSuggestion(activeSuggestion < 0
           ? event.key === 'ArrowDown' ? 0 : popup.querySelectorAll('button[role="option"]').length - 1
           : activeSuggestion + (event.key === 'ArrowDown' ? 1 : -1));

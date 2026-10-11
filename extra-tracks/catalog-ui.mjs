@@ -1001,6 +1001,8 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
         (pageFocusables[triggerIndex + 1] || pageFocusables[0])?.focus();
         return;
       }
+      // The review popup is outside dialog; let native Tab move within it.
+      return;
     }
     if ((!submissionModal.hidden || !reportModal.hidden) && event.key !== 'Tab') return;
     const activeTag = document.activeElement?.tagName;
@@ -1017,7 +1019,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       event.preventDefault();
       return;
     }
-    if (!editing) {
+    if (!editing && !expandedCardMenu) {
       const digit = /^Digit([0-9])$/.exec(event.code || '');
       if (!expandedCardMenu && event.shiftKey && digit) {
         const requested = digit[1] === '0' ? 10 : Number(digit[1]);
@@ -1053,19 +1055,30 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     const viewportWidth = view?.innerWidth || document.documentElement?.clientWidth || 0;
     const viewportHeight = view?.innerHeight || document.documentElement?.clientHeight || 0;
     if (!viewportWidth || !viewportHeight) return;
-    const margin = 8;
+    const margin = 8, gap = 6;
     const trigger = expandedCardTrigger.getBoundingClientRect();
-    expandedCardMenu.style.maxHeight = `${Math.max(100, viewportHeight - margin * 2)}px`;
+    const viewportRoom = Math.max(44, viewportHeight - margin * 2);
+    expandedCardMenu.style.maxHeight = `${viewportRoom}px`;
     expandedCardMenu.style.minHeight = '0px';
     expandedCardMenu.style.overflowY = 'auto';
-    const menu = expandedCardMenu.getBoundingClientRect();
+    const natural = expandedCardMenu.getBoundingClientRect();
     const anchored = reanchor === true || !expandedCardMenu.__positioned;
-    const left = Math.min(Math.max(margin, anchored ? trigger.right - menu.width : parseFloat(expandedCardMenu.style.left)), Math.max(margin, viewportWidth - menu.width - margin));
-    let top = anchored ? trigger.bottom + 6 : parseFloat(expandedCardMenu.style.top);
-    if (anchored && top + menu.height > viewportHeight - margin && trigger.top - menu.height - 6 >= margin) top = trigger.top - menu.height - 6;
+    const above = Math.max(0, Math.min(viewportRoom, trigger.top - gap - margin));
+    const below = Math.max(0, Math.min(viewportRoom, viewportHeight - margin - trigger.bottom - gap));
+    const side = anchored ? (natural.height <= below ? 'below' : above > below ? 'above' : 'below') : expandedCardMenu.__placement;
+    const left = Math.min(Math.max(margin, anchored ? trigger.right - natural.width : parseFloat(expandedCardMenu.style.left)), Math.max(margin, viewportWidth - natural.width - margin));
+    let top = anchored ? 0 : parseFloat(expandedCardMenu.style.top);
+    // Preserve the popup's position during edits, but never grow it over its trigger.
+    const room = side === 'above'
+      ? anchored ? above : Math.min(above, trigger.top - gap - top)
+      : anchored ? below : viewportHeight - margin - top;
+    expandedCardMenu.style.maxHeight = `${Math.max(44, room)}px`;
+    const menu = expandedCardMenu.getBoundingClientRect();
+    if (anchored) top = side === 'above' ? trigger.top - menu.height - gap : trigger.bottom + gap;
     top = Math.min(Math.max(margin, top), Math.max(margin, viewportHeight - menu.height - margin));
     expandedCardMenu.style.left = `${Math.round(left)}px`;
     expandedCardMenu.style.top = `${Math.round(top)}px`;
+    expandedCardMenu.__placement = side;
     expandedCardMenu.__positioned = true;
   }
 
