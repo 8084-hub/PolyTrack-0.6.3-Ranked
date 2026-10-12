@@ -285,9 +285,9 @@ test('track scope is reset for every ranking change and follows tracks categorie
 
 test('Extra completion labels preserve counts above two without counting them as community',()=>{
  const context=vm.createContext({});vm.runInContext(`${extract('rankedTrackParticipationCounts')};${extract('compactParticipationMeta')};`,context);
- const onlyExtra=context.compactParticipationMeta({officialCount:0,communityCount:0,customCount:4,extraCount:4},4);
+ const onlyExtra=context.compactParticipationMeta({officialCount:0,communityCount:0,customCount:4,extraCount:4},4,'tracks');
  assert.match(onlyExtra,/>4 Extra tracks</);assert.doesNotMatch(onlyExtra,/community/);
- const mixed=context.compactParticipationMeta({officialCount:2,communityCount:1,customCount:4,extraCount:3},7);
+ const mixed=context.compactParticipationMeta({officialCount:2,communityCount:1,customCount:4,extraCount:3},7,'tracks');
  assert.match(mixed,/1 community/);assert.match(mixed,/3 Extra tracks/);assert.match(mixed,/1 other custom/);
  assert.deepEqual(JSON.parse(JSON.stringify(context.rankedTrackParticipationCounts({customCount:4,extraCount:3}))),{official:0,community:0,extra:3,otherCustom:1});
 });
@@ -331,4 +331,17 @@ test('button state preserves snapshot age and identifies a failed live check',()
  const ctx=vm.createContext({document:{getElementById:id=>id==='overallFreshness'?button:null},overallCategory:'overall',overallLoadState:{status:'stale',serverUpdatedAt:1000,checkedAt:2000},rankedManualRefreshFailed:true,Date:{now:()=>10000},lastRankedManualRefreshAt:0,readOverallSnapshotCache:()=>({source:'public-backup'}),publicSnapshotCapturedAt:3000,ageLabel:()=> '3h ago',durationLabel:()=> '2m',snapshotOnlyForNewAccount:()=>false,snapshotCaptureLabel:()=> 'Snapshot captured 3h ago',syncSnapshotRefreshControl(){},applyRankedRefreshCooldown(){}});
  vm.runInContext(extract('updateRankedFreshness'),ctx);ctx.updateRankedFreshness();assert.equal(button.dataset.source,'snapshot');assert.equal(button.textContent,'Snapshot data · 3h old · Refresh failed');
  ctx.overallLoadState.status='cloud';ctx.rankedManualRefreshFailed=false;ctx.updateRankedFreshness();assert.equal(button.dataset.source,'live');assert.equal(button.textContent,'Live data · 3h old');
+});
+
+test('non-track rankings combine community and custom without double-counting Extra',()=>{
+ const context=vm.createContext({});vm.runInContext(`${extract('rankedTrackParticipationCounts')};${extract('compactParticipationMeta')};`,context);
+ const row={officialCount:16,communityCount:3,customCount:5,extraCount:3};
+ for(const category of ['overall','average','skill','playtime','casual','wins']){
+   const text=context.compactParticipationMeta(row,24,category);
+   assert.equal(text,'<span>16 official</span><span>8 other</span>');
+   assert.doesNotMatch(text,/community|Extra|custom/);
+ }
+ assert.equal(context.compactParticipationMeta({customCount:4,extraCount:4},4),'<span>4 other</span>');
+ assert.equal(context.compactParticipationMeta({officialCount:17},17),'<span>17 official</span>');
+ assert.ok(source.includes('compactParticipationMeta(row,races,overallCategory)'));
 });
