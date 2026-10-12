@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=126',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=127',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='126';
+  const extraCatalogRevision='127';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -1535,7 +1535,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function leaderboardArcadeMarkup(){
     const usage=readJsonStorage(LEADERBOARD_USAGE_KEY,{overall:1})||{overall:1};
     const rows=Object.entries(usage).filter(([key])=>LEADERBOARD_LABELS[key]&&!['official','community'].includes(key)).sort((a,b)=>b[1]-a[1]).slice(0,4);
-    return `<div class="leaderboard-arcade" role="group" aria-label="Favorite rankings" title="Your most-viewed leaderboards are stored only on this device"><span>YOUR FAVORITES</span><div>${rows.map(([key,count])=>`<button type="button" data-leaderboard-shortcut="${escapeHtml(key)}">${escapeHtml(LEADERBOARD_LABELS[key])}<small>${count}</small></button>`).join('')}</div></div>`;
+    return `<div class="leaderboard-arcade" role="group" aria-label="Favorite rankings" title="Your most-viewed leaderboards are stored only on this device"><span>YOUR FAVORITES</span><div>${rows.map(([key,count])=>`<button type="button" class="${key===overallCategory||(key==='tracks'&&['official','community'].includes(overallCategory))?'selected':''}" aria-pressed="${key===overallCategory||(key==='tracks'&&['official','community'].includes(overallCategory))}" data-leaderboard-shortcut="${escapeHtml(key)}">${escapeHtml(LEADERBOARD_LABELS[key])}<small>${count}</small></button>`).join('')}</div></div>`;
   }
 
   const MIN_RANKED_TRACKS=3;
@@ -1588,7 +1588,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const date=new Date(now);const next=Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),date.getUTCDate()+1);
     const instant=weekly?next+((8-new Date(next).getUTCDay())%7)*86400000:next;
     const local=new Intl.DateTimeFormat(undefined,{weekday:'long',hour:'numeric',minute:'2-digit'}).format(instant);
-    return 'Changes '+(weekly?'Monday ':'')+'00:00 UTC<br><strong class="competition-local-reset">'+escapeHtml(local)+' Local</strong>';
+    return 'Resets<br><strong class="competition-local-reset">'+escapeHtml(local)+'</strong>';
   }
   function dailySpotlightMarkup(){
     const daily = dailySpotlight();
@@ -2316,22 +2316,22 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function overallFooterLayoutCss(){
     // Preserve the original three sections; content owns height, never flex-basis.
     return `
-      #overallLeaderboardPanel #overallDailyGrid{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,.95fr) minmax(0,1fr)!important;grid-template-rows:auto!important;gap:12px!important;padding:8px 10px!important;align-items:center!important;height:auto!important;min-height:0!important;max-height:32dvh!important;overflow-y:auto!important;flex:0 0 auto!important;box-sizing:border-box;background:#172650!important;border-top:2px solid #6cbddc!important}
-      #overallLeaderboardPanel #overallDailyGrid>div{min-width:0!important;width:100%!important;margin:0!important;padding:0!important;background:none!important;border:0!important;box-sizing:border-box}
-      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1!important;grid-row:1!important;display:grid!important;grid-template-columns:minmax(0,1fr)!important;grid-template-rows:auto auto!important;gap:6px!important;align-self:center!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section{display:grid!important;grid-template-columns:minmax(0,1fr) 84px!important;grid-template-rows:auto!important;gap:8px!important;align-items:center!important;height:auto!important;min-height:56px!important;padding:6px!important;box-sizing:border-box;border:1px solid #526b96!important;border-bottom:2px solid #84ddf3!important;background:#243968!important}
+      #overallLeaderboardPanel #overallDailyGrid{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,.95fr) minmax(0,1fr)!important;grid-template-rows:auto!important;gap:8px!important;padding:8px 10px!important;align-items:stretch!important;height:auto!important;min-height:0!important;max-height:32dvh!important;overflow-y:auto!important;flex:0 0 auto!important;box-sizing:border-box;background:#172650!important;border-top:2px solid #6cbddc!important}
+      #overallLeaderboardPanel #overallDailyGrid>div{min-width:0!important;width:100%!important;margin:0!important;padding:8px!important;background:#20345f!important;border:1px solid #5776a2!important;box-sizing:border-box}
+      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1!important;grid-row:1!important;display:grid!important;grid-template-columns:minmax(0,1fr)!important;grid-template-rows:auto auto!important;gap:6px!important;align-self:stretch!important;align-content:center!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section{display:grid!important;grid-template-columns:minmax(0,1fr) 100px!important;grid-template-rows:auto!important;gap:8px!important;align-items:center!important;height:auto!important;min-height:60px!important;padding:6px!important;box-sizing:border-box;border:1px solid #526b96!important;border-bottom:2px solid #84ddf3!important;background:#243968!important}
       #overallLeaderboardPanel #overallDailyGrid .weekly-cup{border-bottom-color:#f1d478!important}
-      #overallLeaderboardPanel #overallDailyGrid .competition-feature-button{display:grid!important;grid-template-columns:44px minmax(0,1fr)!important;align-items:center!important;gap:8px!important;flex:none!important;height:auto!important;min-height:44px!important;width:100%!important;padding:0!important;margin:0!important;background:none!important;border:0!important;clip-path:none!important;text-align:left!important}
-      #overallLeaderboardPanel #overallDailyGrid .competition-feature-image{display:grid!important;place-items:center!important;width:44px!important;height:44px!important;min-width:44px!important;padding:2px!important;box-sizing:border-box;border:1px solid #52729e!important;background:#15254a!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-button{display:grid!important;grid-template-columns:48px minmax(0,1fr)!important;align-items:center!important;gap:8px!important;flex:none!important;height:auto!important;min-height:44px!important;width:100%!important;padding:0!important;margin:0!important;background:none!important;border:0!important;clip-path:none!important;text-align:left!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-image{display:grid!important;place-items:center!important;width:48px!important;height:48px!important;min-width:48px!important;padding:3px!important;box-sizing:border-box;border:1px solid #52729e!important;background:#15254a!important}
       #overallLeaderboardPanel #overallDailyGrid .competition-feature-copy{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:2px!important;min-width:0!important;width:100%!important;text-align:left!important}
       #overallLeaderboardPanel #overallDailyGrid .competition-kicker{font-size:10px!important;line-height:1.1!important;color:#9fdff4!important}
       #overallLeaderboardPanel #overallDailyGrid .weekly-cup .competition-kicker{color:#f1d478!important}
-      #overallLeaderboardPanel #overallDailyGrid .competition-track-name{display:block!important;flex:none!important;width:fit-content!important;max-width:100%!important;min-height:0!important;grid-row:auto!important;grid-column:auto!important;padding:0!important;margin:0!important;font-size:18px!important;line-height:1.15!important;text-align:left!important;white-space:normal!important;overflow-wrap:anywhere;outline:0!important;background:none!important;box-shadow:none!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-track-name{display:block!important;flex:none!important;width:fit-content!important;max-width:100%!important;min-height:0!important;grid-row:auto!important;grid-column:auto!important;padding:0!important;margin:0!important;font-size:20px!important;line-height:1.15!important;text-align:left!important;white-space:normal!important;overflow-wrap:anywhere;outline:0!important;background:none!important;box-shadow:none!important}
       #overallLeaderboardPanel #overallDailyGrid .competition-track-name:hover,#overallLeaderboardPanel #overallDailyGrid .competition-track-name:focus-visible{outline:0!important;background:none!important}
       #overallLeaderboardPanel #overallDailyGrid .competition-feature-button:focus-visible{outline:2px solid #a8f0ff!important;outline-offset:2px!important}
-      #overallLeaderboardPanel #overallDailyGrid .competition-result{display:block!important;flex:none!important;align-self:flex-start!important;grid-row:auto!important;grid-column:auto!important;width:auto!important;max-width:100%!important;min-height:0!important;padding:0!important;margin:0!important;text-align:left!important;font-size:12px!important;line-height:1.2!important;color:#d4e7fa!important;background:none!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section>small{display:block!important;flex:none!important;padding:0!important;margin:0!important;border:0!important;width:auto!important;text-align:center!important;font-size:10px!important;line-height:1.25!important;color:#b7c9e5!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:2!important;grid-row:1!important;display:flex!important;flex-direction:column!important;align-items:center!important;gap:8px!important;align-self:center!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-result{display:block!important;flex:none!important;align-self:flex-start!important;grid-row:auto!important;grid-column:auto!important;width:auto!important;max-width:100%!important;min-height:0!important;padding:0!important;margin:0!important;text-align:left!important;font-size:14px!important;line-height:1.2!important;color:#e1edff!important;background:none!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section>small{display:block!important;flex:none!important;padding:0!important;margin:0!important;border:0!important;width:auto!important;text-align:center!important;font-size:12px!important;line-height:1.25!important;color:#d0def1!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:2!important;grid-row:1!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:10px!important;align-self:stretch!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-pager{display:grid!important;grid-template-columns:28px 28px minmax(110px,auto) 28px 28px!important;gap:4px!important;align-items:center!important;align-self:center!important;flex:0 0 auto!important;order:0!important;width:fit-content!important;max-width:100%!important;height:auto!important;min-height:0!important;margin:0!important;padding:0!important;background:none!important;border:0!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-page-position{display:flex!important;align-items:center!important;justify-content:center!important;gap:4px!important;min-width:0!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-page-button{grid-row:auto!important;grid-column:auto!important;width:28px!important;min-width:0!important;height:34px!important;min-height:34px!important;margin:0!important;padding:0!important;font-size:21px!important;line-height:1!important}
@@ -2340,7 +2340,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       #overallLeaderboardPanel #overallDailyGrid .overall-page-jump-label input{width:42px!important;min-width:0!important;height:34px!important;min-height:34px!important;padding:3px!important;text-align:center!important;font-size:14px!important;box-sizing:border-box}
       #overallLeaderboardPanel #overallDailyGrid .overall-freshness{display:flex!important;align-items:center!important;justify-content:center!important;align-self:center!important;flex:0 0 auto!important;order:0!important;gap:6px!important;width:fit-content!important;max-width:100%!important;height:auto!important;min-height:28px!important;margin:0!important;padding:5px 9px!important;font:14px/1.25 ForcedSquare,sans-serif!important;white-space:normal!important;text-align:center!important;overflow-wrap:anywhere;border:1px solid #5b7397!important;background:#23365b!important;color:#e1ebf7!important;box-sizing:border-box}
       #overallLeaderboardPanel #overallDailyGrid .overall-freshness.is-old-change{background:#3c3540!important;border-color:#a59c7e!important;color:#fff0c6!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:3!important;grid-row:1!important;display:flex!important;flex-direction:column!important;gap:7px!important;align-self:center!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:3!important;grid-row:1!important;display:flex!important;flex-direction:column!important;justify-content:center!important;gap:10px!important;align-self:stretch!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-category-control{position:relative!important;display:flex!important;align-items:center!important;justify-content:center!important;gap:8px!important;min-width:0!important;width:100%!important;height:auto!important;margin:0!important;padding:0!important;border:0!important;background:none!important;overflow:visible!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-category-select{display:flex!important;align-items:center!important;gap:8px!important;flex:0 1 auto!important;min-width:0!important;width:auto!important;height:auto!important;margin:0!important;padding:0!important;background:none!important;border:0!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-category-select>span{flex:none!important;font-size:11px!important;color:#9bdcf3!important}
@@ -2355,7 +2355,11 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade{display:block!important;width:100%!important;height:auto!important;margin:0!important;padding:0!important;background:none!important;border:0!important}
       #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade>span{display:none!important}
       #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade>div{display:flex!important;flex-wrap:wrap!important;gap:4px!important;width:100%!important;height:auto!important}
-      #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade button{flex:1 1 65px!important;min-width:0!important;min-height:30px!important;padding:4px!important;margin:0!important;font-size:12px!important;line-height:1.2!important;white-space:normal!important}
+      #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade button{flex:1 1 65px!important;min-width:0!important;min-height:30px!important;padding:4px!important;margin:0!important;font-size:14px!important;line-height:1.2!important;white-space:normal!important}
+      #overallLeaderboardPanel #overallDailyGrid :is(.overall-page-button,.sq-category-trigger,.leaderboard-arcade button,.overall-track-scope button,.overall-freshness):hover:not(:disabled){background:#3d5893!important;color:#fff!important;border-color:#9de7ff!important}
+      #overallLeaderboardPanel #overallDailyGrid :is(.overall-track-scope button.active,.leaderboard-arcade button.selected,.leaderboard-arcade button[aria-pressed="true"]){background:#80def5!important;color:#132b50!important;box-shadow:inset 0 -2px #e5faff!important}
+      #overallLeaderboardPanel #overallDailyGrid :is(button,input):focus-visible{outline:2px solid #b4eeff!important;outline-offset:2px!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-button:hover .competition-track-name{color:#9feaff!important}
       #overallLeaderboardPanel #overallDailyGrid :is(button,input,.sq-category-trigger){border-radius:0!important;clip-path:none!important}
       #overallLeaderboardPanel #overallHelpPopup{align-items:center!important;justify-content:center!important;pointer-events:auto!important;background:rgba(8,12,31,.65)!important;padding:12px!important;box-sizing:border-box}
       #overallLeaderboardPanel .overall-help-card{position:relative!important;inset:auto!important;width:min(820px,calc(100vw - 24px))!important;height:auto!important;max-height:calc(100dvh - 32px)!important;overflow-y:auto!important;clip-path:none!important;border:2px solid #6389bf!important;animation:none!important;box-sizing:border-box}
@@ -2748,7 +2752,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=126',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=127',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -3423,8 +3427,13 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const digit=match?Number(match[1]):/^[0-9]$/.test(event.key)?Number(event.key):null;
     return digit===null?null:digit||10;
   }
-  let overallPageOffset=0,overallPageOffsetUntil=0;
+  let overallPageOffset=0;
+  function resetOverallPageOffset(){overallPageOffset=0;}
+  function handleOverallLeaderboardModifierRelease(event){
+    if(event.key==='Shift'||event.code==='ShiftLeft'||event.code==='ShiftRight')resetOverallPageOffset();
+  }
   function handleOverallLeaderboardShortcut(event){
+    if(!event.shiftKey||event.ctrlKey||event.altKey||event.metaKey)resetOverallPageOffset();
     if(event.defaultPrevented||event.repeat||event.ctrlKey||event.altKey||event.metaKey)return false;
     const target=event.target;
     if(target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement||target instanceof HTMLSelectElement||target?.isContentEditable||target?.closest?.('#overallFilterPanel'))return false;
@@ -3433,17 +3442,15 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const key=String(event.key||'').toLowerCase();
     if(event.shiftKey&&(event.code==='Equal'||event.code==='NumpadAdd'||key==='+'||key==='='||event.code==='Minus'||event.code==='NumpadSubtract'||key==='-'||key==='_')){
       overallPageOffset=event.code==='Minus'||event.code==='NumpadSubtract'||key==='-'||key==='_'?-1:1;
-      overallPageOffsetUntil=Date.now()+3000;
       event.preventDefault();event.stopPropagation();return true;
     }
     const page=event.shiftKey?shortcutDigit(event):null;
     const direction=key==='arrowleft'||key==='a'?-1:key==='arrowright'||key==='d'?1:0;
     if(page){
-      const offset=Date.now()<=overallPageOffsetUntil?overallPageOffset:0;
-      overallPageOffset=0;overallPageOffsetUntil=0;
-      if(!jumpOverallPage(offset?Math.max(1,Math.min(Math.max(1,Math.ceil(currentLeaderboardCount()/OVERALL_PAGE_SIZE)),overallPage+1+offset*page)):page))return false;
+      const offset=overallPageOffset;
+      jumpOverallPage(offset?Math.max(1,Math.min(Math.max(1,Math.ceil(currentLeaderboardCount()/OVERALL_PAGE_SIZE)),overallPage+1+offset*page)):page);
     }
-    else if(direction){overallPageOffset=0;overallPageOffsetUntil=0;const before=overallPage;changeOverallPage(direction);if(before===overallPage)return false;}
+    else if(direction){const before=overallPage;changeOverallPage(direction);if(before===overallPage)return false;}
     else return false;
     event.preventDefault();event.stopPropagation();return true;
   }
@@ -4968,7 +4975,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=126',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=127',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -4988,8 +4995,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=126',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=126',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=126',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=127',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=127',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=127',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -6314,7 +6321,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(protectedReads)parts.push(snapshotUnlockLabel());
     const detail=parts.join(' · ');
     el.dataset.fullStatus=detail;
-    el.textContent=protectedReads?'Snapshot · '+snapshotUnlockLabel():status==='loading'?'Checking live standings':failed?'Saved standings · Live unavailable':status==='snapshot'?snapshotCaptureLabel().replace('Snapshot captured','Snapshot').replace(/ ago$/,' old')+' · Refresh':status==='cloud'?'Live checked '+(checkedAt?ageLabel(checkedAt):'just now')+' · Refresh':'Cached standings · Refresh';
+    el.textContent=protectedReads?'Snapshot · '+snapshotUnlockLabel():status==='loading'?'Checking live standings':failed?'Saved standings · Live unavailable':status==='snapshot'?snapshotCaptureLabel().replace('Snapshot captured','Snapshot').replace(/ ago$/,' old')+' · Refresh':status==='cloud'?'Live checked '+(checkedAt?ageLabel(checkedAt):'just now')+' · Refresh':'Cached · Checked '+ageLabel(checkedAt||snapshotAt)+' · Refresh';
     el.title=`${protectedReads?snapshotAccessNotice():'Snapshot = standings bundled with the game, not live. Cached = standings saved on this device. Live = the last cloud response, not a continuous feed. Your newer local PB appears immediately; verification is separate. Select to request live updates.'} ${checkedAt?`Cloud last checked ${ageLabel(checkedAt)}.`:''}`.trim();
     el.title=detail+'. '+el.title;
     syncSnapshotRefreshControl(el);
@@ -6543,7 +6550,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   let snapshotTrackStatistics = {};
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=126').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=127').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
       void reader('track-statistics').then(data=>{if(!data)return;snapshotTrackStatistics=data.tracks;updateTrackFreshnessBanner();}).catch(()=>{});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
@@ -8561,7 +8568,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=126',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:126,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=127',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:127,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);
@@ -8591,6 +8598,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       handleLobbyShortcut(event);
     });
     window.addEventListener('keyup',handleTrackLeaderboardDigitRelease);
+    window.addEventListener('keyup',handleOverallLeaderboardModifierRelease);
+    window.addEventListener('blur',resetOverallPageOffset);
     window.addEventListener('blur',()=>{nativeDigitsHeld.clear();nativeDigitsConsumed.clear();nativeTopHeld=false;nativeTopPrefixUntil=0;});
     document.addEventListener('click',async(event)=>{
       const button=event.target.closest?.('[data-planner-event]');if(!button)return;

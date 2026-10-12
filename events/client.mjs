@@ -856,7 +856,7 @@ export function installEvents(bridge){
       put('.competition-kicker',kicker);put('.competition-track-name',period?info(period.trackId).name:'No active event');put('.competition-result',period?'Up to '+(Number(period.maxRp)||0)+' Event RP':'Browse Events for availability');
       const image=button.querySelector('.competition-feature-image');if(image)image.innerHTML=period?bridge.thumbnail(period.trackId):'';
       const note=card.querySelector(':scope > small');if(note){
-        if(period){const options={weekday:'short',hour:'2-digit',minute:'2-digit'},local=document.createElement('strong');local.textContent=new Intl.DateTimeFormat(undefined,options).format(period.endsAt)+' Local';note.replaceChildren(document.createTextNode(new Intl.DateTimeFormat(undefined,{...options,timeZone:'UTC'}).format(period.endsAt)+' UTC'),document.createElement('br'),local);}
+        if(period){const options={weekday:'short',hour:'2-digit',minute:'2-digit'},local=document.createElement('strong');local.textContent=new Intl.DateTimeFormat(undefined,options).format(period.endsAt);note.replaceChildren(document.createTextNode('Resets'),document.createElement('br'),local);note.title='Event ends '+new Intl.DateTimeFormat(undefined,{dateStyle:'full',timeStyle:'long'}).format(period.endsAt);}
         else note.textContent='Browse events for availability.';
       }
       button.removeAttribute('aria-disabled');if(period)knownPeriods.set(period.id,period);

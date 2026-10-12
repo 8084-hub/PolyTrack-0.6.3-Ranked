@@ -236,3 +236,25 @@ test('compact event captions follow the original horizontal layout and paginatio
  const pager=css.match(/#overallLeaderboardPanel #overallDailyGrid \.overall-pager\{([^}]+)\}/)[1];
  assert.match(pager,/width:fit-content!important/);assert.match(pager,/align-self:center!important/);assert.match(pager,/max-width:100%!important/);
 });
+
+test('the three footer groups own visible panel borders and highlight states',()=>{
+ const ctx=vm.createContext({});vm.runInContext(extract('overallFooterLayoutCss'),ctx);const css=ctx.overallFooterLayoutCss();
+ assert.match(css,/overallDailyGrid>div[^}]*background:#20345f!important;border:1px solid #5776a2!important/);
+ assert.match(css,/overall-center-tools[^}]*justify-content:center!important/);
+ assert.match(css,/overall-footer-right[^}]*justify-content:center!important/);
+ assert.match(css,/aria-pressed="true"[^}]*background:#80def5!important/);
+ assert.match(css,/focus-visible[^}]*outline:2px solid/);
+});
+test('event footer reset labels use local dates without repeating UTC',()=>{
+ const fn=extract('resetTimeMarkup');assert.doesNotMatch(fn,/00:00 UTC|Local<\/strong>/);assert.match(fn,/Resets<br>/);
+ const events=fs.readFileSync(path.join(__dirname,'..','events','client.mjs'),'utf8');
+ const start=events.indexOf("const note=card.querySelector(':scope > small')");const note=events.slice(start,events.indexOf("button.removeAttribute('aria-disabled')",start));
+ assert.match(note,/document.createTextNode\('Resets'\)/);assert.doesNotMatch(note,/timeZone:'UTC'/);
+});
+
+test('favorite ranking buttons mark the active category for visible highlighting',()=>{
+ const ctx=vm.createContext({readJsonStorage:()=>({overall:3,tracks:2}),LEADERBOARD_USAGE_KEY:'usage',LEADERBOARD_LABELS:{overall:'Overall RP',tracks:'Tracks completed'},overallCategory:'overall',escapeHtml:String});
+ vm.runInContext(extract('leaderboardArcadeMarkup'),ctx);
+ assert.match(ctx.leaderboardArcadeMarkup(),/class="selected" aria-pressed="true" data-leaderboard-shortcut="overall"/);
+ ctx.overallCategory='community';assert.match(ctx.leaderboardArcadeMarkup(),/class="selected" aria-pressed="true" data-leaderboard-shortcut="tracks"/);
+});
