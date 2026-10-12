@@ -228,3 +228,11 @@ test('footer controls explicitly neutralize legacy flex growth in the column lay
  assert.match(css,/competition-result[^}]*text-align:center!important/);
  assert.match(css,/section>small[^}]*border:0!important/);
 });
+
+test('event captions override legacy self-alignment and pagination does not stretch to the full column',()=>{
+ const ctx=vm.createContext({});vm.runInContext(extract('overallFooterLayoutCss'),ctx);const css=ctx.overallFooterLayoutCss();
+ const result=css.match(/#overallLeaderboardPanel #overallDailyGrid \.competition-result\{([^}]+)\}/)[1];
+ assert.match(result,/align-self:center!important/);assert.match(result,/text-align:center!important/);
+ const pager=css.match(/#overallLeaderboardPanel #overallDailyGrid \.overall-pager\{([^}]+)\}/)[1];
+ assert.match(pager,/width:fit-content!important/);assert.match(pager,/align-self:center!important/);assert.match(pager,/max-width:100%!important/);
+});
