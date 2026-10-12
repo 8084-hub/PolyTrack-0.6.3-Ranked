@@ -62,7 +62,7 @@ test('category switch during fetch cannot repaint normal list',async()=>{
  const {ctx}=setup();let release;ctx.eventCloudRead=()=>new Promise(r=>release=r);const pending=ctx.fetchEventTotals();ctx.overallCategory='overall';ctx.renderEntries=()=>assert.fail('unexpected repaint');ctx.updateRankedFreshness=()=>assert.fail('unexpected freshness');await new Promise(resolve=>setImmediate(resolve));release({updatedAt:1,entries:[row()]});await pending;
 });
 test('200 event racers paginate 15 per page with stable event rank and bounded buttons',()=>{
- const {ctx,elements}=setup({updatedAt:1,entries:Array.from({length:200},(_,i)=>row('user'+i,200-i,i+1))});ctx.LEADERBOARD_LABELS={events:'Event RP'};for(const id of ['overallPageStatus','overallPrevPage','overallNextPage'])elements.set(id,{});
+ const {ctx,elements}=setup({updatedAt:1,entries:Array.from({length:200},(_,i)=>row('user'+i,200-i,i+1))});ctx.LEADERBOARD_LABELS={events:'Event RP'};for(const id of ['overallPageStatus','overallPrevPage','overallNextPage'])elements.set(id,{setAttribute(name,value){this[name]=value;},getAttribute(name){return this[name];}});
  let list={innerHTML:'',scrollTop:9};ctx.overallPage=13;ctx.renderEventEntries(list);assert.equal((list.innerHTML.match(/data-category="events"/g)||[]).length,5);assert.match(list.innerHTML,/#200/);assert.equal(elements.get('overallNextPage').disabled,true);ctx.changeOverallPage(99);assert.equal(ctx.overallPage,13);ctx.changeOverallPage(-99);assert.equal(ctx.overallPage,0);
 });
 test('event row never invents Overall RP, provisional or missing metrics',()=>{

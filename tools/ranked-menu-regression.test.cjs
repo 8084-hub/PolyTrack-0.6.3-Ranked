@@ -169,21 +169,30 @@ test('unloaded extra-track metadata never excludes profile or planner finishes',
  assert.match(source,/MIN_MEANINGFUL_FINISH_WEIGHT=\.2/);
 });
 
-test('ranked footer keeps all page controls in a compact symmetric desktop grid',()=>{
- const context=vm.createContext({});
- vm.runInContext(extract('overallFooterLayoutCss'),context);
+test('ranked footer uses content-sized event tiles and keeps scope controls in flow',()=>{
+ const context=vm.createContext({});vm.runInContext(extract('overallFooterLayoutCss'),context);
  const css=context.overallFooterLayoutCss();
- assert.match(css,/grid-template-columns:repeat\(3,minmax\(0,1fr\)\)!important/);
- assert.match(css,/grid-template-rows:repeat\(2,minmax\(var\(--footer-row\),auto\)\)!important/);
- assert.match(css,/grid-template-rows:auto!important;grid-auto-rows:auto!important/);
- assert.match(css,/height:auto!important;flex:0 0 auto!important/);
- assert.match(css,/overallDailyGrid>div[^}]*padding:0!important/);
- assert.match(css,/overall-page-status[^}]*grid-column:auto!important;grid-row:1!important/);
- assert.match(css,/leaderboard-arcade>div[^}]*display:flex!important/);
- assert.match(css,/@media\(max-width:700px\)[\s\S]*overflow-y:auto!important/);
+ assert.match(css,/grid-template-columns:minmax\(300px,\.85fr\) minmax\(0,1\.15fr\)!important/);
+ assert.match(css,/overall-challenge-stack[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+ assert.match(css,/overall-track-scope:not\(\[hidden\]\)[^}]*position:static!important/);
+ assert.match(css,/overall-track-scope\[hidden\][^}]*display:none!important/);
+ assert.match(css,/competition-track-name[^}]*width:fit-content!important/);
+ assert.match(css,/overall-category-control::after[^}]*content:none!important/);
+ assert.match(css,/overall-freshness[^}]*width:fit-content!important/);
+ assert.match(css,/overall-help-card[^}]*height:auto!important/);
+ assert.match(css,/@media\(max-width:620px\)[\s\S]*overflow-y:auto!important/);
  assert.match(source,/rankedPolish\.textContent \+= overallFooterLayoutCss\(\);\s*document\.head\.appendChild\(rankedPolish\)/);
- for(const id of ['overallFirstPage','overallLastPage','overallPageJump'])assert.match(source,new RegExp(`id="${id}"`));
- assert.match(source,/leaderboardArcadeMarkup\(\)/);
+ for(const id of ['overallFirstPage','overallLastPage','overallPageJump'])assert.match(source,new RegExp('id="'+id+'"'));
+});
+
+test('ranking info belongs only to the info button and page count is uncluttered',()=>{
+ const sync=extract('syncCategorySelect');
+ assert.doesNotMatch(sync,/select\.title=|control\.dataset\.tip=/);
+ assert.match(sync,/control\.removeAttribute\('data-tip'\)/);
+ assert.match(sync,/info\.addEventListener\('pointerenter'/);
+ const pager=extract('updateOverallPager');
+ assert.match(pager,/status\.setAttribute\('aria-label'/);
+ assert.doesNotMatch(pager,/status\.textContent = .*label/);
 });
 
 test('specific normalized display-name identities are blocked without catching similar handles',()=>{
@@ -195,4 +204,16 @@ test('specific normalized display-name identities are blocked without catching s
  for(const name of ['Kim Jong Un','K1m J0ng Un','Ngrachio445','Ngr4chi0445','Nigervaan','N1g3rv44n','Stephen Hawking','St3ph3n H4wk1ng'])
    assert.equal(context.moderationDecision(name).reason,'blocked-name-identity',`${name} should normalize to the explicit blocked identity`);
  for(const name of ['BLACKBEAUTY','CheatingMiguel'])assert.equal(context.moderationDecision(name).blocked,false,`${name} remains allowed`);
+});
+
+test('info explanation stays in the viewport and accounts for panel transforms',()=>{
+ const styles={};let transformed=false;
+ const copy={style:{setProperty:(key,value)=>styles[key]=value},getBoundingClientRect:()=>({height:110})};
+ const info={getBoundingClientRect:()=>({right:330,top:280})};
+ const shell={getBoundingClientRect:()=>({left:40,top:20})};
+ const control={querySelector:key=>key==='[data-category-info]'?info:copy,closest:()=>shell};
+ const ctx=vm.createContext({window:{innerWidth:360},getComputedStyle:()=>({transform:transformed?'matrix(1,0,0,1,0,0)':'none'})});
+ vm.runInContext(extract('positionRankedCategoryDescription'),ctx);
+ ctx.positionRankedCategoryDescription(control);assert.equal(styles.width,'336px');assert.equal(styles.left,'12px');assert.equal(styles.top,'160px');
+ transformed=true;ctx.positionRankedCategoryDescription(control);assert.equal(styles.left,'-28px');assert.equal(styles.top,'140px');
 });

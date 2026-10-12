@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=122',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=123',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='122';
+  const extraCatalogRevision='123';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -1599,7 +1599,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const streakWord=daily.streak===1?'day':'days';
     const weeklyResult=weekly.result&&weekly.result!=='Not entered'?`${weekly.result}${weekly.field?` of ${weekly.field}`:''}`:'Not entered';
     const challenge=(kind,kicker,track,result,note)=>`<section class="${kind}" aria-label="${escapeHtml(kicker)}: ${escapeHtml(track.name)}"><button class="competition-feature-button" type="button" data-track-id="${escapeHtml(track.id)}" aria-label="Play ${escapeHtml(track.name)}. ${escapeHtml(kicker)}"><span class="competition-feature-image" aria-hidden="true">${trackThumbnailMarkup(track.id)}</span><span class="competition-feature-copy"><span class="competition-kicker">${escapeHtml(kicker)}</span><strong class="competition-track-name">${escapeHtml(track.name)}</strong><span class="competition-result">${result}</span></span></button><small>${note}</small></section>`;
-    return `<footer class="overall-competition" id="overallDailyGrid"><div class="overall-challenge-stack">${challenge('weekly-cup','FEATURED THIS WEEK',weekly.track,escapeHtml(weeklyResult),resetTimeMarkup(true))}${challenge('daily-card',"TODAY'S TARGET",daily.track,daily.completed?'Goal complete':`${runProgress} · ${pbProgress}${improvement}`,`${daily.streak} ${streakWord} streak · ${resetTimeMarkup(false)}`)}</div><div class="overall-center-tools"><nav class="overall-pager" aria-label="Ranked leaderboard pages"><button id="overallFirstPage" class="overall-page-button overall-page-edge" type="button" aria-label="First ranked page">&#171;</button><button id="overallPrevPage" class="overall-page-button" type="button" aria-label="Previous ranked page">&#8249;</button><span id="overallPageStatus" class="overall-page-status" aria-live="polite">Page 1</span><label class="overall-page-jump-label"><span>Page</span><input id="overallPageJump" type="number" inputmode="numeric" min="1" step="1" aria-label="Go to ranked page" title="Shift + number: go to page. Shift + plus, then number: add pages. Shift + minus, then number: subtract pages."></label><button id="overallNextPage" class="overall-page-button" type="button" aria-label="Next ranked page">&#8250;</button><button id="overallLastPage" class="overall-page-button overall-page-edge" type="button" aria-label="Last ranked page">&#187;</button></nav><button id="overallFreshness" class="overall-freshness" type="button" aria-label="Ranked data status. Select to request a cloud refresh.">Checking ranked data</button></div><div class="overall-footer-right"><div class="overall-category-control"><label class="overall-category-select"><span>RANK BY</span><select id="overallCategorySelect" aria-label="Choose a Ranked leaderboard"><optgroup label="Main rankings"><option value="overall">Overall RP</option><option value="casual">Casual RP</option><option value="average">Average place</option><option value="competitiveAverage">Competitive average</option><option value="tracks">Tracks completed</option><option value="medals">Podium points</option><option value="rising">Rising racers</option><option value="topTracks">Top Tracks</option></optgroup><optgroup label="More..."><option value="skill">Best 10 skill</option><option value="consistency">All-track depth</option><option value="wins">Track wins</option><option value="podiumRate">Podium rate</option><option value="weight">Total track weight</option><option value="pbs">PBs set</option><option value="playtime">Active time</option><option value="veterans">Racing longest</option></optgroup></select></label></div><div id="overallTrackScope" class="overall-track-scope" hidden aria-label="Filter completed tracks by type"><button class="active" type="button" data-track-scope="all" aria-pressed="true">All</button><button type="button" data-track-scope="official" aria-pressed="false">Official</button><button type="button" data-track-scope="community" aria-pressed="false">Community</button></div>${leaderboardArcadeMarkup()}</div></footer>`;
+    return `<footer class="overall-competition" id="overallDailyGrid"><div class="overall-challenge-stack">${challenge('weekly-cup','FEATURED THIS WEEK',weekly.track,escapeHtml(weeklyResult),resetTimeMarkup(true))}${challenge('daily-card',"TODAY'S TARGET",daily.track,daily.completed?'Goal complete':`${runProgress} · ${pbProgress}${improvement}`,`${daily.streak} ${streakWord} streak · ${resetTimeMarkup(false)}`)}</div><div class="overall-center-tools"><nav class="overall-pager" aria-label="Ranked leaderboard pages"><button id="overallFirstPage" class="overall-page-button overall-page-edge" type="button" aria-label="First ranked page">&#171;</button><button id="overallPrevPage" class="overall-page-button" type="button" aria-label="Previous ranked page">&#8249;</button><span class="overall-page-position"><label class="overall-page-jump-label"><span>Page</span><input id="overallPageJump" type="number" inputmode="numeric" min="1" step="1" aria-label="Go to ranked page" title="Shift + number: go to page. Shift + plus, then number: add pages. Shift + minus, then number: subtract pages."></label><span id="overallPageStatus" class="overall-page-status" aria-live="polite">of 1</span></span><button id="overallNextPage" class="overall-page-button" type="button" aria-label="Next ranked page">&#8250;</button><button id="overallLastPage" class="overall-page-button overall-page-edge" type="button" aria-label="Last ranked page">&#187;</button></nav><button id="overallFreshness" class="overall-freshness" type="button" aria-label="Ranked data status. Select to request a cloud refresh.">Checking ranked data</button></div><div class="overall-footer-right"><div class="overall-category-control"><label class="overall-category-select"><span>RANK BY</span><select id="overallCategorySelect" aria-label="Choose a Ranked leaderboard"><optgroup label="Main rankings"><option value="overall">Overall RP</option><option value="casual">Casual RP</option><option value="average">Average place</option><option value="competitiveAverage">Competitive average</option><option value="tracks">Tracks completed</option><option value="medals">Podium points</option><option value="rising">Rising racers</option><option value="topTracks">Top Tracks</option></optgroup><optgroup label="More..."><option value="skill">Best 10 skill</option><option value="consistency">All-track depth</option><option value="wins">Track wins</option><option value="podiumRate">Podium rate</option><option value="weight">Total track weight</option><option value="pbs">PBs set</option><option value="playtime">Active time</option><option value="veterans">Racing longest</option></optgroup></select></label></div><div id="overallTrackScope" class="overall-track-scope" hidden aria-label="Filter completed tracks by type"><button class="active" type="button" data-track-scope="all" aria-pressed="true">All</button><button type="button" data-track-scope="official" aria-pressed="false">Official</button><button type="button" data-track-scope="community" aria-pressed="false">Community</button></div>${leaderboardArcadeMarkup()}</div></footer>`;
   }
   function normalizeCarColorId(colors){
     const fallback = 'ffffff8ec7ff28346a212b58';
@@ -2314,53 +2314,77 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
 
   function overallFooterLayoutCss(){
-    // Two shared control rows keep the event, pagination, and ranking edges aligned.
+    // Content-sized controls and event tiles have one layout owner.
     return `
-      #overallLeaderboardPanel #overallDailyGrid{--footer-row:clamp(54px,calc(60px * var(--sq-ui-scale,1)),76px);display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;align-items:start!important;grid-template-rows:auto!important;grid-auto-rows:auto!important;align-content:start!important;gap:8px!important;padding:8px 10px!important;min-height:0!important;height:auto!important;flex:0 0 auto!important;box-sizing:border-box}
-      #overallLeaderboardPanel #overallDailyGrid>div{min-width:0!important;width:100%!important;margin:0!important;padding:0!important;align-self:start!important;box-sizing:border-box}
-      #overallLeaderboardPanel #overallDailyGrid :is(.overall-challenge-stack,.overall-center-tools,.overall-footer-right){display:grid!important;grid-template-columns:minmax(0,1fr)!important;grid-template-rows:repeat(2,minmax(var(--footer-row),auto))!important;align-content:start!important;align-items:stretch!important;gap:6px!important;background:transparent!important;border:0!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1!important;grid-row:1!important;order:0!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:2!important;grid-row:1!important;order:1!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:3!important;grid-row:1!important;order:2!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section{height:auto!important;min-height:0!important;padding:4px 6px!important;grid-template-columns:minmax(0,1fr) 94px!important;gap:8px!important;align-items:center!important}
-      #overallLeaderboardPanel #overallDailyGrid .competition-feature-button{display:grid!important;grid-template-columns:40px minmax(0,1fr)!important;align-items:center!important;gap:6px!important;height:100%!important;min-height:0!important;padding:0!important}
-      #overallLeaderboardPanel #overallDailyGrid .competition-feature-copy{display:grid!important;grid-template-rows:auto auto auto!important;align-content:center!important;gap:0!important;min-width:0!important}
-      #overallLeaderboardPanel #overallDailyGrid .competition-kicker{font-size:10px!important;line-height:10px!important}
-      #overallLeaderboardPanel #overallDailyGrid .competition-track-name{font-size:17px!important;line-height:17px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      #overallLeaderboardPanel #overallDailyGrid .competition-result{font-size:11px!important;line-height:12px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      #overallLeaderboardPanel #overallDailyGrid .competition-feature-image{width:40px!important;height:40px!important;min-width:0!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section>small{font-size:10px!important;line-height:1.1!important;padding-left:6px!important}
-      #overallLeaderboardPanel #overallDailyGrid :is(.overall-pager,.overall-freshness,.overall-category-control,.leaderboard-arcade){grid-column:1!important;grid-row:auto!important;align-self:stretch!important;min-width:0!important;width:100%!important;height:100%!important;min-height:0!important;margin:0!important;box-sizing:border-box}
-      #overallLeaderboardPanel #overallDailyGrid .overall-pager{display:grid!important;grid-template-columns:28px 28px minmax(0,1fr) 54px 28px 28px!important;gap:4px!important;padding:4px!important;align-items:stretch!important;border:1px solid #405b92!important;background:#172754!important}
-      #overallLeaderboardPanel #overallDailyGrid :is(.overall-page-button,.overall-page-status){grid-column:auto!important;grid-row:1!important;min-width:0!important;width:100%!important;height:100%!important;min-height:0!important;margin:0!important;box-sizing:border-box}
-      #overallLeaderboardPanel #overallDailyGrid .overall-page-button{padding:0!important;font-size:22px!important;line-height:1!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-page-status{display:flex!important;align-items:center!important;justify-content:center!important;padding:3px!important;white-space:normal!important;font-size:13px!important;line-height:1.15!important;text-align:center}
-      #overallLeaderboardPanel #overallDailyGrid .overall-page-jump-label{display:flex!important;grid-column:auto!important;grid-row:1!important;align-items:center!important;justify-content:center!important;gap:4px!important;padding:2px!important;min-width:0!important;font-size:9px!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-page-jump-label input{width:34px!important;min-width:0!important;min-height:28px!important;padding:2px!important;box-sizing:border-box}
-      #overallLeaderboardPanel #overallDailyGrid .overall-freshness{display:flex!important;align-items:center!important;justify-content:center!important;padding:5px 8px!important;white-space:normal!important;overflow-wrap:anywhere;font-size:13px!important;line-height:1.2!important;text-align:center!important;border:1px solid #405b92!important}
-      #overallLeaderboardPanel #overallDailyGrid :is(.overall-freshness,.overall-pager,.overall-category-control,.leaderboard-arcade,.overall-page-jump-label,.overall-page-jump-label input,.overall-page-button,.leaderboard-arcade button,.overall-category-select select){border-radius:0!important;clip-path:none!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-freshness::before{flex-shrink:0}
-      #overallLeaderboardPanel #overallDailyGrid .overall-category-control{padding:4px 6px!important;gap:6px!important;border:1px solid #405b92!important;border-left:3px solid #7ee7ff!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-category-select{height:100%!important;min-height:0!important;padding:0!important;gap:6px!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-category-select>select{height:100%!important;min-height:0!important;padding-block:3px!important}
-      #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade{display:flex!important;align-items:stretch!important;justify-content:space-evenly!important;gap:4px!important;padding:4px!important;border:1px solid #405b92!important;background:#172754!important}
+      #overallLeaderboardPanel #overallDailyGrid{display:grid!important;grid-template-columns:minmax(300px,.85fr) minmax(0,1.15fr)!important;grid-template-rows:auto auto!important;gap:8px 14px!important;padding:10px 14px!important;height:auto!important;min-height:0!important;flex:0 0 auto!important;align-items:center!important;max-height:38dvh!important;overflow-y:auto!important;box-sizing:border-box;background:#172650!important;border-top:2px solid #6cbddc!important}
+      #overallLeaderboardPanel #overallDailyGrid>div{min-width:0!important;width:auto!important;margin:0!important;padding:0!important;background:none!important;border:0!important;box-sizing:border-box}
+      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;grid-template-rows:auto!important;grid-column:1!important;grid-row:1/span 2!important;gap:8px!important;align-self:stretch!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section{display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:6px!important;padding:8px!important;height:auto!important;min-height:0!important;background:#243968!important;border:1px solid #59759c!important;border-bottom:2px solid #84ddf3!important;box-sizing:border-box}
+      #overallLeaderboardPanel #overallDailyGrid .weekly-cup{border-bottom-color:#f1d478!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-button{display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:6px!important;min-height:0!important;width:100%!important;height:auto!important;padding:0!important;margin:0!important;background:none!important;border:0!important;clip-path:none!important;text-align:center!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-image{display:grid!important;place-items:center!important;width:56px!important;height:56px!important;min-width:56px!important;flex:none!important;padding:3px!important;box-sizing:border-box;background:#15254a!important;border:1px solid #52729e!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-copy{display:flex!important;flex-direction:column!important;align-items:center!important;gap:3px!important;min-width:0!important;width:100%!important;text-align:center!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-kicker{font-size:11px!important;line-height:1.1!important;color:#9fdff4!important}
+      #overallLeaderboardPanel #overallDailyGrid .weekly-cup .competition-kicker{color:#f1d478!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-track-name{display:block!important;width:fit-content!important;max-width:100%!important;min-height:0!important;padding:0!important;margin:0!important;grid-column:auto!important;grid-row:auto!important;flex:none!important;font-size:20px!important;line-height:1.15!important;text-align:center!important;white-space:normal!important;overflow-wrap:anywhere;outline:0!important;background:none!important;box-shadow:none!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-track-name:hover,#overallLeaderboardPanel #overallDailyGrid .competition-track-name:focus-visible{outline:0!important;background:none!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-button:focus-visible{outline:2px solid #a8f0ff!important;outline-offset:3px!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-result{font-size:12px!important;line-height:1.2!important;color:#d4e7fa!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section>small{display:block!important;padding:0!important;margin:0!important;text-align:center!important;font-size:11px!important;line-height:1.25!important;color:#b7c9e5!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:2!important;grid-row:1!important;display:flex!important;flex-direction:column!important;gap:7px!important;align-self:end!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-category-control{position:relative!important;display:flex!important;align-items:center!important;gap:10px!important;min-width:0!important;width:100%!important;height:auto!important;margin:0!important;padding:0!important;border:0!important;background:none!important;overflow:visible!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-category-select{display:flex!important;align-items:center!important;gap:10px!important;flex:1!important;min-width:0!important;height:auto!important;margin:0!important;padding:0!important;background:none!important;border:0!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-category-select>span{flex:none!important;font-size:12px!important;color:#9bdcf3!important}
+      #overallLeaderboardPanel #overallDailyGrid .sq-category-trigger{flex:1!important;min-width:0!important;min-height:40px!important;height:auto!important;padding:8px 12px!important;border:1px solid #6686b6!important;background:#263e78!important;font-size:18px!important;text-align:left!important;clip-path:none!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-category-info{display:flex!important;flex:none!important;align-items:center!important;justify-content:center!important;width:36px!important;height:36px!important;min-height:36px!important;padding:0!important;margin:0!important;border:1px solid #8bdcf3!important;border-radius:0!important;background:#1f3563!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-category-control::after{display:none!important;content:none!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-category-description{display:none;position:fixed!important;grid-column:auto!important;right:auto!important;bottom:auto!important;max-height:50dvh!important;overflow-y:auto!important;width:min(390px,80vw)!important;padding:12px!important;margin:0!important;z-index:80!important;font-size:16px!important;line-height:1.35!important;text-align:left!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-category-info:hover+.overall-category-description,#overallLeaderboardPanel #overallDailyGrid .overall-category-info:focus-visible+.overall-category-description,#overallLeaderboardPanel #overallDailyGrid .overall-category-control.is-explaining .overall-category-description{display:block!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-track-scope[hidden]{display:none!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-track-scope:not([hidden]){display:flex!important;position:static!important;flex-wrap:wrap!important;gap:6px!important;margin:0!important;padding:0!important;width:100%!important;height:auto!important;grid-row:auto!important;grid-column:auto!important;overflow:visible!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-track-scope button{flex:1!important;min-height:32px!important;padding:5px 10px!important;font-size:15px!important}
+      #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade{display:block!important;width:100%!important;height:auto!important;margin:0!important;padding:0!important;background:none!important;border:0!important}
       #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade>span{display:none!important}
-      #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade>div{display:flex!important;align-items:stretch!important;gap:4px!important;width:100%!important;min-width:0!important;height:100%!important}
-      #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade button{flex:1 1 0!important;min-width:0!important;min-height:0!important;margin:0!important;padding:3px!important;white-space:normal!important;line-height:1.15!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-footer-right:has(.overall-track-scope:not([hidden])){grid-template-rows:minmax(var(--footer-row),auto) minmax(var(--footer-row),auto) auto!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-track-scope:not([hidden]){grid-column:1!important;grid-row:3!important;margin:0!important}
-      @media(min-width:701px) and (max-width:1100px){
-        #overallLeaderboardPanel #overallDailyGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
-        #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1/-1!important;grid-row:1!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;grid-template-rows:minmax(var(--footer-row),auto)!important}
+      #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade>div{display:flex!important;flex-wrap:wrap!important;gap:6px!important;width:100%!important;height:auto!important}
+      #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade button{flex:1 1 90px!important;min-width:0!important;min-height:32px!important;padding:5px 8px!important;margin:0!important;font-size:13px!important;line-height:1.2!important;white-space:normal!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:2!important;grid-row:2!important;display:flex!important;flex-direction:column!important;gap:7px!important;align-self:start!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-pager{display:grid!important;grid-template-columns:34px 34px minmax(0,1fr) 34px 34px!important;gap:5px!important;align-items:center!important;min-height:0!important;width:100%!important;height:auto!important;margin:0!important;padding:0!important;border:0!important;background:none!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-page-position{display:flex!important;align-items:center!important;justify-content:center!important;gap:5px!important;min-width:0!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-page-button{grid-row:auto!important;grid-column:auto!important;width:34px!important;min-width:0!important;height:36px!important;min-height:36px!important;margin:0!important;padding:0!important;font-size:23px!important;line-height:1!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-page-status{display:flex!important;align-items:center!important;justify-content:center!important;grid-row:auto!important;grid-column:auto!important;min-width:0!important;width:auto!important;height:auto!important;min-height:36px!important;margin:0!important;padding:0 5px!important;font-size:17px!important;line-height:1.2!important;white-space:normal!important;text-align:center!important;background:none!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-page-jump-label{display:flex!important;align-items:center!important;gap:5px!important;padding:0!important;margin:0!important;font-size:12px!important;min-width:0!important;background:none!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-page-jump-label input{width:46px!important;min-width:0!important;height:36px!important;min-height:36px!important;padding:4px!important;text-align:center!important;font-size:16px!important;box-sizing:border-box}
+      #overallLeaderboardPanel #overallDailyGrid .overall-freshness{display:flex!important;align-items:center!important;justify-content:center!important;align-self:center!important;gap:6px!important;width:fit-content!important;max-width:100%!important;height:auto!important;min-height:28px!important;margin:0!important;padding:5px 12px!important;font-size:16px!important;line-height:1.25!important;white-space:normal!important;text-align:center!important;overflow-wrap:anywhere;border:1px solid #5b7397!important;background:#23365b!important;color:#e1ebf7!important;box-sizing:border-box}
+      #overallLeaderboardPanel #overallDailyGrid .overall-freshness.is-old-change{background:#3c3540!important;border-color:#a59c7e!important;color:#fff0c6!important}
+      #overallLeaderboardPanel #overallDailyGrid :is(button,input,.sq-category-trigger){border-radius:0!important;clip-path:none!important}
+      #overallLeaderboardPanel #overallHelpPopup{align-items:center!important;justify-content:center!important;pointer-events:auto!important;background:rgba(8,12,31,.65)!important;padding:12px!important;box-sizing:border-box}
+      #overallLeaderboardPanel .overall-help-card{position:relative!important;inset:auto!important;width:min(820px,calc(100vw - 24px))!important;height:auto!important;max-height:calc(100dvh - 32px)!important;overflow-y:auto!important;clip-path:none!important;border:2px solid #6389bf!important;animation:none!important;box-sizing:border-box}
+      #overallLeaderboardPanel .overall-help-head{padding:16px 20px!important}
+      #overallLeaderboardPanel .overall-help-head h3{font-size:32px!important;margin:0!important}
+      #overallLeaderboardPanel .overall-help-content{padding:16px 20px!important}
+      #overallLeaderboardPanel .overall-help-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:12px!important;align-items:start!important}
+      #overallLeaderboardPanel .overall-help-grid section{height:auto!important;min-height:0!important;margin:0!important;padding:12px 14px!important;background:#263e70!important;border-left:3px solid #7edcf2!important}
+      #overallLeaderboardPanel .overall-help-grid section>b{font-size:23px!important}
+      #overallLeaderboardPanel .overall-help-grid section p{font-size:20px!important;line-height:1.35!important;margin:7px 0 0!important}
+      #overallLeaderboardPanel .overall-help-grid button{font-size:18px!important;margin-top:10px!important}
+      #overallLeaderboardPanel .overall-help-actions{position:static!important;justify-content:flex-end!important;padding:0!important;margin-top:16px!important;background:none!important}
+      @media(max-width:1000px){
+        #overallLeaderboardPanel #overallDailyGrid{grid-template-columns:minmax(0,1fr)!important;gap:10px!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:1!important;grid-row:1!important}
         #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:1!important;grid-row:2!important}
-        #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:2!important;grid-row:2!important}
-      }
-      @media(max-width:700px){
-        #overallLeaderboardPanel #overallDailyGrid{grid-template-columns:minmax(0,1fr)!important;max-height:34dvh!important;overflow-y:auto!important;padding:6px!important}
-        #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:1!important;grid-row:1!important}
-        #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:1!important;grid-row:2!important}
         #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1!important;grid-row:3!important}
-        #overallLeaderboardPanel #overallDailyGrid .overall-pager{grid-template-columns:26px 26px minmax(0,1fr) 50px 26px 26px!important;gap:3px!important}
+        #overallLeaderboardPanel #overallDailyGrid .competition-feature-button{flex-direction:row!important;gap:12px!important}
+        #overallLeaderboardPanel #overallDailyGrid .competition-feature-copy{width:auto!important;flex:0 1 auto!important}
+      }
+      @media(max-width:620px){
+        #overallLeaderboardPanel #overallDailyGrid{padding:8px!important;max-height:42dvh!important;overflow-y:auto!important;overscroll-behavior:contain!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-pager{grid-template-columns:30px 30px minmax(0,1fr) 30px 30px!important;gap:3px!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-page-button{width:30px!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-page-status{font-size:14px!important}
+        #overallLeaderboardPanel #overallDailyGrid .competition-feature-button{flex-direction:column!important}
+        #overallLeaderboardPanel #overallDailyGrid .competition-track-name{font-size:18px!important}
+        #overallLeaderboardPanel .overall-help-grid{grid-template-columns:minmax(0,1fr)!important}
+        #overallLeaderboardPanel .overall-help-grid section p{font-size:19px!important}
       }
     `;
   }
@@ -2727,7 +2751,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=122',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=123',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -3569,7 +3593,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   let closeRankedCategoryMenu=null;
   function openRankedCategoryMenu(trigger){
     if(closeRankedCategoryMenu){closeRankedCategoryMenu();return;}
-    const primary=['overall','casual','average','tracks','medals','topTracks','events'];
+    const primary=['overall','events','casual','tracks','topTracks','average','medals'];
     const extras=['skill','competitiveAverage','wins','podiumRate','consistency','rising','pbs','weight','playtime','veterans'];
     const menu=document.createElement('div');
     menu.className='sq-category-popup';
@@ -3632,16 +3656,29 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     document.addEventListener('pointerdown',outside,true);window.addEventListener('resize',position);
   }
 
+  function positionRankedCategoryDescription(control){
+    const info=control?.querySelector('[data-category-info]');
+    const copy=control?.querySelector('.overall-category-description');
+    if(!info||!copy)return;
+    const rect=info.getBoundingClientRect(),width=Math.min(390,window.innerWidth-24);
+    copy.style.setProperty('width',width+'px','important');
+    const height=copy.getBoundingClientRect().height||90;
+    // The panel entrance transform creates a containing block for fixed descendants.
+    const shell=control.closest('.overall-shell');
+    const origin=shell&&getComputedStyle(shell).transform!=='none'?shell.getBoundingClientRect():{left:0,top:0};
+    copy.style.setProperty('left',(Math.max(12,Math.min(window.innerWidth-width-12,rect.right-width))-origin.left)+'px','important');
+    copy.style.setProperty('top',(Math.max(8,rect.top-height-10)-origin.top)+'px','important');
+  }
   function syncCategorySelect(root=document){
     const select=root.querySelector('#overallCategorySelect');
     const control=root.querySelector('.overall-category-control');
     const label=LEADERBOARD_LABELS[overallCategory]||'Overall RP';
     const tip=LEADERBOARD_INFO[overallCategory]||'This ranking uses the current complete Ranked snapshot.';
     if(select&&select.value!==overallCategory)select.value=overallCategory;
-    if(select)select.title=`${label}. ${tip}`;
+    if(select)select.removeAttribute('title');
     if(control){
       ensureRankedCategoryPicker(select,control);
-      control.dataset.tip=tip;
+      control.removeAttribute('data-tip');
       let info=control.querySelector('[data-category-info]');
       let copy=control.querySelector('.overall-category-description');
       if(!info){
@@ -3652,6 +3689,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         info.setAttribute('aria-expanded','false');
         info.textContent='i';
         control.appendChild(info);
+        info.addEventListener('pointerenter',()=>positionRankedCategoryDescription(control));
+        info.addEventListener('focus',()=>positionRankedCategoryDescription(control));
       }
       if(!copy){
         copy=document.createElement('span');
@@ -3686,7 +3725,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if (document.getElementById('overallLeaderboardPanel')) return;
     const panel = document.createElement('div');
     panel.id = 'overallLeaderboardPanel';
-    panel.innerHTML = `<div class="overall-shell"><div class="overall-top"><div class="overall-title-group"><h2>${tRankingsTitle()}</h2></div><div id="overallFilterPanel" class="overall-filter-host"></div><div class="overall-actions"><button id="overallFindMeBtn" class="button overall-action-btn" type="button">Find me</button><button id="overallHelpBtn" class="button overall-action-btn" type="button">Help</button><button id="closeOverallLeaderboard" class="button overall-action-btn" type="button">${tr('close')}</button></div></div><div class="overall-columns" aria-hidden="true"><span>Place</span><span>Driver</span><span>Movement & bests</span><span>Score</span></div><div id="overallLeaderboardList"></div>${dailySpotlightMarkup()}<div id="overallProfilePopup"><div class="overall-profile-card" role="dialog" aria-modal="true" aria-label="Racer profile"><div class="profile-dialog-toolbar"><span>Racer profile</span><button id="overallProfileClose" class="button" type="button">Close</button></div><div id="overallProfileContent"></div></div></div><div id="overallHelpPopup"><div class="overall-help-card" role="dialog" aria-modal="true" aria-labelledby="overallHelpTitle"><div class="overall-help-head"><h3 id="overallHelpTitle">How Ranked works</h3></div><div class="overall-help-content"><div class="overall-help-grid"><section><b>Ranked</b><p>Lower Overall RP is better. Event and Casual RP reward higher totals.</p></section><section><b>Your group</b><p>Normal filters hide racers. Smart filters calculate a separate group score. Missing saved data is marked.</p><button class="button" type="button" data-help-action="filters">Open Filters</button></section><section><b>Replays</b><p>A checkmark means verified. Waiting replays can still be watched; scores may change after review.</p></section><section><b>Improve</b><p>Your profile suggests routes from saved results. Thin data means fewer reliable suggestions.</p><button class="button" type="button" data-help-action="profile">Your profile</button></section><section><b>Controls</b><p>Arrows or A/D switch pages. Shift + number jumps to a page. Right-click Filters pauses them.</p></section><section><b>Your look</b><p>Open your profile to customize your racer and see unlock goals.</p></section></div><div class="overall-help-actions"><button id="overallHelpClose" class="button overall-action-btn" type="button">Close help</button></div></div></div></div></div>`;
+    panel.innerHTML = `<div class="overall-shell"><div class="overall-top"><div class="overall-title-group"><h2>${tRankingsTitle()}</h2></div><div id="overallFilterPanel" class="overall-filter-host"></div><div class="overall-actions"><button id="overallFindMeBtn" class="button overall-action-btn" type="button">Find me</button><button id="overallHelpBtn" class="button overall-action-btn" type="button">Help</button><button id="closeOverallLeaderboard" class="button overall-action-btn" type="button">${tr('close')}</button></div></div><div class="overall-columns" aria-hidden="true"><span>Place</span><span>Driver</span><span>Movement & bests</span><span>Score</span></div><div id="overallLeaderboardList"></div>${dailySpotlightMarkup()}<div id="overallProfilePopup"><div class="overall-profile-card" role="dialog" aria-modal="true" aria-label="Racer profile"><div class="profile-dialog-toolbar"><span>Racer profile</span><button id="overallProfileClose" class="button" type="button">Close</button></div><div id="overallProfileContent"></div></div></div><div id="overallHelpPopup"><div class="overall-help-card" role="dialog" aria-modal="true" aria-labelledby="overallHelpTitle"><div class="overall-help-head"><h3 id="overallHelpTitle">How Ranked works</h3></div><div class="overall-help-content"><div class="overall-help-grid"><section><b>Ranked</b><p>Lower Overall RP is better. Event and Casual RP reward higher totals.</p></section><section><b>Your group</b><p>Normal filters hide racers. Smart filters calculate a separate group score. Missing saved data is marked.</p><button class="button" type="button" data-help-action="filters">Open Filters</button></section><section><b>Replays</b><p>A checkmark means verified. Waiting replays can still be watched; scores may change after review.</p></section><section><b>Improve</b><p>Your profile suggests routes from saved results. Thin data means fewer reliable suggestions.</p><button class="button" type="button" data-help-action="profile">Your profile</button></section><section><b>Controls</b><p>Arrows or A/D switch pages. Shift + number jumps to a page; Shift + plus/minus, then number moves that many pages. Right-click Filters pauses them.</p></section><section><b>Your look</b><p>Open your profile to customize your racer and see unlock goals.</p></section></div><div class="overall-help-actions"><button id="overallHelpClose" class="button overall-action-btn" type="button">Close help</button></div></div></div></div></div>`;
     document.body.appendChild(panel);
     panel.querySelector('.overall-columns')?.insertAdjacentHTML('beforebegin','<div id="overallDataNotice" role="status" hidden></div>');
     void ensureRankedFiltersUi();
@@ -3777,6 +3816,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         const open=!control.classList.contains('is-explaining');
         control.classList.toggle('is-explaining',open);
         categoryInfo.setAttribute('aria-expanded',String(open));
+        if(open)positionRankedCategoryDescription(control);
         return;
       }
       const studioTab=event.target.closest?.('[data-studio-tab]');
@@ -4931,7 +4971,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=122',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=123',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -4951,8 +4991,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=122',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=122',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=122',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=123',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=123',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=123',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -5358,7 +5398,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const last=document.getElementById('overallLastPage');
     const label=LEADERBOARD_LABELS[overallCategory]||'Overall RP';
     const subset=rankedFilterResult?.available&&rankedFilterResult.filter?.category===overallCategory&&rankedFilterResult.filteredCount<rankedFilterResult.sourceCount;
-    if (status) status.textContent = `${label} · ${overallPage + 1}/${totalPages} · ${subset?`filtered ${count}/${rankedFilterResult.sourceCount}`:count} ${overallCategory==='topTracks'?'tracks':'racers'}`;
+    if(status){status.textContent=`of ${totalPages}`;status.setAttribute('aria-label',`Page ${overallPage+1} of ${totalPages}. ${count} ${overallCategory==='topTracks'?'tracks':'racers'}${subset?' in your filter':''}.`);status.title=status.getAttribute('aria-label');}
     const notice=document.getElementById('overallDataNotice');
     if(notice){
       const panel=document.getElementById('overallLeaderboardPanel');
@@ -6275,8 +6315,11 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       else parts.push('click to refresh');
     }
     if(protectedReads)parts.push(snapshotUnlockLabel());
-    el.textContent=parts.join(' · ');
+    const detail=parts.join(' · ');
+    el.dataset.fullStatus=detail;
+    el.textContent=protectedReads?'Snapshot · '+snapshotUnlockLabel():status==='loading'?'Checking live standings':failed?'Saved standings · Live unavailable':status==='snapshot'?snapshotCaptureLabel().replace('Snapshot captured','Snapshot').replace(/ ago$/,' old')+' · Refresh':status==='cloud'?'Live checked '+(checkedAt?ageLabel(checkedAt):'just now')+' · Refresh':'Cached standings · Refresh';
     el.title=`${protectedReads?snapshotAccessNotice():'Snapshot = standings bundled with the game, not live. Cached = standings saved on this device. Live = the last cloud response, not a continuous feed. Your newer local PB appears immediately; verification is separate. Select to request live updates.'} ${checkedAt?`Cloud last checked ${ageLabel(checkedAt)}.`:''}`.trim();
+    el.title=detail+'. '+el.title;
     syncSnapshotRefreshControl(el);
     const streakEl=document.getElementById('overallStreakLeader');
     if(streakEl?.dataset.base&&streakEl.dataset.fetchedAt) streakEl.textContent=`${streakEl.dataset.base} · ${ageLabel(Number(streakEl.dataset.fetchedAt))}`;
@@ -6503,7 +6546,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   let snapshotTrackStatistics = {};
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=122').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=123').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
       void reader('track-statistics').then(data=>{if(!data)return;snapshotTrackStatistics=data.tracks;updateTrackFreshnessBanner();}).catch(()=>{});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
@@ -8521,7 +8564,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=122',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:122,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=123',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:123,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);
