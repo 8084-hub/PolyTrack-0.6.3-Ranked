@@ -270,7 +270,7 @@ test('favorite rankings form two equal columns with clearly labeled local usage 
 });
 
 test('footer counts distinguish loaded standings from estimated totals and do not read the cloud',()=>{
- const fn=extract('updateOverallPager');assert.match(fn,/loaded racers/);assert.match(fn,/estimated\?'~'/);assert.match(fn,/tracks listed/);assert.doesNotMatch(fn,/fetch\(|db\(|\.collection\(/);
+ const fn=extract('updateOverallPager');assert.match(fn,/racers shown/);assert.doesNotMatch(fn,/estimated\?'~'/);assert.match(fn,/tracks listed/);assert.doesNotMatch(fn,/fetch\(|db\(|\.collection\(/);
  const cssCtx=vm.createContext({});vm.runInContext(extract('overallFooterLayoutCss'),cssCtx);const css=cssCtx.overallFooterLayoutCss();
  assert.match(css,/overall-category-description[^}]*background:#355181!important/);
  assert.match(css,/section:has\(\.competition-feature-button:hover\)/);
@@ -280,9 +280,32 @@ test('footer counts distinguish loaded standings from estimated totals and do no
 test('visible footer totals remain honest for partial, filtered, and track views',()=>{
  const summary={};let count=200;
  const ctx=vm.createContext({document:{getElementById:id=>id==='overallFieldSummary'?summary:null},currentLeaderboardCount:()=>count,OVERALL_PAGE_SIZE:15,overallPage:0,overallCategory:'overall',LEADERBOARD_LABELS:{overall:'Overall RP'},rankedFilterResult:null,rankedFilterSnapshotMeta:{totalEntries:404,totalEntriesExact:false},syncCategorySelect(){}});
- vm.runInContext(extract('updateOverallPager'),ctx);ctx.updateOverallPager();assert.equal(summary.textContent,'200 loaded racers · ~404 total');
- ctx.rankedFilterSnapshotMeta.totalEntriesExact=true;ctx.updateOverallPager();assert.equal(summary.textContent,'200 loaded racers · 404 total');
- count=22;ctx.rankedFilterResult={available:true,filter:{category:'overall'},filteredCount:22,sourceCount:200};ctx.updateOverallPager();assert.equal(summary.textContent,'22 shown / 200 loaded racers');
+ vm.runInContext(extract('updateOverallPager'),ctx);ctx.updateOverallPager();assert.equal(summary.textContent,'200 racers shown');
+ ctx.rankedFilterSnapshotMeta.totalEntriesExact=true;ctx.updateOverallPager();assert.equal(summary.textContent,'200 racers shown');
+ count=22;ctx.rankedFilterResult={available:true,filter:{category:'overall'},filteredCount:22,sourceCount:200};ctx.updateOverallPager();assert.equal(summary.textContent,'22 racers shown');
  count=51;ctx.overallCategory='topTracks';ctx.updateOverallPager();assert.equal(summary.textContent,'51 tracks listed');
- ctx.overallCategory='events';ctx.updateOverallPager();assert.equal(summary.textContent,'51 racers loaded');
+ ctx.overallCategory='events';ctx.updateOverallPager();assert.equal(summary.textContent,'51 racers shown');
+});
+
+test('event click targets cover the complete row and dropdown arrows have their own right-aligned graphic',()=>{
+ const ctx=vm.createContext({});vm.runInContext(extract('overallFooterLayoutCss'),ctx);const css=ctx.overallFooterLayoutCss();
+ assert.match(css,/competition-feature-button::after[^}]*inset:0/);
+ assert.match(css,/competition-feature-button[^}]*position:static!important/);
+ assert.match(css,/sq-category-chevron[^}]*margin-left:auto!important/);
+ assert.match(extract('ensureRankedCategoryPicker'),/aria-hidden="true" focusable="false"/);
+});
+test('manual refresh is bounded while requests are in flight and during failure cooldowns',async()=>{
+ let now=1000000,calls=0,finish;const timers=[];
+ const ctx=vm.createContext({Date:{now:()=>now},lastRankedManualRefreshAt:0,RANKED_MANUAL_REFRESH_COOLDOWN_MS:120000,rankedManualRefreshFailed:false,rankedRefreshCooldownTimer:0,overallCategory:'overall',overallLoadState:{status:'cache'},snapshotOnlyForNewAccount:()=>false,updateRankedFreshness(){},clearTimeout(){},setTimeout:(fn)=>{timers.push(fn);return timers.length;},writeJsonStorage(){},OVERALL_REBUILD_BACKOFF_KEY:'key',openRankedPanel:()=>{calls++;ctx.overallLoadState.status='loading';return new Promise(resolve=>finish=resolve);}});
+ vm.runInContext(extract('requestRankedRefresh'),ctx);
+ ctx.requestRankedRefresh();ctx.requestRankedRefresh();assert.equal(calls,1);
+ ctx.overallLoadState.status='snapshot';finish();await new Promise(resolve=>setImmediate(resolve));assert.equal(ctx.rankedManualRefreshFailed,true);
+ now+=119999;ctx.requestRankedRefresh();assert.equal(calls,1);
+ now+=1;ctx.requestRankedRefresh();assert.equal(calls,2);
+});
+test('button state preserves snapshot age and identifies a failed live check',()=>{
+ const button={dataset:{},setAttribute(){},style:{}};
+ const ctx=vm.createContext({document:{getElementById:id=>id==='overallFreshness'?button:null},overallCategory:'overall',overallLoadState:{status:'stale',serverUpdatedAt:1000,checkedAt:2000},rankedManualRefreshFailed:true,Date:{now:()=>10000},lastRankedManualRefreshAt:0,readOverallSnapshotCache:()=>({source:'public-backup'}),publicSnapshotCapturedAt:3000,ageLabel:()=> '3h ago',durationLabel:()=> '2m',snapshotOnlyForNewAccount:()=>false,snapshotCaptureLabel:()=> 'Snapshot captured 3h ago',syncSnapshotRefreshControl(){},applyRankedRefreshCooldown(){}});
+ vm.runInContext(extract('updateRankedFreshness'),ctx);ctx.updateRankedFreshness();assert.equal(button.dataset.source,'snapshot');assert.equal(button.textContent,'Snapshot data · 3h old · Refresh failed');
+ ctx.overallLoadState.status='cloud';ctx.rankedManualRefreshFailed=false;ctx.updateRankedFreshness();assert.equal(button.dataset.source,'live');assert.equal(button.textContent,'Live data · 3h old');
 });

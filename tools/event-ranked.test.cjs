@@ -72,7 +72,7 @@ test('unknown event profile opens honest dialog without run reads',()=>{
  const {ctx,elements}=setup();const content={dataset:{}},popup={};elements.set('overallProfileContent',content);elements.set('overallProfilePopup',popup);let opened=false;ctx.openRankedDialog=p=>{assert.equal(p,popup);opened=true;};vm.runInContext(extract('openRankedProfile'),ctx);ctx.openRankedProfile('unknown');assert(opened);assert.match(content.innerHTML,/No Overall score or track results are inferred/);
 });
 test('manual refresh selects event fetch and normal category selection does not open totals dialog',()=>{
- const {ctx}=setup();let forced=false;ctx.fetchEventTotals=force=>forced=force;vm.runInContext(extract('requestRankedRefresh'),ctx);ctx.requestRankedRefresh();assert(forced);assert.doesNotMatch(extract('setOverallCategory'),/ui\.totals/);assert.match(source,/window\.__pt062OpenRankedEvents=function/);assert.match(extract('renderEntries'),/renderEventEntries\(listEl\)/);
+ const {ctx}=setup();Object.assign(ctx,{lastRankedManualRefreshAt:0,RANKED_MANUAL_REFRESH_COOLDOWN_MS:120000,rankedManualRefreshFailed:false,rankedRefreshCooldownTimer:0,setTimeout:()=>1,clearTimeout(){}});let forced=false;ctx.fetchEventTotals=force=>forced=force;vm.runInContext(extract('requestRankedRefresh'),ctx);ctx.requestRankedRefresh();assert(forced);assert.doesNotMatch(extract('setOverallCategory'),/ui\.totals/);assert.match(source,/window\.__pt062OpenRankedEvents=function/);assert.match(extract('renderEntries'),/renderEventEntries\(listEl\)/);
 });
 
 test('unknown appearance never fabricates a default car',()=>{const {ctx}=setup();ctx.carModelPreview=()=>assert.fail('invented appearance');ctx.renderEventEntryRow(row(),0);});

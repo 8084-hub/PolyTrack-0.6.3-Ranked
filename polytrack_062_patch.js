@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=129',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=130',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='129';
+  const extraCatalogRevision='130';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -2319,9 +2319,10 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       #overallLeaderboardPanel #overallDailyGrid{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,.95fr) minmax(0,1fr)!important;grid-template-rows:auto!important;gap:8px!important;padding:8px 10px!important;align-items:stretch!important;height:auto!important;min-height:0!important;max-height:32dvh!important;overflow-y:auto!important;flex:0 0 auto!important;box-sizing:border-box;background:#172650!important;border-top:2px solid #6cbddc!important}
       #overallLeaderboardPanel #overallDailyGrid>div{min-width:0!important;width:100%!important;margin:0!important;padding:8px!important;background:#20345f!important;border:1px solid #5776a2!important;box-sizing:border-box}
       #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1!important;grid-row:1!important;display:grid!important;grid-template-columns:minmax(0,1fr)!important;grid-template-rows:auto auto!important;gap:6px!important;align-self:stretch!important;align-content:center!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(90px,112px)!important;grid-template-rows:auto!important;gap:8px!important;align-items:center!important;height:auto!important;min-height:68px!important;padding:6px!important;box-sizing:border-box;border:1px solid #526b96!important;border-bottom:2px solid #84ddf3!important;background:#243968!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section{position:relative!important;display:grid!important;grid-template-columns:minmax(0,1fr) minmax(90px,112px)!important;grid-template-rows:auto!important;gap:8px!important;align-items:center!important;height:auto!important;min-height:68px!important;padding:6px!important;box-sizing:border-box;border:1px solid #526b96!important;border-bottom:2px solid #84ddf3!important;background:#243968!important}
       #overallLeaderboardPanel #overallDailyGrid .weekly-cup{border-bottom-color:#f1d478!important}
-      #overallLeaderboardPanel #overallDailyGrid .competition-feature-button{display:grid!important;grid-template-columns:56px minmax(0,1fr)!important;align-items:center!important;gap:8px!important;flex:none!important;height:auto!important;min-height:44px!important;width:100%!important;padding:0!important;margin:0!important;background:none!important;border:0!important;clip-path:none!important;text-align:left!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-button{position:static!important;display:grid!important;grid-template-columns:56px minmax(0,1fr)!important;align-items:center!important;gap:8px!important;flex:none!important;height:auto!important;min-height:44px!important;width:100%!important;padding:0!important;margin:0!important;background:none!important;border:0!important;clip-path:none!important;text-align:left!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-button::after{content:'';position:absolute;inset:0;z-index:2;cursor:pointer}
       #overallLeaderboardPanel #overallDailyGrid .competition-feature-image{display:grid!important;place-items:center!important;width:56px!important;height:56px!important;min-width:56px!important;padding:3px!important;box-sizing:border-box;border:1px solid #52729e!important;background:#15254a!important}
       #overallLeaderboardPanel #overallDailyGrid .competition-feature-copy{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:2px!important;min-width:0!important;width:100%!important;text-align:left!important}
       #overallLeaderboardPanel #overallDailyGrid .competition-kicker{font-size:10px!important;line-height:1.1!important;color:#9fdff4!important}
@@ -2340,11 +2341,20 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       #overallLeaderboardPanel #overallDailyGrid .overall-page-jump-label input{width:50px!important;min-width:0!important;height:44px!important;min-height:44px!important;padding:4px!important;text-align:center!important;font-size:19px!important;box-sizing:border-box}
       #overallLeaderboardPanel #overallDailyGrid .overall-freshness{display:flex!important;align-items:center!important;justify-content:center!important;align-self:center!important;flex:0 0 auto!important;order:0!important;gap:8px!important;width:min(100%,360px)!important;max-width:100%!important;height:auto!important;min-height:42px!important;margin:0!important;padding:8px 12px!important;font:18px/1.25 ForcedSquare,sans-serif!important;white-space:normal!important;text-align:center!important;overflow-wrap:anywhere;border:1px solid #5b7397!important;background:#23365b!important;color:#e1ebf7!important;box-sizing:border-box}
       #overallLeaderboardPanel #overallDailyGrid .overall-freshness.is-old-change{background:#3c3540!important;border-color:#a59c7e!important;color:#fff0c6!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-freshness[data-source="snapshot"]{background:#403c2a!important;border-color:#aa945a!important;color:#ffecb4!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-freshness[data-source="cache"]{background:#29446c!important;border-color:#87aed4!important;color:#e2f1ff!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-freshness[data-source="live"]{background:#234b43!important;border-color:#78c4ad!important;color:#d4fff0!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-freshness.is-loading{background:#304d85!important;border-color:#91c4ff!important;color:#fff!important;cursor:wait!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-freshness.is-stale{background:#613b48!important;border-color:#e79fa8!important;color:#ffe3e5!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-freshness:disabled{cursor:default!important;filter:none!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:3!important;grid-row:1!important;display:flex!important;flex-direction:column!important;justify-content:center!important;gap:10px!important;align-self:stretch!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-category-control{position:relative!important;display:flex!important;align-items:center!important;justify-content:center!important;gap:8px!important;min-width:0!important;width:100%!important;height:auto!important;margin:0!important;padding:0!important;border:0!important;background:none!important;overflow:visible!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-category-select{display:flex!important;align-items:center!important;gap:8px!important;flex:0 1 auto!important;min-width:0!important;width:auto!important;height:auto!important;margin:0!important;padding:0!important;background:none!important;border:0!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-category-select>span{flex:none!important;font-size:11px!important;color:#9bdcf3!important}
       #overallLeaderboardPanel #overallDailyGrid .sq-category-trigger{flex:0 1 auto!important;min-width:0!important;width:210px!important;max-width:100%!important;min-height:36px!important;height:auto!important;padding:6px 10px!important;border:1px solid #6686b6!important;background:#263e78!important;font-size:20px!important;text-align:left!important;white-space:normal!important;clip-path:none!important}
+      #overallLeaderboardPanel #overallDailyGrid .sq-category-trigger{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important}
+      #overallLeaderboardPanel #overallDailyGrid .sq-category-label{min-width:0!important;overflow-wrap:anywhere}
+      #overallLeaderboardPanel #overallDailyGrid .sq-category-chevron{flex:none!important;margin-left:auto!important;color:#bcecff!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-category-info{display:flex!important;flex:none!important;align-items:center!important;justify-content:center!important;width:32px!important;height:32px!important;min-height:32px!important;padding:0!important;margin:0!important;border:1px solid #8bdcf3!important;border-radius:0!important;background:#1f3563!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-category-control::after{display:none!important;content:none!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-field-summary{font-size:17px!important;line-height:1.3!important;text-align:center!important;color:#d3e8ff!important;overflow-wrap:anywhere!important}
@@ -2764,7 +2774,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=129',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=130',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -3603,7 +3613,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();openRankedCategoryMenu(trigger);}
       });
     }
-    trigger.textContent=(LEADERBOARD_LABELS[overallCategory]||'Overall RP')+'  ▾';
+    trigger.innerHTML='<span class="sq-category-label">'+escapeHtml(LEADERBOARD_LABELS[overallCategory]||'Overall RP')+'</span><svg class="sq-category-chevron" width="18" height="18" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M4 7l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"/></svg>';
     trigger.setAttribute('aria-label','Rank by '+(LEADERBOARD_LABELS[overallCategory]||'Overall RP'));
   }
   let closeRankedCategoryMenu=null;
@@ -4559,6 +4569,17 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(rankedFreshnessTimer){clearInterval(rankedFreshnessTimer);rankedFreshnessTimer=0;}
   }
   let lastRankedManualRefreshAt = 0;
+  const RANKED_MANUAL_REFRESH_COOLDOWN_MS=120000;
+  let rankedManualRefreshFailed=false,rankedRefreshCooldownTimer=0;
+  function applyRankedRefreshCooldown(button){
+    if(snapshotOnlyForNewAccount())return;
+    const checking=overallCategory==='events'?eventTotalsState.status==='loading':overallLoadState.status==='loading';
+    const remaining=lastRankedManualRefreshAt>0?Math.max(0,RANKED_MANUAL_REFRESH_COOLDOWN_MS-(Date.now()-lastRankedManualRefreshAt)):0;
+    button.disabled=checking||remaining>0;
+    button.setAttribute('aria-disabled',String(button.disabled));
+    button.setAttribute('aria-label',checking?'Checking standings':remaining?'Refresh available in '+durationLabel(remaining):'Refresh standings');
+    if(remaining&&!checking)button.textContent+=' · Retry in '+durationLabel(remaining);
+  }
   function withTimeout(promise, milliseconds, message){
     let timer=0;
     return Promise.race([
@@ -4988,7 +5009,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=129',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=130',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -5008,8 +5029,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=129',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=129',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=129',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=130',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=130',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=130',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -5418,12 +5439,10 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(status){status.textContent=`of ${totalPages}`;status.setAttribute('aria-label',`Page ${overallPage+1} of ${totalPages}. ${count} ${overallCategory==='topTracks'?'tracks':'racers'}${subset?' in your filter':''}.`);status.title=status.getAttribute('aria-label');}
     const fieldSummary=document.getElementById('overallFieldSummary');
     if(fieldSummary){
-      const total=rankedFilterSnapshotMeta.totalEntries,estimated=rankedFilterSnapshotMeta.totalEntriesExact!==true;
       if(overallCategory==='topTracks')fieldSummary.textContent=count+' tracks listed';
-      else if(subset)fieldSummary.textContent=count+' shown / '+rankedFilterResult.sourceCount+' loaded racers';
-      else if(overallCategory!=='events'&&Number.isFinite(total)&&total>count)fieldSummary.textContent=count+' loaded racers · '+(estimated?'~':'')+total+' total';
-      else fieldSummary.textContent=count+' racers loaded';
-      fieldSummary.title='Counts describe the loaded standings. ~ means an estimated total, not complete coverage.';
+      else if(subset)fieldSummary.textContent=count+' racers shown';
+      else fieldSummary.textContent=count+' racers shown';
+      fieldSummary.title='Racers visible in this ranking with your current filters.';
     }
     const notice=document.getElementById('overallDataNotice');
     if(notice){
@@ -6319,12 +6338,12 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
 
   function updateRankedFreshness(){
     const el=document.getElementById('overallFreshness'); if(!el) return;
-    if(overallCategory==='events'){updateEventFreshness(el);return;}
+    if(overallCategory==='events'){updateEventFreshness(el);applyRankedRefreshCooldown(el);return;}
     const status=String(overallLoadState.status||'');
     const snapshotAt=Number(overallLoadState.serverUpdatedAt||overallLoadState.fetchedAt||0)||0;
     const checkedAt=Number(overallLoadState.checkedAt||0)||0;
     const isOld=Boolean(snapshotAt&&Date.now()-snapshotAt>2*60*60*1000);
-    const failed=status==='stale'||status==='error';
+    const failed=status==='stale'||status==='error'||rankedManualRefreshFailed;
     el.className=`overall-freshness ${failed?'is-stale':status==='pending'?'is-pending':status==='loading'?'is-loading':''} ${isOld?'is-old-change':''}`;
     el.dataset.old=String(isOld);
     const parts=[];
@@ -6343,25 +6362,37 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(protectedReads)parts.push(snapshotUnlockLabel());
     const detail=parts.join(' · ');
     el.dataset.fullStatus=detail;
-    el.textContent=protectedReads?'Snapshot · '+snapshotUnlockLabel():status==='loading'?'Checking live standings':failed?'Saved standings · Live unavailable':status==='snapshot'?snapshotCaptureLabel().replace('Snapshot captured','Snapshot').replace(/ ago$/,' old')+' · Refresh':status==='cloud'?'Live checked '+(checkedAt?ageLabel(checkedAt):'just now')+' · Refresh':'Cached · Checked '+ageLabel(checkedAt||snapshotAt)+' · Refresh';
+    const cachedSource=status==='snapshot'?'public-backup':status==='cloud'?'cloud':readOverallSnapshotCache()?.source;
+    const source=cachedSource==='public-backup'?'snapshot':status==='cloud'?'live':'cache';
+    el.dataset.source=source;
+    const sourceName=source==='snapshot'?'Snapshot data':source==='live'?'Live data':'Cached data';
+    const ageAt=source==='snapshot'?(publicSnapshotCapturedAt||snapshotAt):source==='live'?checkedAt:(checkedAt||snapshotAt);
+    const age=ageAt?ageLabel(ageAt).replace(/ ago$/,' old'):'age unknown';
+    el.textContent=protectedReads?'Snapshot data · '+snapshotUnlockLabel():status==='loading'?'Checking live data':sourceName+' · '+age+(failed?' · Refresh failed':'');
     el.title=`${protectedReads?snapshotAccessNotice():'Snapshot = standings bundled with the game, not live. Cached = standings saved on this device. Live = the last cloud response, not a continuous feed. Your newer local PB appears immediately; verification is separate. Select to request live updates.'} ${checkedAt?`Cloud last checked ${ageLabel(checkedAt)}.`:''}`.trim();
     el.title=detail+'. '+el.title;
     syncSnapshotRefreshControl(el);
+    applyRankedRefreshCooldown(el);
     const streakEl=document.getElementById('overallStreakLeader');
     if(streakEl?.dataset.base&&streakEl.dataset.fetchedAt) streakEl.textContent=`${streakEl.dataset.base} · ${ageLabel(Number(streakEl.dataset.fetchedAt))}`;
   }
   function requestRankedRefresh(){
     if(snapshotOnlyForNewAccount()){updateRankedFreshness();return;}
-    if(overallCategory==='events')return fetchEventTotals(true);
-    // Repeated clicks must not start overlapping snapshot loads or rerender the
-    // saved board while an earlier refresh is still in progress.
-    if(overallLoadState.status==='loading'||Date.now()-lastRankedManualRefreshAt<5000){updateRankedFreshness();return;}
-    const snapshotAge=Date.now()-Number(overallLoadState.fetchedAt||0);
-    if(snapshotAge<OVERALL_REFRESH_CHECK_MS&&Date.now()-lastRankedManualRefreshAt<120000&&overallLoadState.status!=='stale'&&overallLoadState.status!=='error'){updateRankedFreshness();return;}
-    lastRankedManualRefreshAt=Date.now();
-    writeJsonStorage(OVERALL_REBUILD_BACKOFF_KEY,0);
-    overallLoadState.nextRefreshAt=0;
-    void openRankedPanel(true);
+    const checking=overallCategory==='events'?Boolean(eventTotalsRequest):overallLoadState.status==='loading';
+    if(checking||(lastRankedManualRefreshAt>0&&Date.now()-lastRankedManualRefreshAt<RANKED_MANUAL_REFRESH_COOLDOWN_MS)){updateRankedFreshness();return;}
+    lastRankedManualRefreshAt=Date.now();rankedManualRefreshFailed=false;
+    clearTimeout(rankedRefreshCooldownTimer);
+    rankedRefreshCooldownTimer=setTimeout(()=>{rankedRefreshCooldownTimer=0;updateRankedFreshness();},RANKED_MANUAL_REFRESH_COOLDOWN_MS+10);
+    const category=overallCategory;
+    if(category!=='events'){writeJsonStorage(OVERALL_REBUILD_BACKOFF_KEY,0);overallLoadState.nextRefreshAt=0;}
+    const request=category==='events'?fetchEventTotals(true):openRankedPanel(true);
+    void Promise.resolve(request).then(()=>{
+      if(overallCategory!==category)return;
+      const state=category==='events'?eventTotalsState:overallLoadState;
+      rankedManualRefreshFailed=!['cloud','pending'].includes(state.status);updateRankedFreshness();
+    }).catch(()=>{if(overallCategory===category){rankedManualRefreshFailed=true;updateRankedFreshness();}});
+    updateRankedFreshness();
+    return request;
   }
   function updateWeightedTrackInsights(entries){
     const el=document.getElementById('overallOpportunities'); if(!el) return;
@@ -6572,7 +6603,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   let snapshotTrackStatistics = {};
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=129').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=130').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
       void reader('track-statistics').then(data=>{if(!data)return;snapshotTrackStatistics=data.tracks;updateTrackFreshnessBanner();}).catch(()=>{});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
@@ -8590,7 +8621,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=129',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:129,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=130',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:130,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);
