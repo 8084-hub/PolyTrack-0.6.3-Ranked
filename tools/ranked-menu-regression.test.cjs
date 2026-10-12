@@ -170,8 +170,18 @@ test('unloaded extra-track metadata never excludes profile or planner finishes',
 });
 
 test('ranked footer keeps all page controls in a compact symmetric desktop grid',()=>{
- assert.ok(source.includes('grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:8px!important;padding:6px 10px!important'));
- assert.ok(source.includes('grid-template-columns:30px 30px minmax(70px,1fr) minmax(76px,auto) 30px 30px!important'));
+ const context=vm.createContext({});
+ vm.runInContext(extract('overallFooterLayoutCss'),context);
+ const css=context.overallFooterLayoutCss();
+ assert.match(css,/grid-template-columns:repeat\(3,minmax\(0,1fr\)\)!important/);
+ assert.match(css,/grid-template-rows:repeat\(2,var\(--footer-row\)\)!important/);
+ assert.match(css,/grid-template-rows:auto!important;grid-auto-rows:auto!important/);
+ assert.match(css,/height:auto!important;flex:0 0 auto!important/);
+ assert.match(css,/overallDailyGrid>div[^}]*padding:0!important/);
+ assert.match(css,/overall-page-status[^}]*grid-column:auto!important;grid-row:1!important/);
+ assert.match(css,/leaderboard-arcade>div[^}]*display:flex!important/);
+ assert.match(css,/@media\(max-width:700px\)[\s\S]*overflow-y:auto!important/);
+ assert.match(source,/rankedPolish\.textContent \+= overallFooterLayoutCss\(\);\s*document\.head\.appendChild\(rankedPolish\)/);
  for(const id of ['overallFirstPage','overallLastPage','overallPageJump'])assert.match(source,new RegExp(`id="${id}"`));
  assert.match(source,/leaderboardArcadeMarkup\(\)/);
 });

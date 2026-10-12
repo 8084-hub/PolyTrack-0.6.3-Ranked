@@ -1535,7 +1535,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function leaderboardArcadeMarkup(){
     const usage=readJsonStorage(LEADERBOARD_USAGE_KEY,{overall:1})||{overall:1};
     const rows=Object.entries(usage).filter(([key])=>LEADERBOARD_LABELS[key]&&!['official','community'].includes(key)).sort((a,b)=>b[1]-a[1]).slice(0,4);
-    return `<div class="leaderboard-arcade" title="Your most-viewed leaderboards are stored only on this device"><span>YOUR FAVORITES</span><div>${rows.map(([key,count])=>`<button type="button" data-leaderboard-shortcut="${escapeHtml(key)}">${escapeHtml(LEADERBOARD_LABELS[key])}<small>${count}</small></button>`).join('')}</div></div>`;
+    return `<div class="leaderboard-arcade" role="group" aria-label="Favorite rankings" title="Your most-viewed leaderboards are stored only on this device"><span>YOUR FAVORITES</span><div>${rows.map(([key,count])=>`<button type="button" data-leaderboard-shortcut="${escapeHtml(key)}">${escapeHtml(LEADERBOARD_LABELS[key])}<small>${count}</small></button>`).join('')}</div></div>`;
   }
 
   const MIN_RANKED_TRACKS=3;
@@ -2313,6 +2313,57 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     }
   }
 
+  function overallFooterLayoutCss(){
+    // Two shared control rows keep the event, pagination, and ranking edges aligned.
+    return `
+      #overallLeaderboardPanel #overallDailyGrid{--footer-row:clamp(44px,calc(48px * var(--sq-ui-scale,1)),60px);display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;align-items:start!important;grid-template-rows:auto!important;grid-auto-rows:auto!important;align-content:start!important;gap:8px!important;padding:8px 10px!important;min-height:0!important;height:auto!important;flex:0 0 auto!important;box-sizing:border-box}
+      #overallLeaderboardPanel #overallDailyGrid>div{min-width:0!important;width:100%!important;margin:0!important;padding:0!important;align-self:start!important;box-sizing:border-box}
+      #overallLeaderboardPanel #overallDailyGrid :is(.overall-challenge-stack,.overall-center-tools,.overall-footer-right){display:grid!important;grid-template-columns:minmax(0,1fr)!important;grid-template-rows:repeat(2,var(--footer-row))!important;align-content:start!important;align-items:stretch!important;gap:6px!important;background:transparent!important;border:0!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1!important;grid-row:1!important;order:0!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:2!important;grid-row:1!important;order:1!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:3!important;grid-row:1!important;order:2!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section{height:100%!important;min-height:0!important;padding:4px 6px!important;grid-template-columns:minmax(0,1fr) 108px!important;gap:6px!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-button{display:grid!important;grid-template-columns:32px minmax(0,1fr)!important;align-items:center!important;gap:6px!important;height:100%!important;min-height:0!important;padding:0!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-copy{display:grid!important;grid-template-rows:10px 17px 12px!important;gap:0!important;min-width:0!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-kicker{font-size:10px!important;line-height:10px!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-track-name{font-size:17px!important;line-height:17px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      #overallLeaderboardPanel #overallDailyGrid .competition-result{font-size:11px!important;line-height:12px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-image{width:32px!important;height:32px!important;min-width:0!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section>small{font-size:10px!important;line-height:1.1!important;padding-left:6px!important}
+      #overallLeaderboardPanel #overallDailyGrid :is(.overall-pager,.overall-freshness,.overall-category-control,.leaderboard-arcade){grid-column:1!important;grid-row:auto!important;align-self:stretch!important;min-width:0!important;width:100%!important;height:100%!important;min-height:0!important;margin:0!important;box-sizing:border-box}
+      #overallLeaderboardPanel #overallDailyGrid .overall-pager{display:grid!important;grid-template-columns:30px 30px minmax(0,1fr) 68px 30px 30px!important;gap:4px!important;padding:4px!important;align-items:stretch!important;border:1px solid #405b92!important;background:#172754!important}
+      #overallLeaderboardPanel #overallDailyGrid :is(.overall-page-button,.overall-page-status){grid-column:auto!important;grid-row:1!important;min-width:0!important;width:100%!important;height:100%!important;min-height:0!important;margin:0!important;box-sizing:border-box}
+      #overallLeaderboardPanel #overallDailyGrid .overall-page-button{padding:0!important;font-size:22px!important;line-height:1!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-page-status{display:flex!important;align-items:center!important;justify-content:center!important;padding:3px!important;white-space:normal!important;font-size:13px!important;line-height:1.15!important;text-align:center}
+      #overallLeaderboardPanel #overallDailyGrid .overall-page-jump-label{display:flex!important;grid-column:auto!important;grid-row:1!important;align-items:center!important;justify-content:center!important;gap:4px!important;padding:2px!important;min-width:0!important;font-size:9px!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-page-jump-label input{width:34px!important;min-width:0!important;min-height:28px!important;padding:2px!important;box-sizing:border-box}
+      #overallLeaderboardPanel #overallDailyGrid .overall-freshness{display:flex!important;align-items:center!important;justify-content:center!important;padding:5px 8px!important;white-space:normal!important;overflow-wrap:anywhere;font-size:13px!important;line-height:1.2!important;text-align:center!important;border:1px solid #405b92!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-freshness::before{flex-shrink:0}
+      #overallLeaderboardPanel #overallDailyGrid .overall-category-control{padding:4px 6px!important;gap:6px!important;border:1px solid #405b92!important;border-left:3px solid #7ee7ff!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-category-select{height:100%!important;min-height:0!important;padding:0!important;gap:6px!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-category-select>select{height:100%!important;min-height:0!important;padding-block:3px!important}
+      #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade{display:flex!important;align-items:stretch!important;justify-content:space-evenly!important;gap:4px!important;padding:4px!important;border:1px solid #405b92!important;background:#172754!important}
+      #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade>span{display:none!important}
+      #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade>div{display:flex!important;align-items:stretch!important;gap:4px!important;width:100%!important;min-width:0!important;height:100%!important}
+      #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade button{flex:1 1 0!important;min-width:0!important;min-height:0!important;margin:0!important;padding:3px!important;white-space:normal!important;line-height:1.15!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-footer-right:has(.overall-track-scope:not([hidden])){grid-template-rows:var(--footer-row) var(--footer-row) auto!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-track-scope:not([hidden]){grid-column:1!important;grid-row:3!important;margin:0!important}
+      @media(min-width:701px) and (max-width:1100px){
+        #overallLeaderboardPanel #overallDailyGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1/-1!important;grid-row:1!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;grid-template-rows:var(--footer-row)!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:1!important;grid-row:2!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:2!important;grid-row:2!important}
+      }
+      @media(max-width:700px){
+        #overallLeaderboardPanel #overallDailyGrid{grid-template-columns:minmax(0,1fr)!important;max-height:34dvh!important;overflow-y:auto!important;padding:6px!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:1!important;grid-row:1!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:1!important;grid-row:2!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1!important;grid-row:3!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-pager{grid-template-columns:28px 28px minmax(0,1fr) 64px 28px 28px!important;gap:3px!important}
+      }
+    `;
+  }
+
   function ensureStyles(){
     if (document.getElementById('polytrack-ext-style')) return;
     const style = document.createElement('style');
@@ -2531,6 +2582,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       .profile-cosmetic-choice.cosmetic-stage-effect-speed .profile-cosmetic-preview i{background:repeating-linear-gradient(115deg,#263d78 0 8px,#a5ddff 9px 11px,#263d78 12px 20px)}.profile-cosmetic-choice.cosmetic-stage-effect-spark .profile-cosmetic-preview i{background:radial-gradient(circle at 30% 40%,#ffe7a0 0 3px,transparent 4px),radial-gradient(circle at 70% 70%,#ffe7a0 0 3px,transparent 4px),#263d78}.profile-cosmetic-choice.cosmetic-stage-effect-halos .profile-cosmetic-preview i{background:radial-gradient(ellipse at center,transparent 25%,#7ee7ff 45%,#263d78 70%)}
       @media(max-width:600px){.profile-cosmetic-group.variant-name>div{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
     `;
+    rankedPolish.textContent += overallFooterLayoutCss();
     document.head.appendChild(rankedPolish);
   }
 
