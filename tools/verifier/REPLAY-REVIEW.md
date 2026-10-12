@@ -108,3 +108,7 @@ that a human entered the controls without assistance.
 from existing audits using two indexed queries. It does not scan normal runs,
 delete audits, alter verdicts, or overwrite decisions. A full page means additional
 historical findings may remain; it is not a complete historical migration.
+
+## Rapid input (review only)
+
+After bound native verification, over 10 press edges on one control in a complete rolling 1,000 ms window may create an input_rate review finding. Releases and held-key OS repeats are not additional presses. Different controls are not summed. Existing clone evidence takes priority. This heuristic neither denies a run nor bans an account; fast tapping may be legitimate. It adds no reference queries, and ordinary unflagged results still do not read or write the review inbox.

@@ -125,3 +125,14 @@ test('real decoded exact clones are denied, near-time matches are review-only, a
     assert.equal(similarityEvidence(selfNear),undefined);
   } finally {await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('rapid-input evidence is integrated without changing a bound verified verdict',async()=>{
+ const lists={up:[0],right:[],down:[],left:Array.from({length:11},(_,i)=>[i*80,i*80+1]).flat(),reset:[]};
+ const parts=Object.values(lists).map(list=>{const b=Buffer.alloc(3+list.length*3);b.writeUIntLE(list.length,0,3);list.forEach((tick,i)=>b.writeUIntLE(tick-(i?list[i-1]:0),3+i*3,3));return b;});
+ const replay=deflateSync(Buffer.concat(parts)).toString('base64url'),hash=createHash('sha256').update(replay).digest('hex'),trackId='5803f9e963625804e3de3246d043dc7dde847aa32e991f7f7326b0453f1fa038';
+ const result={resultId:'rate',status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:2000};
+ await createSimilarityReviewer('/missing-snapshot')([{resultId:'rate',accountId:'a'.repeat(64),trackId,timeMs:2000,replay,replayHash:hash}],[result]);
+ assert.equal(result.status,'verified');assert.equal(similarityEvidence(result).kind,'rapid_input');
+ const wrong={...result,resultId:'wrong',replayHash:'0'.repeat(64)};
+ await createSimilarityReviewer('/missing-snapshot')([{resultId:'wrong',accountId:'a'.repeat(64),trackId,timeMs:2000,replay,replayHash:hash}],[wrong]);assert.equal(similarityEvidence(wrong),undefined);
+});

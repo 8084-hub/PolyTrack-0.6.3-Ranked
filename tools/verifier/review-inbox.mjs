@@ -7,7 +7,7 @@ export function reviewRecord(auditId, job, verdict, evidence) {
     auditId, accountId:job.accountId, trackId:job.trackId, resultId:job.resultId || job.runId,
     ...(typeof job.periodId === 'string' ? {periodId:job.periodId} : {}),
     timeMs:Number.isSafeInteger(job.timeMs)?job.timeMs:null,
-    category:exactDuplicate?'exact_duplicate':evidence?'input_similarity':'verification_mismatch',
+    category:exactDuplicate?'exact_duplicate':evidence?.kind==='rapid_input'?'input_rate':evidence?'input_similarity':'verification_mismatch',
     status:'open', detectedAt:Number.isFinite(verdict.checkedAt)?verdict.checkedAt:Date.now(), addedAt:Date.now(), verdict:verdict.status,
     reason:String(verdict.reason || '').slice(0,100),
     ...(evidence?.trackName ? {trackName:String(evidence.trackName).slice(0,100)} : {}),

@@ -31,7 +31,8 @@ jobs:
         run: node tools/sync-event-catalog.mjs
       - name: Capture bounded public snapshots
         if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 10 * * *'
-        run: node tools/update-public-snapshot.mjs
+        # Only changed/missing trusted normal replays are fetched; bounded to 100 documents.
+        run: node tools/update-public-snapshot.mjs --refresh-replays
       - name: Commit changed assignments
         run: |
           git add -- events/public-catalog.json

@@ -1,3 +1,4 @@
+import {inputRateEvidence} from './input-rate.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
@@ -206,6 +207,11 @@ export function createSimilarityReviewer(root) {
           if(evidence) { setEvidence(row,ref,evidence,Boolean(exact)); break; }
         }
       } catch { /* An optional review must never change physics verification. */ }
+    }
+    for(const row of rows){
+      if(row.result.status!=='verified'||!row.comparisonAllowed||similarityEvidence(row.result))continue;
+      const evidence=inputRateEvidence(row.controls,row.job.timeMs);
+      if(evidence)evidenceByResult.set(row.result,{...evidence,trackName:catalogTrackName(row.job.trackId)});
     }
     return results;
   };

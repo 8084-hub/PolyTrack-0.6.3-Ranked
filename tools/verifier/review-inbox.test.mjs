@@ -31,3 +31,5 @@ test('event advisory evidence is reviewable without converting a verified verdic
     {status:'verified',reason:'native_exact_finish'},{kind:'similar_top_inputs'});
   assert.equal(record.category,'input_similarity');assert.equal(record.verdict,'verified');
 });
+
+test('rapid input stays advisory with its own review category',()=>{const record=reviewRecord('audit',{accountId:'racer',trackId:'track'},{status:'verified',reason:'native_exact_finish'},{kind:'rapid_input'});assert.equal(record.category,'input_rate');assert.equal(record.verdict,'verified');assert.match(record.notice,/not a cheating verdict/);});
