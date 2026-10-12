@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
+import {compareInputSegment} from './segment-similarity.mjs';
 import {readFileSync} from 'node:fs';
 import {decodeSnapshot} from '../snapshot-package.mjs';
 import {VERIFIER_ENGINE_DIGEST,VERIFIER_VERSION} from '../../workers/ranked/src/verification.js';
@@ -183,17 +184,25 @@ export function createSimilarityReviewer(root) {
           if(candidate!==row && candidate.result.status==='verified' && candidate.job.accountId!==job.accountId && Math.abs(candidate.job.timeMs-job.timeMs)<=10) nearby.push(candidate);
           if(nearby.length>=10) break;
         }
+        // A copied opening can survive a deliberately slower finish. Keep this
+        // local comparison bounded to ten same-track references, with near ties first.
+        for(const candidate of rows) {
+          if(nearby.length>=10)break;
+          if(candidate!==row&&candidate.result.status==='verified'&&candidate.job.trackId===job.trackId&&candidate.job.accountId!==job.accountId&&!nearby.includes(candidate))nearby.push(candidate);
+        }
         for(const candidate of nearby.slice(0,10)) {
-          const evidence=compareControls(controls,candidate.controls,job.timeMs,candidate.job.timeMs);
+          const evidence=(Math.abs(job.timeMs-candidate.job.timeMs)<=10?compareControls(controls,candidate.controls,job.timeMs,candidate.job.timeMs):null)
+            || compareInputSegment(controls,candidate.controls,job.timeMs,candidate.job.timeMs);
           if(evidence) {
             setEvidence(row,{...candidate.job,generation:'same_batch'},evidence,false);
             break;
           }
         }
         if(similarityEvidence(result)) continue;
-        for(const ref of (await references(job.trackId)).filter(item=>item.accountId!==job.accountId&&Math.abs(job.timeMs-item.timeMs)<=10)) {
+        for(const ref of (await references(job.trackId)).filter(item=>item.accountId!==job.accountId)) {
           const exact=job.timeMs===ref.timeMs?identicalInformativeInputs(controls,ref.controls,job.timeMs):null;
-          const evidence=exact || compareControls(controls,ref.controls,job.timeMs,ref.timeMs);
+          const evidence=exact || (Math.abs(job.timeMs-ref.timeMs)<=10?compareControls(controls,ref.controls,job.timeMs,ref.timeMs):null)
+            || compareInputSegment(controls,ref.controls,job.timeMs,ref.timeMs);
           if(evidence) { setEvidence(row,ref,evidence,Boolean(exact)); break; }
         }
       } catch { /* An optional review must never change physics verification. */ }

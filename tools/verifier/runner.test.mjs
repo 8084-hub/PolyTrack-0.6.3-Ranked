@@ -26,6 +26,75 @@ test('verified control references require current engine and exact key bindings'
  assert.equal(verifiedControlReference({...slot,controlProof:{...slot.controlProof,key:'mismatch'}},TRACK),null);
 });
 
+test('unavailable retry preserves a matching accepted current-engine slot and proof',async()=>{
+ const key=job.queueKey;
+ const proof={version:1,engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,key,
+  accountId:'racer',trackId:TRACK,timeMs:row.timeMs,replayHash:row.replayHash,signature:'c'.repeat(64),transitions:24,informative:true};
+ const accepted={accountId:'racer',resultId:job.resultId,trackId:TRACK,key,status:'verified',attempts:2,
+  engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,controlProof:proof};
+ const queue={data:{trackId:TRACK,slots:{racer:accepted}},updateTime:'queue-v1'};const reads={queue:0,canonical:0,state:0,audit:0};let writes=0,commits=0;
+ const db={get:async(collection)=>{
+   if(collection===VERIFICATION_COLLECTION){reads.queue++;return queue;}
+   if(collection==='0.6.2_race_results'){reads.canonical++;return {data:row,updateTime:'result-v1'};}
+   if(collection==='0.6.2_s1_worker_jobs'){reads.state++;return {data:{pendingTrackIds:[],pendingResultIds:{}},updateTime:'state-v1'};}
+   if(collection==='0.6.2_s1_verification_audit'){reads.audit++;return null;}
+   return null;
+  },write:(...args)=>{writes++;return args;},call:async()=>{commits++;}};
+ const totals=await publishResults(db,[job],[{resultId:job.resultId,status:'unavailable',reason:'native_engine_error'}]);
+ assert.equal(totals.unavailable,0);
+ assert.equal(totals.deferred,1);
+ assert.equal(totals.reasons.accepted_proof_preserved,1);
+ assert.deepEqual(reads,{queue:1,canonical:1,state:0,audit:0});
+ assert.equal(writes,0);
+ assert.equal(commits,0);
+ assert.equal(queue.data.slots.racer.status,'verified');
+ assert.equal(queue.data.slots.racer.engineDigest,VERIFIER_ENGINE_DIGEST);
+ assert.deepEqual(queue.data.slots.racer.controlProof,proof);
+ assert.equal(queue.data.slots.racer.attempts,2);
+});
+
+test('accepted proof preservation requires a fresh queue and matching current canonical key',async()=>{
+ const key=job.queueKey;
+ const proof={version:1,engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,key,
+  accountId:'racer',trackId:TRACK,timeMs:row.timeMs,replayHash:row.replayHash,signature:'e'.repeat(64),transitions:24,informative:true};
+ const accepted={accountId:'racer',resultId:job.resultId,trackId:TRACK,key,status:'verified',attempts:2,
+  engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,controlProof:proof};
+ const stalePreimage={data:{trackId:TRACK,slots:{racer:{accountId:'racer',resultId:job.resultId,trackId:TRACK,key,status:'waiting',attempts:0}}},updateTime:'queue-stale'};
+ const freshQueue={data:{trackId:TRACK,slots:{racer:accepted,other:{accountId:'other',status:'waiting'}}},updateTime:'queue-fresh'};
+ const changedCanonical={...row,timeMs:row.timeMs+1};const reads={queue:0,state:0,audit:0};let commits=0;
+ const selection=await selectJobs({get:async collection=>collection==='0.6.2_race_results'?{data:row,updateTime:'result-v1'}:null,
+  write:(...args)=>args,call:async()=>{}},[stalePreimage],Date.now());
+ assert.equal(selection.jobs.length,1);
+ const db={get:async(collection)=>{
+   if(collection===VERIFICATION_COLLECTION){reads.queue++;return freshQueue;}
+   if(collection==='0.6.2_race_results')return {data:changedCanonical,updateTime:'result-v2'};
+   if(collection==='0.6.2_s1_worker_jobs'){reads.state++;return {data:{pendingTrackIds:[],pendingResultIds:{}},updateTime:'state-v1'};}
+   if(collection==='0.6.2_s1_verification_audit'){reads.audit++;return null;}
+   return null;
+  },write:(...args)=>args,call:async()=>{commits++;}};
+ const totals=await publishResults(db,selection.jobs,[{resultId:job.resultId,status:'unavailable',reason:'native_engine_error'}]);
+ assert.equal(totals.superseded,1);
+ assert.equal(totals.deferred,0);
+ assert.deepEqual(reads,{queue:1,state:0,audit:0});
+ assert.equal(commits,0);
+ assert.equal(freshQueue.data.slots.racer.status,'verified','the fresh queue contains the concurrent accepted proof');
+});
+
+test('unavailable retry does not preserve a stale-engine control proof',async()=>{
+ const key=job.queueKey;
+ const staleProof={version:1,engineDigest:'stale-engine',verifierVersion:VERIFIER_VERSION,key,
+  accountId:'racer',trackId:TRACK,timeMs:row.timeMs,replayHash:row.replayHash,signature:'d'.repeat(64),transitions:24,informative:true};
+ const accepted={accountId:'racer',resultId:job.resultId,trackId:TRACK,key,status:'verified',attempts:2,
+  engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,controlProof:staleProof};
+ const queue={data:{trackId:TRACK,slots:{racer:accepted}},updateTime:'queue-v1'};let committed;
+ const db={get:async(collection)=>collection===VERIFICATION_COLLECTION?queue:collection==='0.6.2_race_results'?{data:row,updateTime:'result-v1'}:collection==='0.6.2_s1_worker_jobs'?{data:{pendingTrackIds:[],pendingResultIds:{}},updateTime:'state-v1'}:null,
+  write:(collection,id,data,prior)=>({collection,id,data,prior}),call:async(_path,{writes})=>{committed=writes;return {};}};
+ await publishResults(db,[job],[{resultId:job.resultId,status:'unavailable',reason:'native_engine_error'}]);
+ const saved=committed.find(write=>write.collection===VERIFICATION_COLLECTION).data.slots.racer;
+ assert.equal(saved.status,'unavailable');
+ assert.equal(saved.controlProof,undefined);
+});
+
 test('missing leaderboard metadata uses neutral track impact and names verified tracks',async()=>{
  const docs=['unknown-track', 'known-track'].map((trackId,index)=>({data:{trackId,notBefore:index}}));
  const prioritized=await prioritizeQueueDocuments({get:async()=>({data:{trackSummaries:[{trackId:'known-track',weight:0}]}})},docs,100);

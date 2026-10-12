@@ -125,6 +125,57 @@ test('overall pager jumps directly and clamps first/last through bounded page st
  assert.match(source,/event\.target\?\.id!=='overallPageJump'[\s\S]*?jumpOverallPage\(page\)/);
 });
 
+test('best finish uses relative placement and requires a meaningful loaded field weight',()=>{
+ const tracks={large:{type:'official',name:'Large field'},small:{type:'community',name:'Small field'},unknown:{type:'custom',name:'Custom Track'}};
+ const context=vm.createContext({
+  normalizedFinishSamples:entry=>entry.finishes,
+  MIN_MEANINGFUL_FINISH_WEIGHT:.2,
+  knownFinishWeight:finish=>finish.weight,
+  rankedPlacementCost:(rank,field)=>100*(rank-1)/Math.max(1,field-1),
+  trackInfo:id=>tracks[id]||{name:'Custom Track'},
+  escapeHtml:String
+ });
+ vm.runInContext(`${extract('rankedPlacementPercent')};${extract('bestTrackMarkup')};`,context);
+ assert.ok(context.rankedPlacementPercent({rank:3,fieldSize:200})<context.rankedPlacementPercent({rank:2,fieldSize:5}));
+ const summary=context.bestTrackMarkup({finishes:[
+  {trackId:'small',rank:2,fieldSize:5,weight:2},
+  {trackId:'large',rank:3,fieldSize:200,weight:1}
+ ]});
+ assert.match(summary,/<b>Best<\/b> #3 of 200/);
+ assert.match(summary,/<b>Strongest<\/b>/);
+ const ineligible=context.bestTrackMarkup({finishes:[
+  {trackId:'small',rank:1,fieldSize:4,weight:1},
+  {trackId:'small',rank:1,fieldSize:20,weight:.19}
+ ]});
+ assert.match(ineligible,/at least 5 racers and a track weight of 0\.2x or higher/);
+ assert.doesNotMatch(ineligible,/data-track-id=/);
+ const unresolved=context.bestTrackMarkup({finishes:[{trackId:'unknown',rank:1,fieldSize:20,weight:.2}]});
+ assert.match(unresolved,/data-track-id="unknown" title="Open Custom Track"/);
+ assert.match(unresolved,/<b>Best<\/b> #1 of 20/);
+});
+
+test('unloaded extra-track metadata never excludes profile or planner finishes',()=>{
+ const opportunity=extract('profileOpportunityCandidates');
+ const comparison=extract('profileComparisonRoutes');
+ const planner=extract('plannerCategoryAvailability');
+ for(const fn of [opportunity,comparison,planner])assert.doesNotMatch(fn,/isKnownRankedTrackId\(/);
+ assert.match(source,/const cachedFinishes=cachedProfileFinishes\(entry\.userId,entry\);/);
+ const opener=extract('openRankedProfile');
+ const loader=extract('loadExtraTracksCatalog');
+ assert.match(opener,/loadExtraTracksCatalog\(\)\.then\([\s\S]*?openRankedProfile\(userId\)/);
+ assert.match(loader,/fetch\(new URL\('catalog\.json/);
+ assert.doesNotMatch(loader,/db\(\)|\.collection\(/);
+ assert.match(source,/name:'Custom Track', type:'custom'/);
+ assert.match(source,/MIN_MEANINGFUL_FINISH_WEIGHT=\.2/);
+});
+
+test('ranked footer keeps all page controls in a compact symmetric desktop grid',()=>{
+ assert.ok(source.includes('grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:8px!important;padding:6px 10px!important'));
+ assert.ok(source.includes('grid-template-columns:30px 30px minmax(70px,1fr) minmax(76px,auto) 30px 30px!important'));
+ for(const id of ['overallFirstPage','overallLastPage','overallPageJump'])assert.match(source,new RegExp(`id="${id}"`));
+ assert.match(source,/leaderboardArcadeMarkup\(\)/);
+});
+
 test('specific normalized display-name identities are blocked without catching similar handles',()=>{
  const constantsStart=source.indexOf('  const DEFAULT_NAME_BLOCKLIST');
  const constantsEnd=source.indexOf('  function readProfileMap',constantsStart);

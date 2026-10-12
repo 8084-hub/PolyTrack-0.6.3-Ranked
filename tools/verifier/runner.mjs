@@ -197,10 +197,10 @@ export async function publishResults(db, jobs, results) {
     acquiredQueueKeys.add(queueCacheKey);
     for (let attempt = 0; attempt < 3; attempt++) {
       let queue=queueCache.get(queueCacheKey);
-      if(!queueCache.has(queueCacheKey)){
-        queue=attempt===0&&canUseSelectedPreimage?selectedPreimage:await db.get(queueCollection,job.trackId);
+      if(!queueCache.has(queueCacheKey)||result.status==='unavailable'){
+        queue=result.status!=='unavailable'&&attempt===0&&canUseSelectedPreimage?selectedPreimage:await db.get(queueCollection,job.trackId);
+        queueCache.set(queueCacheKey, queue);
       }
-      if (!queueCache.has(queueCacheKey)) queueCache.set(queueCacheKey, queue);
       const current = await db.get('0.6.2_race_results', job.resultId);
       if (!queue || !current || verificationKey(current.data) !== job.queueKey ||
           queue.data.slots?.[job.accountId]?.key !== job.queueKey) {totals.superseded++; break;}
@@ -213,6 +213,12 @@ export async function publishResults(db, jobs, results) {
       if ((candidate && !candidateValid) || (frames !== null && result.status === 'verified' && !candidateValid)) {
         totals.superseded++; break;
       }
+      const existingSlot=queue.data.slots[job.accountId];
+      if(result.status==='unavailable'&&verifiedControlReference(existingSlot,job.trackId)){
+        totals.deferred++;
+        totals.reasons.accepted_proof_preserved=(totals.reasons.accepted_proof_preserved||0)+1;
+        break;
+      }
       const unconfirmed = Boolean(candidateValid && result.status === 'mismatch');
       const publication = unconfirmed ? {...result, status: 'unavailable', reason: 'legacy_time_unconfirmed'} : result;
       const correct = Boolean(candidateValid && result.status === 'verified');
@@ -223,7 +229,8 @@ export async function publishResults(db, jobs, results) {
       const publishedKey = corrected ? verificationKey(corrected) : job.queueKey;
       const state = stateCacheLoaded ? stateCache : await db.get('0.6.2_s1_worker_jobs', 'canonical_reconcile_v2');
       if (!stateCacheLoaded) { stateCache = state; stateCacheLoaded = true; }
-      const {nativeReason: previousNativeReason,controlProof:previousControlProof,...priorSlot} = queue.data.slots[job.accountId];
+      const {nativeReason: previousNativeReason,...priorSlot} = existingSlot;
+      delete priorSlot.controlProof;
       const completed=completedSlot({...priorSlot, key: publishedKey}, publication);
       const nativeControlProof=verifiedControlProof(result);
       const controlProof=publication.status==='verified'&&result.status==='verified'&&nativeControlProof&&

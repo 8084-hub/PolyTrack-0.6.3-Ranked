@@ -9,6 +9,25 @@ import {createHash} from 'node:crypto';
 import {encodeSnapshot} from '../snapshot-package.mjs';
 import {publishResults} from './runner.mjs';
 import {verificationKey,VERIFICATION_COLLECTION,VERIFIER_ENGINE_DIGEST,VERIFIER_VERSION} from '../../workers/ranked/src/verification.js';
+
+test('partial copied inputs flag review without denying physically verified runs',async()=>{
+  const pack=lists=>{
+    const parts=Object.values(lists).map(list=>{
+      const bytes=Buffer.alloc(3+list.length*3);bytes.writeUIntLE(list.length,0,3);
+      list.forEach((tick,i)=>bytes.writeUIntLE(tick-(i?list[i-1]:0),3+i*3,3));return bytes;
+    });return deflateSync(Buffer.concat(parts)).toString('base64url');
+  };
+  const shared={up:[0],right:Array.from({length:12},(_,i)=>100+i*200),down:Array.from({length:12},(_,i)=>200+i*200),left:[],reset:[]};
+  const a={...shared,right:[...shared.right,...Array.from({length:16},(_,i)=>5000+i*100)]};
+  const b={...shared,right:[...shared.right,...Array.from({length:16},(_,i)=>5101+i*131)]};
+  assert.equal(compareControls({lists:a},{lists:b},8000,8001),null);
+  const jobs=[a,b].map((lists,i)=>{
+    const replay=pack(lists);return {resultId:'partial-'+i,accountId:String(i+1).repeat(64),trackId:'a'.repeat(64),timeMs:8000+i*1500,replay,replayHash:createHash('sha256').update(replay).digest('hex')};
+  });
+  const results=jobs.map(j=>({resultId:j.resultId,status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId:j.trackId,timeMs:j.timeMs,replayHash:j.replayHash}));
+  await createSimilarityReviewer('/missing-snapshot')(jobs,results);
+  for(const result of results){assert.equal(result.status,'verified');const evidence=similarityEvidence(result);assert.equal(evidence.kind,'similar_top_inputs');assert.equal(evidence.reviewOnly,true);assert(evidence.matchedChanges>=20);}
+});
 const turns=Array.from({length:24},(_,i)=>100+i*200);
 const controls={lists:{up:[0],right:turns,down:[],left:[],reset:[]}};
 test('complex exact inputs create advisory evidence',()=>{
