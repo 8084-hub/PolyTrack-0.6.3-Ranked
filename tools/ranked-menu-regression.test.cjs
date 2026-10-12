@@ -172,8 +172,8 @@ test('unloaded extra-track metadata never excludes profile or planner finishes',
 test('ranked footer uses content-sized event tiles and keeps scope controls in flow',()=>{
  const context=vm.createContext({});vm.runInContext(extract('overallFooterLayoutCss'),context);
  const css=context.overallFooterLayoutCss();
- assert.match(css,/grid-template-columns:minmax\(300px,\.85fr\) minmax\(0,1\.15fr\)!important/);
- assert.match(css,/overall-challenge-stack[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+ assert.match(css,/grid-template-columns:minmax\(0,1fr\) minmax\(0,\.95fr\) minmax\(0,1fr\)!important/);
+ assert.match(css,/overall-challenge-stack[^}]*grid-template-columns:minmax\(0,1fr\)/);
  assert.match(css,/overall-track-scope:not\(\[hidden\]\)[^}]*position:static!important/);
  assert.match(css,/overall-track-scope\[hidden\][^}]*display:none!important/);
  assert.match(css,/competition-track-name[^}]*width:fit-content!important/);
@@ -223,16 +223,16 @@ test('footer controls explicitly neutralize legacy flex growth in the column lay
  const refresh=css.match(/#overallLeaderboardPanel #overallDailyGrid \.overall-freshness\{([^}]+)\}/)[1];
  assert.match(refresh,/flex:0 0 auto!important/);
  assert.match(refresh,/height:auto!important/);
- assert.match(refresh,/font:16px\/1\.25 ForcedSquare,sans-serif!important/);
+ assert.match(refresh,/font:14px\/1\.25 ForcedSquare,sans-serif!important/);
  const pager=css.match(/#overallLeaderboardPanel #overallDailyGrid \.overall-pager\{([^}]+)\}/)[1];assert.match(pager,/flex:0 0 auto!important/);
- assert.match(css,/competition-result[^}]*text-align:center!important/);
+ assert.match(css,/competition-result[^}]*text-align:left!important/);
  assert.match(css,/section>small[^}]*border:0!important/);
 });
 
-test('event captions override legacy self-alignment and pagination does not stretch to the full column',()=>{
+test('compact event captions follow the original horizontal layout and pagination remains bounded',()=>{
  const ctx=vm.createContext({});vm.runInContext(extract('overallFooterLayoutCss'),ctx);const css=ctx.overallFooterLayoutCss();
  const result=css.match(/#overallLeaderboardPanel #overallDailyGrid \.competition-result\{([^}]+)\}/)[1];
- assert.match(result,/align-self:center!important/);assert.match(result,/text-align:center!important/);
+ assert.match(result,/align-self:flex-start!important/);assert.match(result,/text-align:left!important/);
  const pager=css.match(/#overallLeaderboardPanel #overallDailyGrid \.overall-pager\{([^}]+)\}/)[1];
  assert.match(pager,/width:fit-content!important/);assert.match(pager,/align-self:center!important/);assert.match(pager,/max-width:100%!important/);
 });
