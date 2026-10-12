@@ -52,7 +52,7 @@ const PREPARED_SEVERE_NEEDLES = Object.freeze(
 );
 const UNAMBIGUOUS_EMBEDDED_TERMS = new Set(['nigger','nigga','niglet','niggah','faggot','childporn','csam','killyourself','whitepower','heilhitler','siegheil','gasalljews']);
 const EXPLICIT_COMPOUNDS = Object.freeze([
-  'childtoucher','kidtoucher','minortoucher','babytoucher','kidlover','childlover','minorlover','epsteintouchesme',
+  'epsteintouchesme',
   'touchmedaddy','touchmyclit','fingerme','jerkmeoff','jerkingoff','freenuds',
   'dirtytwink','goldenshower','2girls1cup','2girlsonecup','twogirlsonecup',
   'wreckmybed','periodbloodinmymouth','pissonmyface','shitonme',
@@ -61,6 +61,11 @@ const EXPLICIT_COMPOUNDS = Object.freeze([
   'shoulddie','mustdie','deservetodie','deservestodie','iwillkillyou','youmustdie',
   'killall','cpdealer','cpseller','tradecp'
 ]);
+// Selected terms adapted from Shutterstock, Inc. (2012-2020), LDNOOBW English list:
+// https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words/blob/master/en
+// CC BY 4.0: https://creativecommons.org/licenses/by/4.0/
+// Only these three unambiguous terms are selected; matching and grammar are local adaptations.
+const CURATED_EXPLICIT_TERMS = Object.freeze(['paedophile','anilingus','cunnilingus']);
 const EMBEDDED_UNSAFE_WORDS = Object.freeze([
   'fuck','bitch','cunt','pussy','pussi','penis','cock','dick','porn','retard','rapist','rapsist','raper','clitoris',
   'molester','pedophile','onlyfans','childporn','csam','nigger','nigga','niggah','niglet','shit','dumbass',
@@ -78,10 +83,67 @@ const BENIGN_EMBEDDED_WORDS = Object.freeze({
   penis:['peniston'], pussi:['pussini','pussinboots'], shit:['shitake','shitzu','shittim'], fuk:['fukushima','fukuda','fukui','fukuoka','fukuyama','fukuzawa'],
   killall:['skillall'], nazi:['nazim','nazir'], trump:['trumpet','trumpington']
 });
-const PREPARED_EMBEDDED_RULES = Object.freeze([...new Set(EMBEDDED_UNSAFE_WORDS.concat(EXPLICIT_COMPOUNDS)
+const PREPARED_EMBEDDED_RULES = Object.freeze([...new Set(EMBEDDED_UNSAFE_WORDS.concat(EXPLICIT_COMPOUNDS,CURATED_EXPLICIT_TERMS)
   .map(value=>normalizeNameForCheck(value).replace(/ /g,'')))].map(term=>Object.freeze({term,
     pattern:new RegExp(term.replace(/([a-z0-9])\1*/g,run=>run[0]+'{'+run.length+',}'))
   })));
+// Boundaries preserve ordinary words; optional spaces and elongation cover spelling evasions.
+function contextWords(words) {
+  return '(?:'+words.map(word=>normalizeNameForCheck(word).replace(/ /g,'')
+    .split('').map(letter=>letter+'+').join(' *')).join('|')+')';
+}
+function contextFiller(words, limit = 3) {
+  return '(?:'+contextWords(words)+' *){0,'+limit+'}';
+}
+function contextRule(term, parts, endOnly = false) {
+  return Object.freeze({term,pattern:new RegExp('(?:^| )(?:x+ *)?('+parts.join(' *')+')' +
+    '(?: *x+)?(?='+(endOnly?'$':'$| ')+')')});
+}
+const CHILD_TARGET = contextWords(['children','child','kids','kid','minors','minor','babies','baby','teens','teen']);
+const TOUCH_ACTION = contextWords(['touching','touches','touched','touch','groping','gropes','groped','grope',
+  'fondling','fondles','fondled','fondle','molesting','molests','molested','molest','grooming','grooms','groomed','groom']);
+const ABUSE_ROLE = contextWords(['touchers','toucher','gropers','groper','molesters','molester','groomers','groomer','lovers','lover']);
+const CHILD_FILLER = contextFiller(['the','my','your','our','a','an','all','of','those','these','little','young','very','small']);
+const ACTION_PREFIX = contextFiller(['i','im','iam','we','will','would','want','to','love','like','enjoy','just','please','let','me']);
+const SEXUAL_CONTEXT = contextWords(['sex','sexual','sexually','porn','nudes','nude','naked','erotic']);
+const VIOLENT_ACTION = contextWords(['kill','kills','killing','killed','murder','murders','murdering','murdered',
+  'shoot','shoots','shooting','shot','hang','hangs','hanging','hanged','gas','gasses','gassing','gassed',
+  'exterminate','exterminates','exterminating','exterminated']);
+const VIOLENT_TARGET = contextWords(['men','man','women','woman','males','male','females','female',
+  'boys','boy','girls','girl','kids','kid','children','child','minors','minor','teens','teen',
+  'jews','jew','jewish people','muslims','muslim','christians','christian','hindus','hindu',
+  'asians','asian','blacks','whites','black people','white people','gay people','gays','lesbians',
+  'trans people','transgender people','nonbinary people','nonbinary','immigrants','people','everyone','you']);
+const VIOLENT_FILLER = contextFiller(['all','of','the','those','these','every','last','very','some','young'],4);
+const CONTEXTUAL_NAME_RULES = Object.freeze([
+  contextRule('child-directed-touch',[ACTION_PREFIX,TOUCH_ACTION,CHILD_FILLER,CHILD_TARGET]),
+  contextRule('child-abuse-role',[CHILD_TARGET,CHILD_FILLER,ABUSE_ROLE]),
+  contextRule('child-abuse-role',[ABUSE_ROLE,CHILD_FILLER,CHILD_TARGET]),
+  contextRule('child-directed-touch',[CHILD_TARGET,contextFiller(['who','is','are','was','were','keeps','keep']),
+    TOUCH_ACTION,contextFiller(['by','with','the','my','your']),contextWords(['me','you','him','her','us','them','daddy','adults','adult'])]),
+  contextRule('child-directed-touch',[CHILD_TARGET,contextWords(['is','are','was','were','gets','got','getting','being']),
+    contextFiller(['being','really','just'],2),contextWords(['touched','groped','fondled','molested','groomed'])]),
+  // A trailing action alone is an abuse handle; an object such as Controls or Finish stays distinct.
+  contextRule('child-directed-touch',[CHILD_TARGET,contextFiller(['love','loves','like','likes','to','really']),TOUCH_ACTION],true),
+  // Love by itself never supplies sexual context: KidLovesRacing and ILoveMyKids are ordinary names.
+  contextRule('child-sexual-context',[ACTION_PREFIX,CHILD_TARGET,
+    contextFiller(['who','is','are','wants','want','loves','love','likes','like','needs','need','having','have','has','with','for','and','really','to']),SEXUAL_CONTEXT]),
+  contextRule('child-sexual-context',[SEXUAL_CONTEXT,contextFiller(['with','of','for','the','my','your','little','young']),CHILD_TARGET]),
+  contextRule('targeted-violence',[ACTION_PREFIX,VIOLENT_ACTION,VIOLENT_FILLER,VIOLENT_TARGET]),
+  contextRule('targeted-violence',[VIOLENT_TARGET,contextWords(['should','must','need to','needs to','have to','has to','deserve to','deserves to','will']),
+    contextFiller(['all','really','just'],2),contextWords(['die','be dead','be killed','be murdered','be shot','be hanged','be gassed','be exterminated'])])
+]);
+function contextualNameMatch(comparison) {
+  const base=String(comparison).normalize('NFKC');
+  const spaced=base.replace(/([\p{Ll}\d])(\p{Lu})/gu,'$1 $2').replace(/(\p{Lu})(\p{Lu}\p{Ll})/gu,'$1 $2');
+  const forms=new Set([base,spaced,base.replace(/\d{1,6}$/,''),spaced.replace(/\d{1,6}$/,'')].map(normalizeNameForCheck));
+  for(const normalized of forms)for(const rule of CONTEXTUAL_NAME_RULES){
+    const match=rule.pattern.exec(normalized);
+    if(match)return {term:rule.term,normalized:match[1]};
+  }
+  return null;
+}
+
 const CLEAR_SLUR_ALIASES = /^(?:[xi]*)(?:nijjer|nigher|niigher|nighger|niggef|niggej|nigja|nixxer)(?:[x0-9]*)$/;
 
 
@@ -147,6 +209,8 @@ export function moderatePublicName(value) {
   for (const reserved of PREPARED_RESERVED_NAMES) {
     if (compact === reserved) return decision(true, 'reserved-name', detail('reserved-name', reserved));
   }
+  const contextual=contextualNameMatch(comparison);
+  if(contextual)return decision(true,'contextual-unsafe-phrase',detail('contextual-unsafe-phrase',contextual.term,contextual.normalized));
   for (const term of PREPARED_NAME_TERMS) {
     if (term.phrase && normalized.includes(term.value)) return decision(true, 'unsafe-phrase', detail('unsafe-phrase', term.value));
     if (!term.phrase && tokens.includes(term.value)) return decision(true, 'unsafe-word', detail('unsafe-word', term.value));

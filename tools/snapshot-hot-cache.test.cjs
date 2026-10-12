@@ -6,7 +6,7 @@ const source=fs.readFileSync(require('node:path').join(__dirname,'../polytrack_0
 function fixture(){
   let now=1000,reads=0;
   const data=new Map([['tracks',JSON.stringify({entries:[1]})]]);
-  const context={Map,Set,JSON,Date:{now:()=>now},TRACK_CACHE_KEY:'tracks',OVERALL_CACHE_KEY:'overall',TRACK_LEGACY_CACHE_KEY:'legacy-tracks',OVERALL_BETA_CACHE_KEY:'beta',OVERALL_LEGACY_CACHE_KEY:'legacy-overall',localStorage:{getItem:key=>{reads++;return data.get(key)??null;},setItem:(key,value)=>data.set(key,value)}};
+  const context={Map,Set,JSON,Date:{now:()=>now},TRACK_CACHE_KEY:'tracks',OVERALL_CACHE_KEY:'overall',TRACK_LEGACY_CACHE_KEY:'legacy-tracks',OVERALL_BETA_CACHE_KEY:'beta',OVERALL_LEGACY_CACHE_KEY:'legacy-overall',localStorage:{getItem:key=>{reads++;return data.get(key)??null;},setItem:(key,value)=>data.set(key,value),removeItem:key=>data.delete(key)}};
   vm.createContext(context);
   const start=source.indexOf('  const jsonStorageCache=new Map();');
   const end=source.indexOf('  function readOverallSnapshotCache(){',start);
@@ -35,7 +35,7 @@ test('storage-event invalidation bypasses the read window',()=>{
   const f=fixture();f.context.readJsonStorage('tracks');f.data.set('tracks','{"entries":[4]}');
   vm.runInContext("jsonStorageCache.delete('tracks')",f.context);
   assert.equal(f.context.readJsonStorage('tracks').entries[0],4);
-  assert.match(source,/window\.addEventListener\('storage',event=>\{\s*if\(event\.key===null\)jsonStorageCache\.clear\(\);else jsonStorageCache\.delete\(event\.key\);/);
+  assert.match(source,/if\(event\.key===null\)\{jsonStorageCache\.clear\(\);volatileLeaderboardCache\.clear\(\);\}else\{jsonStorageCache\.delete\(event\.key\);volatileLeaderboardCache\.delete\(event\.key\);\}/);
 });
 test('non-snapshot settings still see direct writes immediately',()=>{
   const f=fixture();f.data.set('settings','{"on":false}');f.context.readJsonStorage('settings');
@@ -45,4 +45,16 @@ test('non-snapshot settings still see direct writes immediately',()=>{
 test('a backwards clock change cannot prolong the short cache window',()=>{
   const f=fixture();f.context.readJsonStorage('tracks');f.data.set('tracks','{"entries":[5]}');f.advance(-100);
   assert.equal(f.context.readJsonStorage('tracks').entries[0],5);
+});
+
+test('oversized derived boards stay available in memory without consuming track storage',()=>{
+ const f=fixture(),next={entries:[],padding:'x'.repeat(262145)};
+ assert.equal(f.context.writeJsonStorage('tracks',next),true);assert.equal(f.data.has('tracks'),false);
+ assert.equal(f.context.readJsonStorage('tracks'),next);
+ const small={entries:[6]};assert.equal(f.context.writeJsonStorage('tracks',small),true);assert.equal(f.context.readJsonStorage('tracks'),small);
+});
+test('a quota-failed cache write keeps the newer board rather than an older persisted copy',()=>{
+ const f=fixture(),next={entries:[9]};f.context.localStorage.setItem=()=>{throw Object.assign(Error('full'),{name:'QuotaExceededError'});};
+ assert.equal(f.context.writeJsonStorage('tracks',next),true);assert.equal(f.context.readJsonStorage('tracks'),next);
+ assert.equal(f.context.writeJsonStorage('settings',{on:true}),false);
 });

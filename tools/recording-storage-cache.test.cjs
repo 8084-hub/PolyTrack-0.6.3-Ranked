@@ -5,7 +5,7 @@ const storeStart=source.indexOf('  function readRecordingStore('),storeEnd=sourc
 assert.ok(cacheStart>=0&&cacheEnd>cacheStart&&storeStart>=0&&storeEnd>storeStart);
 function harness(){
  let parses=0,raw=JSON.stringify({1:{recording:'replay-one',frames:40,verifiedState:1,carStyle:'red'}});
- const context={jsonStorageCache:new Map(),hotSnapshotStorageKeys:new Set(),RECORDING_STORE_KEY:'recordings',localStorage:{getItem:()=>raw},JSON:{parse:text=>{parses++;return JSON.parse(text);}},normalizeReplayPayloadString:x=>x,safePositiveInt:(v,f)=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):f,cleanCarId:x=>x,__pt062NormalizeStyle:x=>x,getDefaultCarStyle:()=> 'default'};
+ const context={jsonStorageCache:new Map(),volatileLeaderboardCache:new Map(),hotSnapshotStorageKeys:new Set(),RECORDING_STORE_KEY:'recordings',localStorage:{getItem:()=>raw},JSON:{parse:text=>{parses++;return JSON.parse(text);}},normalizeReplayPayloadString:x=>x,safePositiveInt:(v,f)=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):f,cleanCarId:x=>x,__pt062NormalizeStyle:x=>x,getDefaultCarStyle:()=> 'default'};
  vm.createContext(context);vm.runInContext(source.slice(cacheStart,cacheEnd)+source.slice(storeStart,storeEnd),context);
  return {read:context.readRecordingStore,parses:()=>parses,setRaw:value=>{raw=value;}};
 }

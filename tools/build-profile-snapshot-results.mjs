@@ -74,11 +74,18 @@ export async function buildProfileSnapshotResults(directory){
     if(publicProfile)rememberIdentity(accountId,publicProfile,0);
     if(publicProfile&&publicStatus)for(const key of ['profileCosmetics','cosmeticUnlocks','serverAchievements','badges','rankTier','rankSince'])
       if(!Object.hasOwn(publicProfile,key)&&Object.hasOwn(publicStatus,key))publicProfile[key]=publicStatus[key];
+    const identity=identities.get(accountId);
+    const profileAt=Math.max(Number(publicProfile?.identityUpdatedAt)||0,Number(publicProfile?.updatedAt)||0);
+    // Reuse newer already-captured public identity; no additional profile reads.
+    if(publicProfile&&identity&&identity.updatedAt>profileAt){
+      for(const key of identityFields)if(Object.hasOwn(identity,key))publicProfile[key]=identity[key];
+      publicProfile.identityUpdatedAt=identity.updatedAt;
+    }
     const value={accountId,updatedAt:Math.max(Number(overall?.updatedAt)||0,...finishes.map(row=>Number(row.cachedAt)||0)),
       capturedAt:summary?.capturedAt||null,results:finishes,expectedEligibleTracks:Number(published.get(accountId)?.raceCount)||0,
       coverage:{boardsPresent:boards,boardsKnown:Number(manifest?.trackIdsKnown)||boards,allTracksCaptured:boards>=Number(manifest?.trackIdsKnown||Infinity)},
       publicProfile};
-    if(value.publicProfile?.profileCosmetics){const at=Number(value.publicProfile.updatedAt)||0;cosmeticEntries[accountId]={at,value:value.publicProfile.profileCosmetics};cosmeticUpdatedAt=Math.max(cosmeticUpdatedAt,at);}
+    if(value.publicProfile?.profileCosmetics){const at=Math.max(Number(value.publicProfile.identityUpdatedAt)||0,Number(value.publicProfile.updatedAt)||0);cosmeticEntries[accountId]={at,value:value.publicProfile.profileCosmetics};cosmeticUpdatedAt=Math.max(cosmeticUpdatedAt,at);}
     const body=JSON.stringify(value)+'\n';if(Buffer.byteLength(body)>2*1024*1024)throw Error('Profile results exceed client limit');
     await fs.writeFile(path.join(output,accountId+'.json'),body);
   }

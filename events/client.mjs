@@ -178,7 +178,7 @@ export function installEvents(bridge){
     if(permanentFetching)return permanentFetching;
     if(now()-permanentAt<300000)return permanent;
     permanentAt=now();permanentFetching=bridge.readPermanent().then(value=>{
-      if(value?.id!=='permanent-rolling-hills'||value.complete!==true||!Array.isArray(value.entries)||value.maxRp!==1001)throw Error('Incomplete permanent event standings');
+      if(value?.id!=='permanent-rolling-hills'||value.kind!=='permanent'||value.trackId!==ROLLING_TRACK_ID||value.complete!==true||!Array.isArray(value.entries)||value.maxRp!==1001)throw Error('Incomplete permanent event standings');
       if(!permanent||value.sourceRevision>=permanent.sourceRevision){permanent=value;cacheWrite(STORE+'-permanent',value);}
       return permanent;
     }).catch(()=>permanent).finally(()=>{permanentFetching=null;tick();});

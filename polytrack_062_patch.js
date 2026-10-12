@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=130',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=133',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='130';
+  const extraCatalogRevision='133';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -357,6 +357,12 @@
     if(saved){if(!saveOnly){saved.click();extraTracksUi?.close();}return;}
     const importButton=[...document.querySelectorAll('.track-selection-ui > .bar > button')].find(button=>button.querySelector('img[src*="import.svg"]'));
     if(!importButton)throw Error('Open Custom Tracks, then try again.');
+    const {reserveTrackSpace}=await import(new URL('../tools/track-import-storage.mjs?v=133',eventsModuleUrl).href);
+    reserveTrackSpace(localStorage,code.length,{onEvict:(key,raw)=>{
+      try{volatileLeaderboardCache.set(key,JSON.parse(raw));}catch{}
+      jsonStorageCache.delete(key);
+    }});
+    if(!isCurrent())return;
     importButton.click();
     let dialog=null;
     for(let attempt=0;attempt<30;attempt++){
@@ -759,6 +765,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     try{sessionStorage.removeItem(RANKED_EDGE_STATE_KEY);}catch{}
   }
   const jsonStorageCache=new Map();
+  const volatileLeaderboardCache=new Map();
   const hotSnapshotStorageKeys=new Set([TRACK_CACHE_KEY,OVERALL_CACHE_KEY,TRACK_LEGACY_CACHE_KEY,OVERALL_BETA_CACHE_KEY,OVERALL_LEGACY_CACHE_KEY]);
   const normalizedOverallSnapshots=new WeakMap();
   let trackCacheGeneration=0;
@@ -768,11 +775,12 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   let localRaceTrackIndexGeneration=-1;
   function readJsonStorage(key, fallback=null){
     try {
+      if(volatileLeaderboardCache.has(key))return volatileLeaderboardCache.get(key) ?? fallback;
       const hit=jsonStorageCache.get(key);
       const checkedAt=Date.now();
       if(hit&&hotSnapshotStorageKeys.has(key)&&checkedAt>=hit.checkedAt&&checkedAt-hit.checkedAt<50)return hit.value ?? fallback;
       const raw=localStorage.getItem(key);
-      if(raw===null||raw===''){jsonStorageCache.delete(key);return fallback;}
+      if(raw===null||raw===''){jsonStorageCache.delete(key);return volatileLeaderboardCache.get(key) ?? fallback;}
       if(hit&&hit.raw===raw){hit.checkedAt=checkedAt;return hit.value ?? fallback;}
       const value=JSON.parse(raw);
       jsonStorageCache.set(key,{raw,value,checkedAt});
@@ -780,7 +788,18 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     } catch { return fallback; }
   }
   function writeJsonStorage(key, value){
-    try { const raw=JSON.stringify(value); localStorage.setItem(key,raw); jsonStorageCache.set(key,{raw,value,checkedAt:Date.now()}); return true; } catch { return false; }
+    try {
+      const raw=JSON.stringify(value);
+      // Keep derived board caches from crowding out user-owned tracks and recordings.
+      if(hotSnapshotStorageKeys.has(key)&&raw.length>262144){
+        volatileLeaderboardCache.set(key,value);localStorage.removeItem(key);jsonStorageCache.delete(key);return true;
+      }
+      localStorage.setItem(key,raw);volatileLeaderboardCache.delete(key);
+      jsonStorageCache.set(key,{raw,value,checkedAt:Date.now()});return true;
+    } catch {
+      if(hotSnapshotStorageKeys.has(key)){volatileLeaderboardCache.set(key,value);return true;}
+      return false;
+    }
   }
   function readOverallSnapshotCache(){
     const cached = readJsonStorage(OVERALL_CACHE_KEY,null) || readJsonStorage(OVERALL_BETA_CACHE_KEY,null) || readJsonStorage(OVERALL_LEGACY_CACHE_KEY,null);
@@ -2774,7 +2793,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=130',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=133',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -3737,15 +3756,26 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(typeof mirrorRankedFilterCategory==='function')mirrorRankedFilterCategory(selected);
     recordLeaderboardUse(selected);
     refreshLeaderboardArcade();
-    const scope=panel.querySelector('#overallTrackScope');
-    if(scope)scope.hidden=selected!=='tracks';
-    if(selected==='tracks')panel.querySelectorAll('[data-track-scope]').forEach((button)=>{const active=button.dataset.trackScope==='all';button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));});
+    syncOverallTrackScope(panel,selected);
     overallPage=0;
     syncCategorySelect(panel);
     renderEntries();
     updateRankedFreshness();
     if(selected==='events')void fetchEventTotals();
     else if(!overallEntriesCache.length)void openRankedPanel();
+  }
+
+  function syncOverallTrackScope(panel,category,selectedScope){
+    const scope=panel?.querySelector('#overallTrackScope');
+    if(!scope)return;
+    const visible=['tracks','official','community'].includes(category);
+    scope.hidden=!visible;
+    const activeScope=selectedScope||(category==='official'?'official':category==='community'?'community':'all');
+    scope.querySelectorAll('[data-track-scope]').forEach((button)=>{
+      const active=visible&&button.dataset.trackScope===activeScope;
+      button.classList.toggle('active',active);
+      button.setAttribute('aria-pressed',String(active));
+    });
   }
 
   function ensurePanel(){
@@ -3798,6 +3828,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         if(typeof mirrorRankedFilterCategory==='function')mirrorRankedFilterCategory(overallCategory);
         recordLeaderboardUse(overallCategory);
         refreshLeaderboardArcade();
+        syncOverallTrackScope(panel,overallCategory);
         overallPage=0;
         const select=panel.querySelector('#overallCategorySelect'); if(select)select.value=overallCategory;
         renderEntries();
@@ -3808,7 +3839,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         const value=String(scope.dataset.trackScope||'all');
         overallCategory=value==='official'?'official':value==='community'?'community':'tracks';
         if(typeof mirrorRankedFilterCategory==='function')mirrorRankedFilterCategory(overallCategory);
-        panel.querySelectorAll('[data-track-scope]').forEach((button)=>{const active=button===scope;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));});
+        syncOverallTrackScope(panel,overallCategory,value);
         overallPage=0;
         renderEntries();
       }
@@ -4781,7 +4812,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       return `<span class="overall-move flat" title="Best and worst loaded placements">Range #${best} to #${worst}</span>`;
     }
     if(overallCategory==='weight')return `<span class="overall-move flat">${races} weighted track${races===1?'':'s'}</span>`;
-    if(overallCategory==='tracks')return `<span class="overall-move flat">${officialCount} official · ${communityCount} community</span>`;
+    if(overallCategory==='tracks')return `<span class="overall-move flat">${officialCount} official · ${communityCount} community · ${Math.max(0,Number(entry?.extraCount||0))} Extra tracks</span>`;
     return '<span class="overall-move flat">No observed change</span>';
   }
 
@@ -4837,16 +4868,19 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     return bestTrackMarkup(entry);
   }
 
-  function compactParticipationMeta(row,races){
+  function rankedTrackParticipationCounts(row){
     const official=Math.max(0,Number(row?.officialCount||0)||0);
     const community=Math.max(0,Number(row?.communityCount||0)||0);
     const custom=Math.max(0,Number(row?.customCount||0)||0);
-    const nonOfficial=community+custom;
-    if(official===races)return `<span>${races} official track${races===1?'':'s'}</span>`;
-    if(custom===races)return `<span>${races} custom track${races===1?'':'s'}</span>`;
-    if(nonOfficial===races)return `<span>${races} community track${races===1?'':'s'}</span>`;
-    const nonOfficialLabel=community>0?'community':'custom';
-    return [official?`<span>${official} official</span>`:'',nonOfficial?`<span>${nonOfficial} ${nonOfficialLabel}</span>`:''].filter(Boolean).join('');
+    const extra=Math.max(0,Number(row?.extraCount||0)||0);
+    return {official,community,extra,otherCustom:Math.max(0,custom-extra)};
+  }
+  function compactParticipationMeta(row,races){
+    const counts=rankedTrackParticipationCounts(row);
+    if(counts.official===races)return `<span>${races} official track${races===1?'':'s'}</span>`;
+    if(counts.official===0&&counts.community===0&&counts.extra>0&&counts.otherCustom===0)return `<span>${counts.extra} Extra track${counts.extra===1?'':'s'}</span>`;
+    if(counts.community===0&&counts.extra===0&&counts.otherCustom===races)return `<span>${races} custom track${races===1?'':'s'}</span>`;
+    return [counts.official?`<span>${counts.official} official</span>`:'',counts.community?`<span>${counts.community} community</span>`:'',counts.extra?`<span>${counts.extra} Extra track${counts.extra===1?'':'s'}</span>`:'',counts.otherCustom?`<span>${counts.otherCustom} other custom</span>`:''].filter(Boolean).join('');
   }
   function bestTrackMarkup(entry){
     const eligible=finish=>Number(finish.rank||0)>0&&Number(finish.fieldSize||0)>=5&&Number(knownFinishWeight(finish)||0)>=MIN_MEANINGFUL_FINISH_WEIGHT;
@@ -5009,7 +5043,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=130',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=133',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -5029,8 +5063,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=130',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=130',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=130',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=133',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=133',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=133',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -5156,7 +5190,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(rankedFiltersSyncing)return;
     if(!result?.available)return;
     const category=result?.filter?.category;
-    if(FILTERABLE_RANKED_CATEGORIES.has(category)&&category!==overallCategory){overallCategory=category;recordLeaderboardUse(category);refreshLeaderboardArcade();syncCategorySelect(document);}
+    if(FILTERABLE_RANKED_CATEGORIES.has(category)&&category!==overallCategory){overallCategory=category;recordLeaderboardUse(category);refreshLeaderboardArcade();syncCategorySelect(document);syncOverallTrackScope(document.getElementById('overallLeaderboardPanel'),category);}
     overallPage=0;
     renderEntries();
   }
@@ -6202,10 +6236,11 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const accountSince=accountCreatedAt?new Date(accountCreatedAt).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}):'Unknown';
     const scoreDelta=Number(entry.scoreDelta||0)||0;
     const scoreChange=scoreDelta<0?`Improved ${formatRp(Math.abs(scoreDelta))} RP`:scoreDelta>0?`Lost ${formatRp(scoreDelta)} RP`:'No saved RP change';
-    const extraCount=Math.max(0,Number(entry.extraCount||0));
-    const otherCustomCount=Math.max(0,Number(entry.customCount||0)-extraCount);
+    const participationCounts=rankedTrackParticipationCounts(entry);
+    const extraCount=participationCounts.extra;
+    const otherCustomCount=participationCounts.otherCustom;
     const savedExtraCount=isSelf?new Set(cachedFinishes.filter(finish=>extraTrackInfoById.has(finish.trackId)).map(finish=>finish.trackId)).size:0;
-    const participation=`${Number(entry.officialCount||0)} official${Number(entry.communityCount||0)?` · ${Number(entry.communityCount)} community`:''}${extraCount?` · ${extraCount} scored Extra`:''}${savedExtraCount>extraCount?` · ${savedExtraCount} saved Extra PBs`:''}${otherCustomCount?` · ${otherCustomCount} other custom`:''}`;
+    const participation=`${participationCounts.official} official${participationCounts.community?` · ${participationCounts.community} community tracks`:''}${extraCount?` · ${extraCount} Extra tracks completed`:''}${savedExtraCount>extraCount?` · ${savedExtraCount} saved Extra PBs`:''}${otherCustomCount?` · ${otherCustomCount} other custom tracks`:''}`;
     const uid=escapeHtml(entry.userId);
     const achievements=profileAchievementMarkup(medals);
     const currentRankSince=snapshotCaptureTimestamp(entry.rankSince);
@@ -6603,7 +6638,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   let snapshotTrackStatistics = {};
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=130').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=133').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
       void reader('track-statistics').then(data=>{if(!data)return;snapshotTrackStatistics=data.tracks;updateTrackFreshnessBanner();}).catch(()=>{});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
@@ -8612,7 +8647,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     setTimeout(()=>{if(document.visibilityState==='visible'&&snapshotOnlyForNewAccount())void readPublicSnapshotBackup('track','5803f9e963625804e3de3246d043dc7dde847aa32e991f7f7326b0453f1fa038');},2000);
     void ensurePersonalFilters();
     window.addEventListener('storage',event=>{
-      if(event.key===null)jsonStorageCache.clear();else jsonStorageCache.delete(event.key);
+      if(event.key===null){jsonStorageCache.clear();volatileLeaderboardCache.clear();}else{jsonStorageCache.delete(event.key);volatileLeaderboardCache.delete(event.key);}
       if(event.key===null||event.key===LOCAL_RACE_STORE_KEY)localRaceGeneration++;
       if(event.key===OVERALL_CACHE_KEY){const saved=readOverallSnapshotCache();if(saved?.entries){overallEntriesCache=saved.entries;setRankedFilterSnapshotMeta(saved,saved.entries.length);}overallCacheGeneration++;}
       else if(event.key===TRACK_CACHE_KEY){trackCacheGeneration++;trackOverlayCache=null;}
@@ -8621,7 +8656,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=130',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:130,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=133',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:133,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);

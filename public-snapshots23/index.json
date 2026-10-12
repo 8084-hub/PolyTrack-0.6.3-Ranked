@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "generation": 22,
+  "generation": 23,
   "encoding": "gzip-xor-a7-v1",
   "files": {
     "archives/2026-09.json": {
-      "path": "60ada2ea3af9bc1dbdee8c89ec4b1d7d5235ed79c85e32baf1594274fc0e4714.bin",
-      "sha256": "60ada2ea3af9bc1dbdee8c89ec4b1d7d5235ed79c85e32baf1594274fc0e4714",
-      "decodedBytes": 6717
+      "path": "69045f2da93720ca47e1384c17f56720c28ae263bbdb9925fc5463cc9db0b442.bin",
+      "sha256": "69045f2da93720ca47e1384c17f56720c28ae263bbdb9925fc5463cc9db0b442",
+      "decodedBytes": 7341
     },
     "archives/2026-10.json": {
-      "path": "6dcf4d03ccee2cdbd07f9dbb0036864b774beb8d1c8624428d843aed5ccd253c.bin",
-      "sha256": "6dcf4d03ccee2cdbd07f9dbb0036864b774beb8d1c8624428d843aed5ccd253c",
-      "decodedBytes": 2832
+      "path": "c037f0fdc4d6eb3dd7eb1924adb259ad6853af0e7805cb1fcac2fe8db7ed1c2b.bin",
+      "sha256": "c037f0fdc4d6eb3dd7eb1924adb259ad6853af0e7805cb1fcac2fe8db7ed1c2b",
+      "decodedBytes": 3092
     },
     "canonical/009fad7fcc215022c6b2dbb2b6de622f07cd88d4930b8e2b6a6b74c1f5de9e44/58604552583457b36b6a098b69ddc5ac97b28cea673fcd7bdbf9247864697545.json": {
       "path": "3e1869b0f5ab70b7343ae81746f4cb828f95ea0452cb3730b5f8c8ea46da99af.bin",

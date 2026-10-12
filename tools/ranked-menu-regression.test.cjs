@@ -269,6 +269,29 @@ test('favorite rankings form two equal columns with clearly labeled local usage 
  assert.match(ctx.leaderboardArcadeMarkup(),/opened 3 times/);
 });
 
+test('track scope is reset for every ranking change and follows tracks categories',()=>{
+ const buttons=['all','official','community'].map(trackScope=>({dataset:{trackScope},active:false,pressed:'false',classList:{toggle(name,value){if(name==='active')this.owner.active=value;},owner:null},setAttribute(name,value){if(name==='aria-pressed')this.pressed=value;}}));
+ buttons.forEach(button=>{button.classList.owner=button;});
+ const scope={hidden:false,querySelectorAll:()=>buttons};
+ const panel={querySelector:selector=>selector==='#overallTrackScope'?scope:null};
+ const context=vm.createContext({});vm.runInContext(extract('syncOverallTrackScope'),context);
+ context.syncOverallTrackScope(panel,'community');assert.equal(scope.hidden,false);assert.deepEqual(buttons.map(button=>button.pressed),['false','false','true']);
+ context.syncOverallTrackScope(panel,'overall');assert.equal(scope.hidden,true);assert.deepEqual(buttons.map(button=>button.pressed),['false','false','false']);
+ context.syncOverallTrackScope(panel,'tracks');assert.equal(scope.hidden,false);assert.deepEqual(buttons.map(button=>button.pressed),['true','false','false']);
+ assert.match(extract('setOverallCategory'),/syncOverallTrackScope\(panel,selected\)/);
+ assert.match(extract('handleRankedFilterChange'),/syncOverallTrackScope\(document\.getElementById\('overallLeaderboardPanel'\),category\)/);
+ assert.match(source,/if\(leaderboardShortcut\)[\s\S]*?syncOverallTrackScope\(panel,overallCategory\)/);
+});
+
+test('Extra completion labels preserve counts above two without counting them as community',()=>{
+ const context=vm.createContext({});vm.runInContext(`${extract('rankedTrackParticipationCounts')};${extract('compactParticipationMeta')};`,context);
+ const onlyExtra=context.compactParticipationMeta({officialCount:0,communityCount:0,customCount:4,extraCount:4},4);
+ assert.match(onlyExtra,/>4 Extra tracks</);assert.doesNotMatch(onlyExtra,/community/);
+ const mixed=context.compactParticipationMeta({officialCount:2,communityCount:1,customCount:4,extraCount:3},7);
+ assert.match(mixed,/1 community/);assert.match(mixed,/3 Extra tracks/);assert.match(mixed,/1 other custom/);
+ assert.deepEqual(JSON.parse(JSON.stringify(context.rankedTrackParticipationCounts({customCount:4,extraCount:3}))),{official:0,community:0,extra:3,otherCustom:1});
+});
+
 test('footer counts distinguish loaded standings from estimated totals and do not read the cloud',()=>{
  const fn=extract('updateOverallPager');assert.match(fn,/racers shown/);assert.doesNotMatch(fn,/estimated\?'~'/);assert.match(fn,/tracks listed/);assert.doesNotMatch(fn,/fetch\(|db\(|\.collection\(/);
  const cssCtx=vm.createContext({});vm.runInContext(extract('overallFooterLayoutCss'),cssCtx);const css=cssCtx.overallFooterLayoutCss();

@@ -20,6 +20,14 @@ const blockedNames = [
   'period blood in my mouth',
   'kidtoucher',
   'childtoucher',
+  'touch my kid',
+  'touch my child',
+  'kid touches me',
+  'child touches me',
+  'kid loves sex',
+  'child loves sex',
+  'kids love sex',
+  'children love sex',
   'child lover',
   'minor lover',
   'epstein touches me',
@@ -98,6 +106,17 @@ test('new compound rules generalize across padding, elongation, formatting, and 
     const verdict=moderatePublicName(name);assert.equal(verdict.blocked,true,name);assert.ok(verdict.match,name);
   }
   for(const name of ['ni𝕘𝕘er','ni\u1AB0gger','f\uFE0Fuck'])assert.equal(moderatePublicName(name).blocked,true,name);
+});
+
+test('child-directed sexual compounds block obfuscations without penalizing benign racing names',()=>{
+  for(const name of ['touch-my-kid','tоuchMyChild','k1dL0vesS3x','childlovessex','kids-love-sex']) {
+    const verdict=moderatePublicName(name);
+    assert.equal(verdict.blocked,true,name);
+    assert.ok(verdict.match,name);
+  }
+  for(const name of ['KidLovesRacing','KidLovesDrifting','ChildRacer','KidsLoveRacing']) {
+    assert.equal(moderatePublicName(name).blocked,false,name);
+  }
 });
 
 test('obfuscation and lexical exceptions never exempt a different unsafe section',()=>{

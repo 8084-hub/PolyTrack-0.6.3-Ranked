@@ -78,6 +78,25 @@ test('archive cards prefer safe period artwork and expose accessible cached stan
   assert.deepEqual(descendants(card, node => node.className === 'sq-archive-winner').map(node => node.textContent), ['Winner Fast Racer 0:01.234']);
 });
 
+test('archive cards reject standings bound to a different event, track, or kind', async () => {
+  const { root } = archiveFixture();
+  const period = { id: 'kodub-week', kind: 'kodub', trackId: 'a'.repeat(64), endsAt: 100, racerCount: 1 };
+  const wrong = { period: { id: 'other-week', kind: 'kodub', trackId: period.trackId }, entries: [{ accountId: 'wrong', timeMs: 900 }] };
+  let loads = 0;
+  mountArchiveView(root, {
+    periods: [period], snapshots: new Map([[period.id, wrong]]),
+    loadSnapshot: async () => { loads++; return { period: { ...period, trackId: 'b'.repeat(64) }, entries: [] }; }
+  });
+  const card = descendants(root, node => node.tagName === 'DETAILS')[0];
+  assert.equal(descendants(card, node => node.className === 'sq-event-winner').length, 0);
+  card.open = true;
+  card.emit('toggle');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(loads, 1);
+  assert.match(card.textContent, /could not be loaded/);
+  assert.doesNotMatch(card.textContent, /wrong/);
+});
+
 test('unsafe or missing period artwork falls back to bridge thumbnail and snapshots stay lazy', async () => {
   const { root } = archiveFixture();
   const period = { id: 'past', kind: 'weekly', endsAt: 100, maxRp: 500, coverUrl: 'javascript:alert(1)' };

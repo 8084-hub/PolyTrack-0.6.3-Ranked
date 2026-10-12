@@ -21,6 +21,14 @@ function validEntries(snapshot) {
     : [];
 }
 
+function snapshotMatchesPeriod(snapshot, period) {
+  if (!snapshot || !Array.isArray(snapshot.entries)) return false;
+  if (!period.trackId) return true;
+  return snapshot.period?.id === period.id &&
+    snapshot.period.trackId === period.trackId &&
+    snapshot.period.kind === period.kind;
+}
+
 function isPending(row) {
   return row.pending === true || row.status === 'pending';
 }
@@ -384,11 +392,11 @@ export function mountArchiveView(root, options = {}) {
       renderRows(document, results, counts.verifiedEntries, formatTime, options.accountId || '');
       renderStats(document, stats, visiblePeriods(), snapshots);
     };
-    if (snapshots.has(period.id)) showSnapshot(snapshots.get(period.id));
+    if (snapshots.has(period.id) && snapshotMatchesPeriod(snapshots.get(period.id), period)) showSnapshot(snapshots.get(period.id));
 
     details.addEventListener('toggle', () => {
       if (details.classList.contains('sq-archive-event-empty')) { details.open = false; return; }
-      if (!details.open || snapshots.has(period.id) || loading) return;
+      if (!details.open || snapshots.has(period.id) && snapshotMatchesPeriod(snapshots.get(period.id), period) || loading) return;
       if (!loadSnapshot) {
         results.replaceChildren();
         appendText(document, results, 'p', 'sq-archive-error', 'Final standings are unavailable in this view.');
@@ -398,7 +406,7 @@ export function mountArchiveView(root, options = {}) {
       appendText(document, results, 'p', 'sq-archive-loading', 'Loading final standings...');
       loading = Promise.resolve(loadSnapshot(period))
         .then(snapshot => {
-          if (!snapshot || !Array.isArray(snapshot.entries)) throw new Error('Invalid archive snapshot');
+          if (!snapshotMatchesPeriod(snapshot, period)) throw new Error('Invalid archive snapshot');
           showSnapshot(snapshot);
         })
         .catch(() => {

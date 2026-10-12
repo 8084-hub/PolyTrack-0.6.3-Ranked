@@ -520,7 +520,7 @@ test('Ranked footer replaces legacy targets with exact catalog assignments witho
  });
  assert.equal(await p.evaluate(()=>catalogReads),await p.evaluate(()=>beforeFooterReads));
  assert.equal(await p.locator('.daily-card button').getAttribute('data-event-id'),'daily-shared');assert.equal(await p.locator('.weekly-cup button').getAttribute('data-event-id'),'weekly-shared');
- assert.equal(await p.locator('.daily-card button').getAttribute('data-track-id'),null);assert.match(await p.locator('.daily-card small').innerText(),/Local/);assert.doesNotMatch(await p.locator('#overallLeaderboardPanel').innerText(),/Wrong|Normal result/);
+ assert.equal(await p.locator('.daily-card button').getAttribute('data-track-id'),null);assert.match(await p.locator('.daily-card small').innerText(),/Resets/);assert.doesNotMatch(await p.locator('.daily-card').innerText(),/UTC/);assert.doesNotMatch(await p.locator('#overallLeaderboardPanel').innerText(),/Wrong|Normal result/);
  await p.locator('.daily-card button').click();await p.waitForFunction(()=>!!window.car);await p.evaluate(()=>car.finish(20000));await p.waitForFunction(()=>submits.length===2);assert.deepEqual(await p.evaluate(()=>submits.map(run=>run.periodId).sort()),['daily-shared','weekly-shared']);
 });
 test('ordinary Rolling Hills display stays normal but its finish credits the matching weekly event',async t=>{
@@ -564,7 +564,7 @@ test('live and archived event browser fits phone, tablet and desktop without hor
  // actual cascade, not an isolated dialog that cannot expose selector clashes.
  const globals=nativeBundle.match(/`(:root \{[^`]*html, body[^`]*)`/)[1].replace(/\\n/g,'\n').replace(/\\t/g,'\t').replace(/\$\{[^}]*\}/g,'');
  await p.addStyleTag({content:globals});
- await p.evaluate(source=>eval('('+source+')')(),section('  function ensureStyles(){','  function setUnofficialMessage(){'));
+ await p.evaluate(source=>eval('(()=>{'+source+';return ensureStyles})()')(),functionSource('overallFooterLayoutCss')+'\n'+section('  function ensureStyles(){','  function setUnofficialMessage(){'));
  await p.evaluate(source=>{
   const trackInfo=()=>({name:'Custom event preview',type:'custom'});
   const escapeHtml=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

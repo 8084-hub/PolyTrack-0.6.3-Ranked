@@ -33,6 +33,8 @@ test('reserved public role names remain displayable and URLs remain hidden',()=>
 test('requested exact-name policy is shared without importing the broad server blocklist',()=>{
   for(const value of ['Kim Jong Un','K1m-J0ng_Un','Kim-J0ng-Un99','Ngr@chio445','Ngrachio44599','N1gervaan','St3ph3n_H4wk1ng','Stephen_Hawking123'])
     assert.equal(publicDisplayName(value),'Racer',value);
-  for(const value of ['BLACKBEAUTY','Stephen Hawking fan','Kim Jong Un fan'])
+  // The shared political-reference policy also rejects political fan handles.
+  assert.equal(publicDisplayName('Kim Jong Un fan'),'Racer');
+  for(const value of ['BLACKBEAUTY','Stephen Hawking fan'])
     assert.equal(publicDisplayName(value),value,value);
 });

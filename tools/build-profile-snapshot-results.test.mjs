@@ -78,3 +78,20 @@ test('profile results fall back to public overall cosmetics and status when prof
   const directory=JSON.parse(await fs.readFile(path.join(root,'cosmetic-directory.json')));
   assert.deepEqual(directory.entries[accountId].value,profileCosmetics);
 });
+
+test('newer captured identity updates profile results and cosmetics without changing unrelated status',async t=>{
+ const root=await fixture(t);await fs.mkdir(path.join(root,'profiles'));
+ await fs.writeFile(path.join(root,'profiles',accountId+'.json'),JSON.stringify({accountId,updatedAt:100,name:'Old racer',profileCosmetics:{theme:'crimson'},badges:{betaTester:true}}));
+ await fs.writeFile(path.join(root,'tracks',trackId+'.json'),JSON.stringify({trackId,updatedAt:999,entries:[{accountId,timeMs:123,identityUpdatedAt:200,name:'New racer',carColors:'new',profileCosmetics:{theme:'cyan',ownerUid:'private'}}]}));
+ await buildProfileSnapshotResults(root);
+ const profile=JSON.parse(await fs.readFile(path.join(root,'profile-results',accountId+'.json'))).publicProfile;
+ assert.equal(profile.name,'New racer');assert.equal(profile.carColors,'new');assert.equal(profile.updatedAt,100);assert.equal(profile.identityUpdatedAt,200);assert.deepEqual(profile.badges,{betaTester:true});assert.deepEqual(profile.profileCosmetics,{theme:'cyan'});
+ const cosmetics=JSON.parse(await fs.readFile(path.join(root,'cosmetic-directory.json')));assert.deepEqual(cosmetics.entries[accountId],{at:200,value:{theme:'cyan'}});
+});
+test('rebuilding a board does not overwrite a newer exported profile identity',async t=>{
+ const root=await fixture(t);await fs.mkdir(path.join(root,'profiles'));
+ await fs.writeFile(path.join(root,'profiles',accountId+'.json'),JSON.stringify({accountId,updatedAt:500,name:'Current racer',profileCosmetics:{theme:'cyan'}}));
+ await fs.writeFile(path.join(root,'tracks',trackId+'.json'),JSON.stringify({trackId,updatedAt:999,entries:[{accountId,timeMs:123,identityUpdatedAt:100,name:'Old racer',profileCosmetics:{theme:'crimson'}}]}));
+ await buildProfileSnapshotResults(root);const profile=JSON.parse(await fs.readFile(path.join(root,'profile-results',accountId+'.json'))).publicProfile;
+ assert.equal(profile.name,'Current racer');assert.deepEqual(profile.profileCosmetics,{theme:'cyan'});
+});
