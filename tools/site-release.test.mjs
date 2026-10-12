@@ -37,3 +37,10 @@ test('placement module changes receive the client release cache key',()=>{
   const input=patch+"const placements=new URL('../tools/record-placement.mjs?v=109',eventsModuleUrl).href;";
   assert.match(stampClientRelease(input,index,110).patch,/record-placement\.mjs\?v=110/);
 });
+
+test('shared name-policy changes receive the same cache key as the client',()=>{
+  const html='<script src="./public-name-policy.js?v=120"></script>'+index;
+  const result=stampClientRelease(patch,html,122);
+  assert.match(result.index,/public-name-policy\.js\?v=122/);
+  assert.deepEqual(stampClientRelease(result.patch,result.index,122),result);
+});

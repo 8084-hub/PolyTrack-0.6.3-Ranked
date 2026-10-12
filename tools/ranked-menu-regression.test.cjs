@@ -174,7 +174,7 @@ test('ranked footer keeps all page controls in a compact symmetric desktop grid'
  vm.runInContext(extract('overallFooterLayoutCss'),context);
  const css=context.overallFooterLayoutCss();
  assert.match(css,/grid-template-columns:repeat\(3,minmax\(0,1fr\)\)!important/);
- assert.match(css,/grid-template-rows:repeat\(2,var\(--footer-row\)\)!important/);
+ assert.match(css,/grid-template-rows:repeat\(2,minmax\(var\(--footer-row\),auto\)\)!important/);
  assert.match(css,/grid-template-rows:auto!important;grid-auto-rows:auto!important/);
  assert.match(css,/height:auto!important;flex:0 0 auto!important/);
  assert.match(css,/overallDailyGrid>div[^}]*padding:0!important/);

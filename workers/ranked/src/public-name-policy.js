@@ -1,7 +1,7 @@
 const PROFILE_NAME_WORD_A = ['swift','neon','alpha','turbo','sonic','pixel','nova','lucky','sunny','frost','ember','quantum','crystal','midnight','solar','lunar','hyper','ultra','aero','rapid','vivid','thunder','cosmic','silver','golden','shadow','arc','vector','iron','onyx','starlit','cobalt','ripple','granite','jungle','desert','arctic','magenta','scarlet','violet','teal','sable','amber','jade','ivory','obsidian','cinder','stellar','orbital','zen','rogue','prime','apex','summit','embered','misty','horizon','aurora','glitch','byte','laser','prism','halo','north','south','east','west','tempo','axle','torque','nitro','clutch','summoner','phantom','eclipse','cyclone','monsoon','titan','pegasus','raven','falcon','lynx','otter','comfy','bouncy','cheery','zippy','daring','brisk','fuzzy','mellow','witty','snappy'];
 const PROFILE_NAME_WORD_B = ['racer','drift','pulse','track','echo','comet','storm','shift','vault','spark','dash','glide','runner','rocket','flare','nexus','voyage','blaze','orbit','flux','drive','streak','zenith','quartz','radar','pilot','charger','phantom','matrix','engine','jumper','hopper','sprinter','raider','seeker','keeper','walker','slider','cruiser','strider','booster','chaser','panther','falcon','otter','fox','rhino','yak','wizard','knight','samurai','sage','ranger','captain','doctor','baron','duke','rookie','veteran','legend','maverick','stomper','breaker','spirit','beacon','anchor','vector','module','kernel','vortex','quasar','galaxy','planet','meteor','asteroid','volcano','tsunami','whirl','tempest','charge','vertex','pixel','bit','byte','gear','piston','engineer','driver','rider','climber','surfer','skater','sniper','ace'];
 const DEFAULT_NAME_BLOCKLIST = ["admin","moderator","owner","staff","support","system","dev","developer","verified","helper","official","security","abuse","abuser","anal","anus","arse","arsehole","ass","assbag","assclown","assface","assfuck","assfucker","asshat","asshole","assholes","asslicker","asswipe","ballsack","bastard","bastards","beaner","bestiality","bitch","bitches","bitchy","blowjob","blowjobs","bollock","bollocks","boner","boob","boobs","booty","brothel","bullshit","buttfuck","butthole","cameltoe","chink","clit","clitoris","cock","cocks","coon","crap","cum","cumming","cunt","cunts","dick","dicks","dildo","dildos","dipshit","doggystyle","douche","douchebag","dyke","fag","faggot","faggots","feck","fellatio","fingerbang","fuck","fucked","fucker","fuckers","fuckface","fucking","fuckoff","fuckwit","fuk","gangbang","gaylord","genitals","gook","handjob","hardcore","hentai","hitler","hoe","hoes","horny","incest","jailbait","jackass","jerkoff","jizz","kike","kkk","kunt","lesbo","loli","masturbate","masturbation","milf","motherfucker","motherfucking","muff","nazi","nazism","necrophilia","negro","nigga","niggah","nigger","niggers","niglet","nipple","nipples","nutjob","orgasm","orgy","pedo","pedophile","penis","piss","pissed","pisser","playboy","poon","poop","porn","porno","pornhub","prostitute","pussy","queef","raped","raper","rapist","rape","retard","rimjob","scrotum","sex","sexy","shit","shits","shitty","shota","sissy","skank","slut","sluts","smegma","spic","spunk","strapon","suck","sucks","testicle","threesome","tit","tits","titties","titty","tranny","twat","vag","vagina","vibrator","virgin","voyeur","wank","wanker","whore","whores","wtf","xxx","xrated","yaoi","zoophile","zoophilia","alqaeda","isis","terrorist","swastika","1488","molest","molester","underage","childporn","cp","suicide","killyourself","kys","racist","racism","whitepower","wetback","spick","gimp","cripple","idiot","moron","stupid","dumbass","shithead","cumdumpster","cumshot","cumslut","deepthroat","fisting","gangrape","gfy","goatse","groomer","hooker","hotsex","humping","jackoff","motherfucker","nutsack","pecker","peehole","peeing","pussylicking","rectum","scat","semen","sexcam","sexchat","sexworker","shemale","slapper","sodomize","sodomy","tard","teabagging","towelhead","tubgirl","unclefucker","upskirt","urethra","urine","vulva","wigger","willy","yid"];
-const MODERN_HIGH_RISK_TERMS = ['gooning','gooner','goonette','edging','edgeplay','gyatt','gyat','onlyfans','ofans','discordmod','heilhitler','gasjews','gas all jews','sieg heil','killall','kms','killyourself','kys','unaliveyourself','csam','cporn','childlover','minorlover','lolicon','shotacon'];
+const MODERN_HIGH_RISK_TERMS = ['merde','mierda','scheisse','kurwa','pendejo','cabron','joder','chingada','cocaine','heroin','fentanyl','gooning','gooner','goonette','edging','edgeplay','gyatt','gyat','onlyfans','ofans','discordmod','heilhitler','gasjews','gas all jews','sieg heil','killall','kms','killyourself','kys','unaliveyourself','csam','cporn','childlover','minorlover','lolicon','shotacon'];
 const COMPACT_SEVERE_TERMS = ['nigger','niggre','nigre','nigga','niggah','niglet','faggot','chink','kike','spic','wetback','beaner','coon','gook','tranny','fuck','bitch','cunt','rape','rapist','pedophile','molester','childporn','csam','killyourself','whitepower','heilhitler','siegheil','gasalljews','bestiality','necrophilia','jailbait','cumdumpster','pornhub','onlyfans','gooning','masterbait','masterbaiting','masterofbaiting'];
 const RESERVED_NAME_TERMS = ['admin','administrator','moderator','modteam','owner','staff','support','system','developer','devteam','verified','official','staticquasar931'];
 const TARGETED_EXACT_NAMES = Object.freeze(['Kim Jong Un','Ngrachio445','Nigervaan','Stephen Hawking']
@@ -16,14 +16,21 @@ export function sanitizeDisplayName(value) {
 
 export function normalizeNameForCheck(value) {
   const confusables = {
-    'а':'a','в':'b','с':'c','е':'e','н':'h','і':'i','ј':'j','к':'k','м':'m','о':'o','р':'p','ѕ':'s','т':'t','у':'y','х':'x',
-    'α':'a','β':'b','ε':'e','ι':'i','κ':'k','ο':'o','ρ':'p','τ':'t','υ':'y','χ':'x',
+    'а':'a','в':'b','с':'c','е':'e','н':'h','і':'i','ј':'j','к':'k','м':'m','о':'o','р':'p','ѕ':'s','т':'t','у':'y','х':'x','ı':'i',
+    'α':'a','β':'b','ε':'e','ι':'i','κ':'k','ο':'o','ρ':'p','τ':'t','υ':'u','χ':'x',
     // Small-cap and phonetic Latin letters commonly used as font-style swaps.
-    'ɢ':'g','ɡ':'g','ɪ':'i','ᴋ':'k','ᴍ':'m','ɴ':'n','ᴏ':'o','ᴘ':'p','ʀ':'r','ᴛ':'t','ᴜ':'u','ᴠ':'v','ᴡ':'w',
+    'ß':'ss','ʃ':'f','ƒ':'f','ƈ':'c','ɦ':'h','ɢ':'g','ɡ':'g','ɪ':'i','ᴋ':'k','ᴍ':'m','ɴ':'n','ᴏ':'o','ᴘ':'p','ʀ':'r','ᴛ':'t','ᴜ':'u','ᴠ':'v','ᴡ':'w',
     // Additional high-confidence cross-script lookalikes used in Latin text.
     'ԁ':'d','ԛ':'q','ժ':'h','ս':'u','ո':'n','օ':'o','ր':'r','ᴄ':'c','ᴅ':'d','ᴇ':'e','ғ':'f','н':'h','ᴊ':'j','ʟ':'l'
   };
-  return Array.from(String(value || '').normalize('NFKD').toLowerCase().replace(/[\u0300-\u036f]/g, ''), char => confusables[char] || char).join('')
+  // Enclosed emoji letters do not all have compatibility decompositions.
+  const visibleLetters=Array.from(String(value||''),char=>{
+    const code=char.codePointAt(0);
+    for(const start of [0x1f130,0x1f150,0x1f170,0x1f1e6])if(code>=start&&code<start+26)return String.fromCharCode(97+code-start);
+    return char;
+  }).join('');
+  // Preserve the c-shaped lunate sigma's visual meaning before NFKD turns it into ordinary sigma.
+  return Array.from(visibleLetters.replace(/[ϲϹ]/g,'c').replace(/Υ/g,'Y').normalize('NFKD').toLowerCase().replace(/[\u0300-\u036f]/g, ''), char => confusables[char] || char).join('')
     .replace(/[@4]/g, 'a').replace(/[8]/g, 'b').replace(/[3]/g, 'e')
     .replace(/[1!|]/g, 'i').replace(/[0]/g, 'o').replace(/[5$]/g, 's')
     .replace(/[7+]/g, 't').replace(/[^a-z0-9Ѐ-ӿ぀-ヿ一-鿿]+/g, ' ')
@@ -33,7 +40,8 @@ export function normalizeNameForCheck(value) {
 const PREPARED_NAME_TERMS = Object.freeze(
   DEFAULT_NAME_BLOCKLIST.concat(MODERN_HIGH_RISK_TERMS)
     .map(normalizeNameForCheck)
-    .filter(Boolean)
+    // CP alone is also a checkpoint abbreviation; explicit abuse compounds are checked separately.
+    .filter(value=>Boolean(value)&&value!=='cp')
     .map(value => Object.freeze({ value, phrase: value.includes(' ') }))
 );
 const PREPARED_RESERVED_NAMES = Object.freeze(
@@ -43,9 +51,74 @@ const PREPARED_SEVERE_NEEDLES = Object.freeze(
   COMPACT_SEVERE_TERMS.map(value => normalizeNameForCheck(value).replace(/ /g, '')).filter(value => value.length >= 4)
 );
 const UNAMBIGUOUS_EMBEDDED_TERMS = new Set(['nigger','nigga','niglet','niggah','faggot','childporn','csam','killyourself','whitepower','heilhitler','siegheil','gasalljews']);
+const EXPLICIT_COMPOUNDS = Object.freeze([
+  'childtoucher','kidtoucher','minortoucher','babytoucher','kidlover','childlover','minorlover','epsteintouchesme',
+  'touchmedaddy','touchmyclit','fingerme','jerkmeoff','jerkingoff','freenuds',
+  'dirtytwink','goldenshower','2girls1cup','2girlsonecup','twogirlsonecup',
+  'wreckmybed','periodbloodinmymouth','pissonmyface','shitonme',
+  'womantoucher','womentoucher','imgoingtotouchyou','refard','rapsist',
+  'breedme','spankme','sitonmyface','sendnakedpics','nakedchildren','nakedkids','teenporn',
+  'shoulddie','mustdie','deservetodie','deservestodie','iwillkillyou','youmustdie',
+  'killall','cpdealer','cpseller','tradecp'
+]);
+const EMBEDDED_UNSAFE_WORDS = Object.freeze([
+  'fuck','bitch','cunt','pussy','pussi','penis','cock','dick','porn','retard','rapist','rapsist','raper','clitoris',
+  'molester','pedophile','onlyfans','childporn','csam','nigger','nigga','niggah','niglet','shit','dumbass',
+  'nude','faggot','cumshot','cumdumpster','cumslut','blowjob','handjob','nudes',
+  'epstein','hitler','biden','obama','putin','trump','nazi','swastika','hentai','jailbait','lolicon','shotacon','zoophile','zoophilia',
+  'necrophilia','bestiality','dildo','masturbat','orgasm','gangbang','rimjob','fisting',
+  'incest','jizz','scrotum','testicle','vagina','vulva','nipple','boobs','titties',
+  'fuk','fuq','phuck','phuk','fvck','fck','b1tch','biatch','bytch','kunt','nixxer'
+]);
+// Protect innocent lexical matches, not entire names: another unsafe part still blocks.
+const BENIGN_EMBEDDED_WORDS = Object.freeze({
+  cunt:['scunthorpe'], rape:['grape','drape','scrape'], rapist:['therapist'], raper:['rapper','draper','scraper'],
+  dick:['dickinson','dickens','dickson','benedict','dickey','dickman','dickerson'],
+  cock:['peacock','cockpit','cockatoo','cockburn','hancock','woodcock','shuttlecock','cockrell','cockermouth','cockerell','cockerspaniel'],
+  penis:['peniston'], pussi:['pussini','pussinboots'], shit:['shitake','shitzu','shittim'], fuk:['fukushima','fukuda','fukui','fukuoka','fukuyama','fukuzawa'],
+  killall:['skillall'], nazi:['nazim','nazir'], trump:['trumpet','trumpington']
+});
+const PREPARED_EMBEDDED_RULES = Object.freeze([...new Set(EMBEDDED_UNSAFE_WORDS.concat(EXPLICIT_COMPOUNDS)
+  .map(value=>normalizeNameForCheck(value).replace(/ /g,'')))].map(term=>Object.freeze({term,
+    pattern:new RegExp(term.replace(/([a-z0-9])\1*/g,run=>run[0]+'{'+run.length+',}'))
+  })));
+const CLEAR_SLUR_ALIASES = /^(?:[xi]*)(?:nijjer|nigher|niigher|nighger|niggef|niggej|nigja|nixxer)(?:[x0-9]*)$/;
+
+
+// Deliberately curated: ambiguous ordinary words (e.g. trump, bush, may) are not substring bans.
+const POLITICAL_IDENTIFIERS = Object.freeze([
+  'donaldtrump','joebiden','kamalaharris','barackobama','vladimirputin',
+  'benitomussolini','adolfhitler','kimjongun','xijinping','netanyahu','votetrump','votebiden',
+  'voterepublican','votedemocrat','trump2024','trump2028','biden2024','harris2024',
+  'makeamericagreatagain','heilhitler','siegheil','whitepower','gasjews'
+]);
+const POLITICAL_TOKENS = new Set(['maga','trump','biden','putin','obama','political','republican','democrat','fascist','nazism']);
+const CONTACT_BRANDS = Object.freeze(['discord','instagram','insta','snapchat','telegram','onlyfans','tiktok','youtube','twitch','facebook','patreon']);
+const CONTACT_PATTERNS = Object.freeze(CONTACT_BRANDS.map(term=>new RegExp(term.replace(/([a-z])\1*/g,run=>run[0]+'{'+run.length+',}'))));
+function promotionMatch(clean, normalized, compact) {
+  // Check structure before leetspeak changes dots, numbers, or @ in URLs and contact addresses.
+  const raw=String(clean).normalize('NFKD').toLowerCase().replace(/[\u0300-\u036f]/g,'');
+  if (/(?:https?|ftp)\s*[:/]|www\s*[.\u3002\uff0e]|[a-z0-9]\s*(?:\.|\[dot\]|\(dot\)|\s+dot\s+)\s*(?:com|net|org|gg|io|xyz|app|dev|me|co|uk|us|edu|gov|tv|link|site|online|info|biz|club|shop|ru|de|fr|ca|au|jp|cn|in|it|nl|br|ly)\b/i.test(raw)) return 'website-link';
+  if (/[a-z0-9-]+\.[a-z]{2,24}(?:\b|\/)/i.test(raw)) return 'website-link';
+  if (/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(raw)) return 'contact-address';
+  for (let i=0;i<CONTACT_BRANDS.length;i++) {
+    const candidate=CONTACT_BRANDS[i]==='insta'?compact.replace(/(?:instant|instance|install|instability|winstanley)/g,' '):compact;
+    if(CONTACT_PATTERNS[i].test(candidate))return 'contact-promotion';
+  }
+  const domainForm=normalizeNameForCheck(clean.replace(/[.。\uff0e]/g,' dot '));
+  if(/\bdot\s+(?:com|net|org|gg|io|xyz|app|dev|me|co|uk|us|tv|link|site|online|info|biz|club|shop|ru|de|fr|ca|au|jp|cn|in|it|nl|br|ly)\b/.test(domainForm))return 'website-link';
+  if (/(?:^|\s)(?:follow|subscribe|sub|add|dm|message|contact)\s*(?:me|my|to)\b/.test(normalized) || /(?:followme|subscribeto|addmeon|dmme|joinmy|usemycode|buyfollowers|freerobux|freevbucks|freerobucks|playinstead)/.test(compact) || /\bplay\b.+\binstead\b/.test(normalized)) return 'advertising';
+  return '';
+}
+
+function withoutBenignMatches(compact,term){
+  let candidate=compact;
+  for(const word of BENIGN_EMBEDDED_WORDS[term]||[])candidate=candidate.replaceAll(word,' ');
+  return candidate;
+}
 
 export function isRequestedBlockedName(value) {
-  const clean = sanitizeDisplayName(value);
+  const clean = sanitizeDisplayName(String(value || '').replace(/[ϲϹ]/g,'c').replace(/Υ/g,'Y'));
   const compact = normalizeNameForCheck(clean).replace(/ /g, '');
   if (TARGETED_EXACT_NAMES.includes(compact)) return true;
   const rawCompact = clean.normalize('NFKC').toLowerCase().replace(/[^a-z0-9\u0400-\u04ff\u3040-\u30ff\u4e00-\u9fff]/g, '');
@@ -59,13 +132,18 @@ export function isRequestedBlockedName(value) {
 
 export function moderatePublicName(value) {
   const clean = sanitizeDisplayName(value);
-  const normalized = normalizeNameForCheck(clean);
+  const comparison = sanitizeDisplayName(String(value || '').replace(/[ϲϹ]/g,'c').replace(/Υ/g,'Y'));
+  const normalized = normalizeNameForCheck(comparison);
   const tokens = normalized.split(' ').filter(Boolean);
   const compact = tokens.join('');
-  const sourceLooksObfuscated = /[^a-zA-Z\s]/.test(clean) || tokens.length > 1;
   const decision = (blocked, reason = '', match = null) => ({ blocked, reason, clean, match });
   const detail = (type, term, normalizedValue = normalized) => ({ type, term, normalized: normalizedValue });
-  if (isRequestedBlockedName(clean)) return decision(true, 'targeted-exact-name', detail('targeted-exact-name', compact));
+  if (isRequestedBlockedName(value)) return decision(true, 'targeted-exact-name', detail('targeted-exact-name', compact));
+  const promotion=promotionMatch(comparison,normalized,compact);
+  if(promotion)return decision(true,'promotion',detail('promotion',promotion));
+  const political=POLITICAL_IDENTIFIERS.find(term=>compact.includes(term));
+  if(political||tokens.some(token=>POLITICAL_TOKENS.has(token)))return decision(true,'political-reference',detail('political-reference',political||tokens.find(token=>POLITICAL_TOKENS.has(token))));
+  if(/^n[i1][!|]{2}er$/i.test(clean.replace(/\s+/g,'')))return decision(true,'obfuscated-unsafe-word',detail('obfuscated-unsafe-word','slur-mask',compact));
   for (const reserved of PREPARED_RESERVED_NAMES) {
     if (compact === reserved) return decision(true, 'reserved-name', detail('reserved-name', reserved));
   }
@@ -73,9 +151,22 @@ export function moderatePublicName(value) {
     if (term.phrase && normalized.includes(term.value)) return decision(true, 'unsafe-phrase', detail('unsafe-phrase', term.value));
     if (!term.phrase && tokens.includes(term.value)) return decision(true, 'unsafe-word', detail('unsafe-word', term.value));
   }
+  const forms=[compact,compact.replace(/([a-z])\1{2,}/g,'$1'),compact.replace(/([a-z])\1{2,}/g,'$1$1')];
+  for(const form of forms){
+    const unwrapped=form.startsWith('x')&&form.endsWith('x')?form.replace(/^x+|x+$/g,''):form;
+    if(unwrapped!==form&&PREPARED_NAME_TERMS.some(term=>term.value.replace(/ /g,'')===unwrapped))return decision(true,'unsafe-compound',detail('unsafe-compound',unwrapped,form));
+    if(CLEAR_SLUR_ALIASES.test(form))return decision(true,'obfuscated-unsafe-word',detail('obfuscated-unsafe-word','slur-alias',form));
+    for(const rule of PREPARED_EMBEDDED_RULES){
+      const candidate=withoutBenignMatches(form,rule.term);
+      if(rule.pattern.test(candidate))return decision(true,'unsafe-compound',detail('unsafe-compound',rule.term,form));
+    }
+    if(/(?:is|isa|iam|im|youare|ur)pedo(?:$|[^a-z])/.test(form))return decision(true,'unsafe-compound',detail('unsafe-compound','sexual-abuse-reference',form));
+  }
+  if(/(?:18\s*(?:\+|plus)|adult)[\s_.-]*(?:content|videos|chat|nudes|sex)/i.test(clean))return decision(true,'unsafe-compound',detail('unsafe-compound','adult-content-promotion'));
   for (const needle of PREPARED_SEVERE_NEEDLES) {
     const severeEmbedded = UNAMBIGUOUS_EMBEDDED_TERMS.has(needle);
-    if (compact.includes(needle) && (severeEmbedded || sourceLooksObfuscated || compact === needle || compact.startsWith(needle) || compact.endsWith(needle))) {
+    const candidate=withoutBenignMatches(compact,needle);
+    if (candidate.includes(needle) && (severeEmbedded || candidate === needle || candidate.startsWith(needle) || candidate.endsWith(needle))) {
       return decision(true, 'obfuscated-unsafe-word', detail('obfuscated-unsafe-word', needle, compact));
     }
   }

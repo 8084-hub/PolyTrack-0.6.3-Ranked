@@ -73,10 +73,12 @@ test('targeted exact names block common separators and leet formatting without b
   for (const value of ['Kim Jong Un','K1m-J0ng_Un','Kim-J0ng-Un99','Ngr@chio445','Ngrachio44599','Nigervaan','N1gervaan','Stephen Hawking','St3ph3n_H4wk1ng','Stephen_Hawking123']) {
     assert.equal(moderatePublicName(value).reason, 'targeted-exact-name', value);
   }
-  for (const value of ['BLACKBEAUTY','Kim Jong Un fan','Stephen Hawking Racer','Nigervaanish']) {
+  for (const value of ['BLACKBEAUTY','Stephen Hawking Racer','Nigervaanish']) {
     assert.equal(moderatePublicName(value).blocked, false, value);
   }
 });
+
+test('political figure fan handles also follow the political-reference policy',()=>{assert.equal(moderatePublicName('Kim Jong Un fan').blocked,true);});
 
 test('track snapshot projection sanitizes names without a database lookup', () => {
   const row = { accountId: 'account-a', trackId: TRACK, timeMs: 1000, frames: 1000, raceTimeFrames: 1000, replay: 'fixture-replay', replayHash: 'a'.repeat(64), name: 'moderator', nickname: 'moderator' };

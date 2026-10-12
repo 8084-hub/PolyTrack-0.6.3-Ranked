@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=120',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=122',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='120';
+  const extraCatalogRevision='122';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -1599,7 +1599,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const streakWord=daily.streak===1?'day':'days';
     const weeklyResult=weekly.result&&weekly.result!=='Not entered'?`${weekly.result}${weekly.field?` of ${weekly.field}`:''}`:'Not entered';
     const challenge=(kind,kicker,track,result,note)=>`<section class="${kind}" aria-label="${escapeHtml(kicker)}: ${escapeHtml(track.name)}"><button class="competition-feature-button" type="button" data-track-id="${escapeHtml(track.id)}" aria-label="Play ${escapeHtml(track.name)}. ${escapeHtml(kicker)}"><span class="competition-feature-image" aria-hidden="true">${trackThumbnailMarkup(track.id)}</span><span class="competition-feature-copy"><span class="competition-kicker">${escapeHtml(kicker)}</span><strong class="competition-track-name">${escapeHtml(track.name)}</strong><span class="competition-result">${result}</span></span></button><small>${note}</small></section>`;
-    return `<footer class="overall-competition" id="overallDailyGrid"><div class="overall-challenge-stack">${challenge('weekly-cup','FEATURED THIS WEEK',weekly.track,escapeHtml(weeklyResult),resetTimeMarkup(true))}${challenge('daily-card',"TODAY'S TARGET",daily.track,daily.completed?'Goal complete':`${runProgress} · ${pbProgress}${improvement}`,`${daily.streak} ${streakWord} streak · ${resetTimeMarkup(false)}`)}</div><div class="overall-center-tools"><nav class="overall-pager" aria-label="Ranked leaderboard pages"><button id="overallFirstPage" class="overall-page-button overall-page-edge" type="button" aria-label="First ranked page">&#171;</button><button id="overallPrevPage" class="overall-page-button" type="button" aria-label="Previous ranked page">&#8249;</button><span id="overallPageStatus" class="overall-page-status" aria-live="polite">Page 1</span><label class="overall-page-jump-label"><span>GO TO</span><input id="overallPageJump" type="number" inputmode="numeric" min="1" step="1" aria-label="Go to ranked page"></label><button id="overallNextPage" class="overall-page-button" type="button" aria-label="Next ranked page">&#8250;</button><button id="overallLastPage" class="overall-page-button overall-page-edge" type="button" aria-label="Last ranked page">&#187;</button></nav><button id="overallFreshness" class="overall-freshness" type="button" aria-label="Ranked data status. Select to request a cloud refresh.">Checking ranked data</button></div><div class="overall-footer-right"><div class="overall-category-control"><label class="overall-category-select"><span>RANK BY</span><select id="overallCategorySelect" aria-label="Choose a Ranked leaderboard"><optgroup label="Main rankings"><option value="overall">Overall RP</option><option value="casual">Casual RP</option><option value="average">Average place</option><option value="competitiveAverage">Competitive average</option><option value="tracks">Tracks completed</option><option value="medals">Podium points</option><option value="rising">Rising racers</option><option value="topTracks">Top Tracks</option></optgroup><optgroup label="More..."><option value="skill">Best 10 skill</option><option value="consistency">All-track depth</option><option value="wins">Track wins</option><option value="podiumRate">Podium rate</option><option value="weight">Total track weight</option><option value="pbs">PBs set</option><option value="playtime">Active time</option><option value="veterans">Racing longest</option></optgroup></select></label></div><div id="overallTrackScope" class="overall-track-scope" hidden aria-label="Filter completed tracks by type"><button class="active" type="button" data-track-scope="all" aria-pressed="true">All</button><button type="button" data-track-scope="official" aria-pressed="false">Official</button><button type="button" data-track-scope="community" aria-pressed="false">Community</button></div>${leaderboardArcadeMarkup()}</div></footer>`;
+    return `<footer class="overall-competition" id="overallDailyGrid"><div class="overall-challenge-stack">${challenge('weekly-cup','FEATURED THIS WEEK',weekly.track,escapeHtml(weeklyResult),resetTimeMarkup(true))}${challenge('daily-card',"TODAY'S TARGET",daily.track,daily.completed?'Goal complete':`${runProgress} · ${pbProgress}${improvement}`,`${daily.streak} ${streakWord} streak · ${resetTimeMarkup(false)}`)}</div><div class="overall-center-tools"><nav class="overall-pager" aria-label="Ranked leaderboard pages"><button id="overallFirstPage" class="overall-page-button overall-page-edge" type="button" aria-label="First ranked page">&#171;</button><button id="overallPrevPage" class="overall-page-button" type="button" aria-label="Previous ranked page">&#8249;</button><span id="overallPageStatus" class="overall-page-status" aria-live="polite">Page 1</span><label class="overall-page-jump-label"><span>Page</span><input id="overallPageJump" type="number" inputmode="numeric" min="1" step="1" aria-label="Go to ranked page" title="Shift + number: go to page. Shift + plus, then number: add pages. Shift + minus, then number: subtract pages."></label><button id="overallNextPage" class="overall-page-button" type="button" aria-label="Next ranked page">&#8250;</button><button id="overallLastPage" class="overall-page-button overall-page-edge" type="button" aria-label="Last ranked page">&#187;</button></nav><button id="overallFreshness" class="overall-freshness" type="button" aria-label="Ranked data status. Select to request a cloud refresh.">Checking ranked data</button></div><div class="overall-footer-right"><div class="overall-category-control"><label class="overall-category-select"><span>RANK BY</span><select id="overallCategorySelect" aria-label="Choose a Ranked leaderboard"><optgroup label="Main rankings"><option value="overall">Overall RP</option><option value="casual">Casual RP</option><option value="average">Average place</option><option value="competitiveAverage">Competitive average</option><option value="tracks">Tracks completed</option><option value="medals">Podium points</option><option value="rising">Rising racers</option><option value="topTracks">Top Tracks</option></optgroup><optgroup label="More..."><option value="skill">Best 10 skill</option><option value="consistency">All-track depth</option><option value="wins">Track wins</option><option value="podiumRate">Podium rate</option><option value="weight">Total track weight</option><option value="pbs">PBs set</option><option value="playtime">Active time</option><option value="veterans">Racing longest</option></optgroup></select></label></div><div id="overallTrackScope" class="overall-track-scope" hidden aria-label="Filter completed tracks by type"><button class="active" type="button" data-track-scope="all" aria-pressed="true">All</button><button type="button" data-track-scope="official" aria-pressed="false">Official</button><button type="button" data-track-scope="community" aria-pressed="false">Community</button></div>${leaderboardArcadeMarkup()}</div></footer>`;
   }
   function normalizeCarColorId(colors){
     const fallback = 'ffffff8ec7ff28346a212b58';
@@ -2316,28 +2316,29 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function overallFooterLayoutCss(){
     // Two shared control rows keep the event, pagination, and ranking edges aligned.
     return `
-      #overallLeaderboardPanel #overallDailyGrid{--footer-row:clamp(44px,calc(48px * var(--sq-ui-scale,1)),60px);display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;align-items:start!important;grid-template-rows:auto!important;grid-auto-rows:auto!important;align-content:start!important;gap:8px!important;padding:8px 10px!important;min-height:0!important;height:auto!important;flex:0 0 auto!important;box-sizing:border-box}
+      #overallLeaderboardPanel #overallDailyGrid{--footer-row:clamp(54px,calc(60px * var(--sq-ui-scale,1)),76px);display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;align-items:start!important;grid-template-rows:auto!important;grid-auto-rows:auto!important;align-content:start!important;gap:8px!important;padding:8px 10px!important;min-height:0!important;height:auto!important;flex:0 0 auto!important;box-sizing:border-box}
       #overallLeaderboardPanel #overallDailyGrid>div{min-width:0!important;width:100%!important;margin:0!important;padding:0!important;align-self:start!important;box-sizing:border-box}
-      #overallLeaderboardPanel #overallDailyGrid :is(.overall-challenge-stack,.overall-center-tools,.overall-footer-right){display:grid!important;grid-template-columns:minmax(0,1fr)!important;grid-template-rows:repeat(2,var(--footer-row))!important;align-content:start!important;align-items:stretch!important;gap:6px!important;background:transparent!important;border:0!important}
+      #overallLeaderboardPanel #overallDailyGrid :is(.overall-challenge-stack,.overall-center-tools,.overall-footer-right){display:grid!important;grid-template-columns:minmax(0,1fr)!important;grid-template-rows:repeat(2,minmax(var(--footer-row),auto))!important;align-content:start!important;align-items:stretch!important;gap:6px!important;background:transparent!important;border:0!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1!important;grid-row:1!important;order:0!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:2!important;grid-row:1!important;order:1!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:3!important;grid-row:1!important;order:2!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section{height:100%!important;min-height:0!important;padding:4px 6px!important;grid-template-columns:minmax(0,1fr) 108px!important;gap:6px!important}
-      #overallLeaderboardPanel #overallDailyGrid .competition-feature-button{display:grid!important;grid-template-columns:32px minmax(0,1fr)!important;align-items:center!important;gap:6px!important;height:100%!important;min-height:0!important;padding:0!important}
-      #overallLeaderboardPanel #overallDailyGrid .competition-feature-copy{display:grid!important;grid-template-rows:10px 17px 12px!important;gap:0!important;min-width:0!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section{height:auto!important;min-height:0!important;padding:4px 6px!important;grid-template-columns:minmax(0,1fr) 94px!important;gap:8px!important;align-items:center!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-button{display:grid!important;grid-template-columns:40px minmax(0,1fr)!important;align-items:center!important;gap:6px!important;height:100%!important;min-height:0!important;padding:0!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-copy{display:grid!important;grid-template-rows:auto auto auto!important;align-content:center!important;gap:0!important;min-width:0!important}
       #overallLeaderboardPanel #overallDailyGrid .competition-kicker{font-size:10px!important;line-height:10px!important}
       #overallLeaderboardPanel #overallDailyGrid .competition-track-name{font-size:17px!important;line-height:17px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       #overallLeaderboardPanel #overallDailyGrid .competition-result{font-size:11px!important;line-height:12px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      #overallLeaderboardPanel #overallDailyGrid .competition-feature-image{width:32px!important;height:32px!important;min-width:0!important}
+      #overallLeaderboardPanel #overallDailyGrid .competition-feature-image{width:40px!important;height:40px!important;min-width:0!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack>section>small{font-size:10px!important;line-height:1.1!important;padding-left:6px!important}
       #overallLeaderboardPanel #overallDailyGrid :is(.overall-pager,.overall-freshness,.overall-category-control,.leaderboard-arcade){grid-column:1!important;grid-row:auto!important;align-self:stretch!important;min-width:0!important;width:100%!important;height:100%!important;min-height:0!important;margin:0!important;box-sizing:border-box}
-      #overallLeaderboardPanel #overallDailyGrid .overall-pager{display:grid!important;grid-template-columns:30px 30px minmax(0,1fr) 68px 30px 30px!important;gap:4px!important;padding:4px!important;align-items:stretch!important;border:1px solid #405b92!important;background:#172754!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-pager{display:grid!important;grid-template-columns:28px 28px minmax(0,1fr) 54px 28px 28px!important;gap:4px!important;padding:4px!important;align-items:stretch!important;border:1px solid #405b92!important;background:#172754!important}
       #overallLeaderboardPanel #overallDailyGrid :is(.overall-page-button,.overall-page-status){grid-column:auto!important;grid-row:1!important;min-width:0!important;width:100%!important;height:100%!important;min-height:0!important;margin:0!important;box-sizing:border-box}
       #overallLeaderboardPanel #overallDailyGrid .overall-page-button{padding:0!important;font-size:22px!important;line-height:1!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-page-status{display:flex!important;align-items:center!important;justify-content:center!important;padding:3px!important;white-space:normal!important;font-size:13px!important;line-height:1.15!important;text-align:center}
       #overallLeaderboardPanel #overallDailyGrid .overall-page-jump-label{display:flex!important;grid-column:auto!important;grid-row:1!important;align-items:center!important;justify-content:center!important;gap:4px!important;padding:2px!important;min-width:0!important;font-size:9px!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-page-jump-label input{width:34px!important;min-width:0!important;min-height:28px!important;padding:2px!important;box-sizing:border-box}
       #overallLeaderboardPanel #overallDailyGrid .overall-freshness{display:flex!important;align-items:center!important;justify-content:center!important;padding:5px 8px!important;white-space:normal!important;overflow-wrap:anywhere;font-size:13px!important;line-height:1.2!important;text-align:center!important;border:1px solid #405b92!important}
+      #overallLeaderboardPanel #overallDailyGrid :is(.overall-freshness,.overall-pager,.overall-category-control,.leaderboard-arcade,.overall-page-jump-label,.overall-page-jump-label input,.overall-page-button,.leaderboard-arcade button,.overall-category-select select){border-radius:0!important;clip-path:none!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-freshness::before{flex-shrink:0}
       #overallLeaderboardPanel #overallDailyGrid .overall-category-control{padding:4px 6px!important;gap:6px!important;border:1px solid #405b92!important;border-left:3px solid #7ee7ff!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-category-select{height:100%!important;min-height:0!important;padding:0!important;gap:6px!important}
@@ -2346,11 +2347,11 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade>span{display:none!important}
       #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade>div{display:flex!important;align-items:stretch!important;gap:4px!important;width:100%!important;min-width:0!important;height:100%!important}
       #overallLeaderboardPanel #overallDailyGrid .leaderboard-arcade button{flex:1 1 0!important;min-width:0!important;min-height:0!important;margin:0!important;padding:3px!important;white-space:normal!important;line-height:1.15!important}
-      #overallLeaderboardPanel #overallDailyGrid .overall-footer-right:has(.overall-track-scope:not([hidden])){grid-template-rows:var(--footer-row) var(--footer-row) auto!important}
+      #overallLeaderboardPanel #overallDailyGrid .overall-footer-right:has(.overall-track-scope:not([hidden])){grid-template-rows:minmax(var(--footer-row),auto) minmax(var(--footer-row),auto) auto!important}
       #overallLeaderboardPanel #overallDailyGrid .overall-track-scope:not([hidden]){grid-column:1!important;grid-row:3!important;margin:0!important}
       @media(min-width:701px) and (max-width:1100px){
         #overallLeaderboardPanel #overallDailyGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
-        #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1/-1!important;grid-row:1!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;grid-template-rows:var(--footer-row)!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1/-1!important;grid-row:1!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;grid-template-rows:minmax(var(--footer-row),auto)!important}
         #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:1!important;grid-row:2!important}
         #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:2!important;grid-row:2!important}
       }
@@ -2359,7 +2360,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:1!important;grid-row:1!important}
         #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:1!important;grid-row:2!important}
         #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack{grid-column:1!important;grid-row:3!important}
-        #overallLeaderboardPanel #overallDailyGrid .overall-pager{grid-template-columns:28px 28px minmax(0,1fr) 64px 28px 28px!important;gap:3px!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-pager{grid-template-columns:26px 26px minmax(0,1fr) 50px 26px 26px!important;gap:3px!important}
       }
     `;
   }
@@ -2726,7 +2727,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=120',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=122',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -3401,6 +3402,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const digit=match?Number(match[1]):/^[0-9]$/.test(event.key)?Number(event.key):null;
     return digit===null?null:digit||10;
   }
+  let overallPageOffset=0,overallPageOffsetUntil=0;
   function handleOverallLeaderboardShortcut(event){
     if(event.defaultPrevented||event.repeat||event.ctrlKey||event.altKey||event.metaKey)return false;
     const target=event.target;
@@ -3408,10 +3410,19 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const panel=document.getElementById('overallLeaderboardPanel');
     if(!isElementVisible(panel)||isElementVisible(panel.querySelector('#overallProfilePopup'))||isElementVisible(panel.querySelector('#overallHelpPopup')))return false;
     const key=String(event.key||'').toLowerCase();
+    if(event.shiftKey&&(event.code==='Equal'||event.code==='NumpadAdd'||key==='+'||key==='='||event.code==='Minus'||event.code==='NumpadSubtract'||key==='-'||key==='_')){
+      overallPageOffset=event.code==='Minus'||event.code==='NumpadSubtract'||key==='-'||key==='_'?-1:1;
+      overallPageOffsetUntil=Date.now()+3000;
+      event.preventDefault();event.stopPropagation();return true;
+    }
     const page=event.shiftKey?shortcutDigit(event):null;
     const direction=key==='arrowleft'||key==='a'?-1:key==='arrowright'||key==='d'?1:0;
-    if(page){if(!jumpOverallPage(page))return false;}
-    else if(direction){const before=overallPage;changeOverallPage(direction);if(before===overallPage)return false;}
+    if(page){
+      const offset=Date.now()<=overallPageOffsetUntil?overallPageOffset:0;
+      overallPageOffset=0;overallPageOffsetUntil=0;
+      if(!jumpOverallPage(offset?Math.max(1,Math.min(Math.max(1,Math.ceil(currentLeaderboardCount()/OVERALL_PAGE_SIZE)),overallPage+1+offset*page)):page))return false;
+    }
+    else if(direction){overallPageOffset=0;overallPageOffsetUntil=0;const before=overallPage;changeOverallPage(direction);if(before===overallPage)return false;}
     else return false;
     event.preventDefault();event.stopPropagation();return true;
   }
@@ -4920,7 +4931,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=120',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=122',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -4940,8 +4951,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=120',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=120',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=120',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=122',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=122',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=122',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -5354,7 +5365,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       const loaded=overallEntriesCache.length,total=rankedFilterSnapshotMeta.totalEntries;
       const protectedReads=snapshotOnlyForNewAccount();
       notice.hidden=panel?.style.display!=='flex'||!FILTERABLE_RANKED_CATEGORIES.has(overallCategory)||(rankedFilterSnapshotMeta.complete&&!protectedReads)||loaded===0;
-      const coverage=rankedFilterSnapshotMeta.complete?'':total!=null&&total>loaded?`${loaded}/${total} racers loaded. Rankings and filters may be incomplete.`:`${loaded} racers loaded; full coverage unconfirmed.`;
+      const coverage=rankedFilterSnapshotMeta.complete?'':total!=null&&total>loaded?`${loaded} ranked racers saved; ${rankedFilterSnapshotMeta.totalEntriesExact?'total': 'estimated total'} ${total}. Missing racers are not ranked in this snapshot.`:`${loaded} racers loaded; full coverage unconfirmed.`;
       notice.textContent=notice.hidden?'':[protectedReads?'Race and save runs now. Live refresh unlocks below.':'',coverage].filter(Boolean).join(' ');
       notice.title=protectedReads?snapshotAccessNotice():coverage;
     }
@@ -6492,7 +6503,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   let snapshotTrackStatistics = {};
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=120').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=122').then(module=>{
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
       void reader('track-statistics').then(data=>{if(!data)return;snapshotTrackStatistics=data.tracks;updateTrackFreshnessBanner();}).catch(()=>{});
       void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
@@ -8510,7 +8521,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=120',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:120,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=122',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:122,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);
