@@ -217,3 +217,14 @@ test('info explanation stays in the viewport and accounts for panel transforms',
  ctx.positionRankedCategoryDescription(control);assert.equal(styles.width,'336px');assert.equal(styles.left,'12px');assert.equal(styles.top,'160px');
  transformed=true;ctx.positionRankedCategoryDescription(control);assert.equal(styles.left,'-28px');assert.equal(styles.top,'140px');
 });
+
+test('footer controls explicitly neutralize legacy flex growth in the column layout',()=>{
+ const ctx=vm.createContext({});vm.runInContext(extract('overallFooterLayoutCss'),ctx);const css=ctx.overallFooterLayoutCss();
+ const refresh=css.match(/#overallLeaderboardPanel #overallDailyGrid \.overall-freshness\{([^}]+)\}/)[1];
+ assert.match(refresh,/flex:0 0 auto!important/);
+ assert.match(refresh,/height:auto!important/);
+ assert.match(refresh,/font:16px\/1\.25 ForcedSquare,sans-serif!important/);
+ const pager=css.match(/#overallLeaderboardPanel #overallDailyGrid \.overall-pager\{([^}]+)\}/)[1];assert.match(pager,/flex:0 0 auto!important/);
+ assert.match(css,/competition-result[^}]*text-align:center!important/);
+ assert.match(css,/section>small[^}]*border:0!important/);
+});
