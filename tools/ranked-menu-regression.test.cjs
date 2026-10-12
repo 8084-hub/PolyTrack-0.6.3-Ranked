@@ -259,11 +259,30 @@ test('favorite ranking buttons mark the active category for visible highlighting
  ctx.overallCategory='community';assert.match(ctx.leaderboardArcadeMarkup(),/class="selected" aria-pressed="true" data-leaderboard-shortcut="tracks"/);
 });
 
-test('favorite rankings form two equal columns with readable buttons and no usage counters',()=>{
+test('favorite rankings form two equal columns with clearly labeled local usage counts',()=>{
  const ctx=vm.createContext({readJsonStorage:()=>({overall:3,tracks:2,playtime:1,average:1}),LEADERBOARD_USAGE_KEY:'usage',LEADERBOARD_LABELS:{overall:'Overall RP',tracks:'Tracks completed',playtime:'Active time',average:'Average place'},overallCategory:'overall',escapeHtml:String});
  vm.runInContext(extract('overallFooterLayoutCss')+';'+extract('leaderboardArcadeMarkup'),ctx);
  const css=ctx.overallFooterLayoutCss();assert.match(css,/leaderboard-arcade>div[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)!important/);
  assert.match(css,/leaderboard-arcade button[^}]*min-height:40px!important/);
  assert.equal((ctx.leaderboardArcadeMarkup().match(/data-leaderboard-shortcut=/g)||[]).length,4);
- assert.doesNotMatch(ctx.leaderboardArcadeMarkup(),/<small>/);
+ assert.match(ctx.leaderboardArcadeMarkup(),/<small aria-hidden="true">3<\/small>/);
+ assert.match(ctx.leaderboardArcadeMarkup(),/opened 3 times/);
+});
+
+test('footer counts distinguish loaded standings from estimated totals and do not read the cloud',()=>{
+ const fn=extract('updateOverallPager');assert.match(fn,/loaded racers/);assert.match(fn,/estimated\?'~'/);assert.match(fn,/tracks listed/);assert.doesNotMatch(fn,/fetch\(|db\(|\.collection\(/);
+ const cssCtx=vm.createContext({});vm.runInContext(extract('overallFooterLayoutCss'),cssCtx);const css=cssCtx.overallFooterLayoutCss();
+ assert.match(css,/overall-category-description[^}]*background:#355181!important/);
+ assert.match(css,/section:has\(\.competition-feature-button:hover\)/);
+ assert.match(source,/aria-label',\x60Explain \$\{label\}/);
+});
+
+test('visible footer totals remain honest for partial, filtered, and track views',()=>{
+ const summary={};let count=200;
+ const ctx=vm.createContext({document:{getElementById:id=>id==='overallFieldSummary'?summary:null},currentLeaderboardCount:()=>count,OVERALL_PAGE_SIZE:15,overallPage:0,overallCategory:'overall',LEADERBOARD_LABELS:{overall:'Overall RP'},rankedFilterResult:null,rankedFilterSnapshotMeta:{totalEntries:404,totalEntriesExact:false},syncCategorySelect(){}});
+ vm.runInContext(extract('updateOverallPager'),ctx);ctx.updateOverallPager();assert.equal(summary.textContent,'200 loaded racers · ~404 total');
+ ctx.rankedFilterSnapshotMeta.totalEntriesExact=true;ctx.updateOverallPager();assert.equal(summary.textContent,'200 loaded racers · 404 total');
+ count=22;ctx.rankedFilterResult={available:true,filter:{category:'overall'},filteredCount:22,sourceCount:200};ctx.updateOverallPager();assert.equal(summary.textContent,'22 shown / 200 loaded racers');
+ count=51;ctx.overallCategory='topTracks';ctx.updateOverallPager();assert.equal(summary.textContent,'51 tracks listed');
+ ctx.overallCategory='events';ctx.updateOverallPager();assert.equal(summary.textContent,'51 racers loaded');
 });
