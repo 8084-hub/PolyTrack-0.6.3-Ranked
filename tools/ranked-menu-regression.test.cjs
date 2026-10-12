@@ -178,7 +178,7 @@ test('ranked footer uses content-sized event tiles and keeps scope controls in f
  assert.match(css,/overall-track-scope\[hidden\][^}]*display:none!important/);
  assert.match(css,/competition-track-name[^}]*width:fit-content!important/);
  assert.match(css,/overall-category-control::after[^}]*content:none!important/);
- assert.match(css,/overall-freshness[^}]*width:fit-content!important/);
+ assert.match(css,/overall-freshness[^}]*width:min\(100%,360px\)!important/);
  assert.match(css,/overall-help-card[^}]*height:auto!important/);
  assert.match(css,/@media\(max-width:620px\)[\s\S]*overflow-y:auto!important/);
  assert.match(source,/rankedPolish\.textContent \+= overallFooterLayoutCss\(\);\s*document\.head\.appendChild\(rankedPolish\)/);
@@ -223,7 +223,7 @@ test('footer controls explicitly neutralize legacy flex growth in the column lay
  const refresh=css.match(/#overallLeaderboardPanel #overallDailyGrid \.overall-freshness\{([^}]+)\}/)[1];
  assert.match(refresh,/flex:0 0 auto!important/);
  assert.match(refresh,/height:auto!important/);
- assert.match(refresh,/font:14px\/1\.25 ForcedSquare,sans-serif!important/);
+ assert.match(refresh,/font:18px\/1\.25 ForcedSquare,sans-serif!important/);
  const pager=css.match(/#overallLeaderboardPanel #overallDailyGrid \.overall-pager\{([^}]+)\}/)[1];assert.match(pager,/flex:0 0 auto!important/);
  assert.match(css,/competition-result[^}]*text-align:left!important/);
  assert.match(css,/section>small[^}]*border:0!important/);
@@ -257,4 +257,13 @@ test('favorite ranking buttons mark the active category for visible highlighting
  vm.runInContext(extract('leaderboardArcadeMarkup'),ctx);
  assert.match(ctx.leaderboardArcadeMarkup(),/class="selected" aria-pressed="true" data-leaderboard-shortcut="overall"/);
  ctx.overallCategory='community';assert.match(ctx.leaderboardArcadeMarkup(),/class="selected" aria-pressed="true" data-leaderboard-shortcut="tracks"/);
+});
+
+test('favorite rankings form two equal columns with readable buttons and no usage counters',()=>{
+ const ctx=vm.createContext({readJsonStorage:()=>({overall:3,tracks:2,playtime:1,average:1}),LEADERBOARD_USAGE_KEY:'usage',LEADERBOARD_LABELS:{overall:'Overall RP',tracks:'Tracks completed',playtime:'Active time',average:'Average place'},overallCategory:'overall',escapeHtml:String});
+ vm.runInContext(extract('overallFooterLayoutCss')+';'+extract('leaderboardArcadeMarkup'),ctx);
+ const css=ctx.overallFooterLayoutCss();assert.match(css,/leaderboard-arcade>div[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)!important/);
+ assert.match(css,/leaderboard-arcade button[^}]*min-height:40px!important/);
+ assert.equal((ctx.leaderboardArcadeMarkup().match(/data-leaderboard-shortcut=/g)||[]).length,4);
+ assert.doesNotMatch(ctx.leaderboardArcadeMarkup(),/<small>/);
 });
