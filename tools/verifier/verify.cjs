@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
-const { LIMITS, sha256, checkJob } = require('./replay.cjs');
+const { LIMITS, resourceLimits, sha256, checkJob } = require('./replay.cjs');
 const { snapshot, serve } = require('./assets.cjs');
 const { sameHashMap } = require('./engine-pin.cjs');
 const { geometryDecision } = require('./geometry.cjs');
@@ -36,7 +36,7 @@ function verdict(job, status, reason, engine, track, extra = {}) {
   const input = publicJob(job);
   const actualReplayHash = typeof job?.replay === 'string' && job.replay.length <= LIMITS.replayCharacters ? sha256(job.replay) : null;
   const binding = {
-    verifierVersion: VERIFIER_VERSION, verifierFingerprint,
+    verifierVersion: VERIFIER_VERSION, verifierFingerprint, resourceProfile: job.resourceProfile || 'standard',
     ...input, actualReplayHash,
     nativeTrackId: track?.id ?? null,
     trackContentHash: track?.hash ?? null,
@@ -85,10 +85,11 @@ async function terminate(session, { graceful = false } = {}) {
   session.dead = true;
   session.killPromise = (async () => {
     const diagnostics = session.cleanup = { method: graceful ? 'graceful' : 'forced', pid: child.pid };
+    const exitGraceMs = session.resourceProfile === 'extended-local' ? 6000 : 1500;
     if (graceful) {
       // Normal successful batches do not need taskkill's racy descendant enumeration.
       Promise.resolve().then(() => session.server.close()).catch(() => {});
-      if (await waitForExit(child, 1500)) return;
+      if (await waitForExit(child, exitGraceMs)) return;
       diagnostics.method = 'graceful_then_forced';
     }
     if (process.platform === 'win32') {
@@ -107,7 +108,7 @@ async function terminate(session, { graceful = false } = {}) {
       try { process.kill(-child.pid, 'SIGKILL'); }
       catch (error) { diagnostics.commandCode = error.code; }
     }
-    if (await waitForExit(child, 1500)) return;
+    if (await waitForExit(child, exitGraceMs)) return;
     diagnostics.exitObserved = false;
     throw Object.assign(Error('process_cleanup_failed'), { reason: 'process_cleanup_failed' });
   })();
@@ -214,7 +215,8 @@ async function initialize(session, engine, origin, trustedTracks = []) {
   });
   await page.goto(origin + '/', { waitUntil: 'domcontentloaded' });
   trace('page loaded; awaiting trusted Init');
-  await page.waitForFunction(() => globalThis.__trustedInit && globalThis.__vrRequire);
+  await page.waitForFunction(() => globalThis.__trustedInit && globalThis.__vrRequire, null,
+    {timeout: session.resourceProfile === 'extended-local' ? 120000 : 30000});
   await page.evaluate(() => { for (const worker of __workers) worker.terminate(); __workers.length = 0; });
   // Explicit trusted tracks precede static artifacts so a matching native ID
   // remains bound to the server-captured event bytes and expected hash.
@@ -285,11 +287,12 @@ async function simulate(session, job) {
   }, { trackId: job.trackId, replay: job.replay, timeMs: job.timeMs });
 }
 
-async function verifyBatch(root, jobs, trustedTracks) {
-  if (!Array.isArray(jobs) || jobs.length > LIMITS.jobs) throw new TypeError(`jobs must be an array of at most ${LIMITS.jobs} jobs`);
+async function verifyBatch(root, jobs, trustedTracks, {profile = 'standard'} = {}) {
+  const limits = resourceLimits(profile);
+  if (!Array.isArray(jobs) || jobs.length > limits.jobs) throw new TypeError(`jobs must be an array of at most ${limits.jobs} jobs`);
   if (jobs.length === 0) return [];
   // Copy now so a caller cannot replace a PB input during an await.
-  jobs = jobs.map(job => ({ ...publicJob(job), replay: typeof job?.replay === 'string' ? job.replay : null }));
+  jobs = jobs.map(job => ({ ...publicJob(job), resourceProfile: profile, replay: typeof job?.replay === 'string' ? job.replay : null }));
   const output = new Array(jobs.length);
   const pending = [];
   let rejectedTracks = new Map();
@@ -299,8 +302,8 @@ async function verifyBatch(root, jobs, trustedTracks) {
   let wallMs;
   let cpuMs;
   try {
-    wallMs = duration('VERIFIER_WALL_MS', LIMITS.wallMs);
-    cpuMs = duration('VERIFIER_CPU_MS', LIMITS.cpuMs);
+    wallMs = duration('VERIFIER_WALL_MS', limits.wallMs);
+    cpuMs = duration('VERIFIER_CPU_MS', limits.cpuMs);
     engine = snapshot(root);
     trace('snapshot loaded');
     const pin = JSON.parse(fs.readFileSync(path.join(__dirname, 'engine-manifest.json'), 'utf8'));
@@ -316,7 +319,7 @@ async function verifyBatch(root, jobs, trustedTracks) {
         output[i] = verdict(jobs[i], 'unavailable', rejection, engine);
         continue;
       }
-      try { checkJob(jobs[i]); pending.push(i); }
+      try { checkJob(jobs[i], profile); pending.push(i); }
       catch (error) { output[i] = verdict(jobs[i], error.status || 'unavailable', error.reason || 'input_validation_failed', engine); }
     }
     if (!pending.length) return output;
@@ -329,7 +332,7 @@ async function verifyBatch(root, jobs, trustedTracks) {
         executablePath: chromium.executablePath(),
         ...(process.env.VERIFIER_CHROMIUM_PATH ? { executablePath: process.env.VERIFIER_CHROMIUM_PATH } : {}),
       });
-      const next={server,dead:false};
+      const next={server,dead:false,resourceProfile:profile};
       session=next;
       trace('browser launched');
       next.browser=await chromium.connect(server.wsEndpoint(),{timeout:wallMs});

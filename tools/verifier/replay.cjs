@@ -43,7 +43,17 @@ function linearScanWork(lists, timeMs) {
   return work;
 }
 
-function decodeReplay(replay, timeMs) {
+// A manual local lane gets more compute, not different replay or physics rules.
+const EXTENDED_LOCAL_LIMITS = Object.freeze({...LIMITS, jobs: 1, frames: 3600000,
+  transitionsPerChannel: 10000, transitions: 20000, inflatedBytes: 60015,
+  scanWork: 10000000000, wallMs: 120000, cpuMs: 90000});
+function resourceLimits(profile = 'standard') {
+  if (profile === 'standard') return LIMITS;
+  if (profile === 'extended-local') return EXTENDED_LOCAL_LIMITS;
+  throw new TypeError('Unknown verifier resource profile');
+}
+function decodeReplay(replay, timeMs, profile = 'standard') {
+  const limits = resourceLimits(profile);
   if (typeof replay !== 'string' || !replay.length) throw new Rejection('invalid_replay_type');
   if (replay.length > LIMITS.replayCharacters) throw new Rejection('replay_size_limit', 'unavailable');
   if (!/^[A-Za-z0-9_-]+$/.test(replay) || replay.length % 4 === 1) throw new Rejection('invalid_base64url');
@@ -52,7 +62,7 @@ function decodeReplay(replay, timeMs) {
   if (compressed.length > LIMITS.compressedBytes) throw new Rejection('compressed_size_limit', 'unavailable');
   let inflated;
   try {
-    inflated = zlib.inflateSync(compressed, { maxOutputLength: LIMITS.inflatedBytes, info: true });
+    inflated = zlib.inflateSync(compressed, { maxOutputLength: limits.inflatedBytes, info: true });
   } catch (error) {
     if (error.code === 'ERR_BUFFER_TOO_LARGE') throw new Rejection('inflated_size_limit', 'unavailable');
     throw new Rejection('invalid_zlib');
@@ -68,7 +78,7 @@ function decodeReplay(replay, timeMs) {
     const count = bytes.readUIntLE(cursor, 3);
     cursor += 3;
     if (cursor + count * 3 > bytes.length) throw new Rejection('truncated_transition_list');
-    if (count > LIMITS.transitionsPerChannel || total + count > LIMITS.transitions) {
+    if (count > limits.transitionsPerChannel || total + count > limits.transitions) {
       throw new Rejection('transition_limit', 'unavailable');
     }
     const frames = [];
@@ -79,7 +89,7 @@ function decodeReplay(replay, timeMs) {
       if (i > 0 && delta === 0) throw new Rejection('non_increasing_transitions');
       frame += delta;
       if (frame > 5999999) throw new Rejection('native_frame_limit');
-      if (frame > LIMITS.frames) throw new Rejection('frame_limit', 'unavailable');
+      if (frame > limits.frames) throw new Rejection('frame_limit', 'unavailable');
       if (frame > timeMs) throw new Rejection('transition_after_claim');
       frames.push(frame);
     }
@@ -88,22 +98,23 @@ function decodeReplay(replay, timeMs) {
   }
   if (cursor !== bytes.length) throw new Rejection('trailing_transition_bytes');
   const scanWork = linearScanWork(lists, timeMs);
-  if (scanWork > LIMITS.scanWork) throw new Rejection('scan_work_limit', 'unavailable');
+  if (scanWork > limits.scanWork) throw new Rejection('scan_work_limit', 'unavailable');
   return { lists, transitions: total, inflatedBytes: bytes.length, scanWork };
 }
 
-function checkJob(job) {
+function checkJob(job, profile = 'standard') {
+  const limits = resourceLimits(profile);
   if (!job || typeof job !== 'object' || Array.isArray(job)) throw new Rejection('invalid_job', 'unavailable');
   if (typeof job.resultId !== 'string' || !job.resultId.length || job.resultId.length > 512) {
     throw new Rejection('invalid_result_id', 'unavailable');
   }
   if (typeof job.trackId !== 'string' || !/^[a-f0-9]{64}$/.test(job.trackId)) throw new Rejection('invalid_track_id', 'unavailable');
   if (!Number.isSafeInteger(job.timeMs) || job.timeMs <= 0) throw new Rejection('invalid_time', 'unavailable');
-  if (job.timeMs > LIMITS.frames) throw new Rejection('time_limit', 'unavailable');
+  if (job.timeMs > limits.frames) throw new Rejection('time_limit', 'unavailable');
   if (typeof job.replayHash !== 'string' || !/^[a-f0-9]{64}$/.test(job.replayHash)) throw new Rejection('invalid_replay_hash', 'unavailable');
   if (typeof job.replay !== 'string' || job.replay.length > LIMITS.replayCharacters) throw new Rejection('replay_size_limit', 'unavailable');
   if (sha256(job.replay) !== job.replayHash) throw new Rejection('replay_hash_mismatch', 'unavailable');
-  return decodeReplay(job.replay, job.timeMs);
+  return decodeReplay(job.replay, job.timeMs, profile);
 }
 
-module.exports = { LIMITS, sha256, Rejection, decodeReplay, checkJob, linearScanWork };
+module.exports = { LIMITS, EXTENDED_LOCAL_LIMITS, resourceLimits, sha256, Rejection, decodeReplay, checkJob, linearScanWork };

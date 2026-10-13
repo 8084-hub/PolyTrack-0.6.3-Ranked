@@ -47,19 +47,21 @@ test('native home Ranked button opens the real panel with offline Firebase', { s
     const errorsAfterReopen=await page.evaluate(()=>window.__ptNativeRankedAudit);
     assert.deepEqual(errorsAfterReopen.errors,[]);
     assert.deepEqual(errorsAfterReopen.rejections,[]);
-    for (const [width, height] of [[320, 568], [390, 844], [844, 390], [384, 216]]) {
+    for (const [width, height] of [[320, 568], [390, 844], [640, 800], [700, 800], [844, 390], [384, 216]]) {
       await page.setViewportSize({width, height});
       const layout = await page.evaluate(() => {
         const panel = document.getElementById('overallLeaderboardPanel');
         const status = panel.querySelector('#overallFreshness');
         const shell = panel.querySelector('.overall-shell');
+        const pager = panel.querySelector('.overall-pager');
         const filter = panel.querySelector('[data-personal-filter-button]');
         const header = panel.querySelector('.overall-top').getBoundingClientRect();
         const bounds = filter.getBoundingClientRect();
-        return {shellHeight: shell.clientHeight, shellContentHeight: shell.scrollHeight, shellOverflow: getComputedStyle(shell).overflowY,
+        return {pagerWidth:pager.clientWidth,pagerContentWidth:pager.scrollWidth,shellHeight: shell.clientHeight, shellContentHeight: shell.scrollHeight, shellOverflow: getComputedStyle(shell).overflowY,
           statusHeight: status.clientHeight, statusContentHeight: status.scrollHeight,
           filterLeft: bounds.left, filterRight: bounds.right, filterContentWidth: filter.scrollWidth, filterWidth: filter.clientWidth, headerHeight: header.height};
       });
+      assert.ok(layout.pagerContentWidth<=layout.pagerWidth+1, `page controls fit at ${width}x${height}`);
       assert.ok(layout.statusContentHeight <= layout.statusHeight + 1, `refresh instructions must not clip at ${width}x${height}`);
       assert.ok(layout.filterLeft >= 0 && layout.filterRight <= width, `filters fit at ${width}x${height}`);
       assert.ok(layout.filterContentWidth <= layout.filterWidth + 1, `filter state stays readable at ${width}x${height}`);

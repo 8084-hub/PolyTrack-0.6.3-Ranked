@@ -125,3 +125,11 @@ When registered Extra tracks change, deploy the matching Worker registry before 
 ## Trusted track resource failures
 
 An oversized or corrupt trusted track stays unavailable for its own jobs; it cannot block unrelated valid replays or silently fall back to other track bytes. Malformed descriptor lists, duplicate IDs, unexpected tracks and engine-pin failures still fail the batch closed. Exact reviewed geometry exceptions do not change the global limits or native CPU/wall deadlines.
+
+## Explicit extended local lane
+
+Manual maintenance can call `verifyBatch(root, [job], trustedTracks, {profile: 'extended-local'})` for a saved replay that exceeds the standard compute allowance. This lane admits exactly one job, up to 60 minutes of replay time, 10,000 transitions per channel, 20,000 total transitions, 60,015 inflated bytes and a finite ten-billion lookup-work estimate. Processing remains bounded to 120 seconds wall time and 90 seconds sampled CPU time per job. The original replay bytes, hash checks, strict decoding, pinned track identities, geometry checks, determinism test and native exact-finish validator remain unchanged. No input resampling or physics substitution is allowed.
+
+Scheduled workflows and ordinary calls continue using the existing standard limits. Extended results require an explicit `publishResults(..., {allowExtendedLocal: true})` opt-in; ordinary publication rejects them before database access. Published queue receipts and audit records retain the resource profile and verifier source fingerprint. Engine and track asset pins are separate and do not change for this compute-only lane. Existing audit checkpoints bound to an earlier verifier source fingerprint must not be reused as fresh verdict evidence.
+
+Before publishing, run the similarity reviewer across the entire locally verified set, then retain the standard fresh canonical/queue binding and compare-and-swap guards. Recordings outside the advisory input-rate heuristic's standard duration/channel bounds may lack a rapid-input flag; physics verification is not proof of human play or absence of TAS.

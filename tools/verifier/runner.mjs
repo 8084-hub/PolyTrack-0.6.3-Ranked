@@ -180,7 +180,23 @@ export async function selectJobs(db, docs, now = Date.now(), {jobLimit = NORMAL_
   return {jobs:selected, canonicalAttempts, selectionConflicts};
 }
 
-export async function publishResults(db, jobs, results) {
+export async function publishResults(db, jobs, results, {allowExtendedLocal = false} = {}) {
+  for (const result of results) {
+    const profile = result?.binding?.resourceProfile || 'standard';
+    if (profile === 'extended-local') {
+      const b = result.binding;
+      if (!/^[a-f0-9]{64}$/.test(b?.verifierFingerprint || '') ||
+          b.engineDigest !== VERIFIER_ENGINE_DIGEST || b.trackId !== result.trackId ||
+          b.timeMs !== result.timeMs || b.replayHash !== result.replayHash ||
+          b.actualReplayHash !== result.replayHash || result.deterministic !== true) {
+        throw Error('Invalid extended verifier binding');
+      }
+    }
+    if (!['standard', 'extended-local'].includes(profile) ||
+        profile === 'extended-local' && allowExtendedLocal !== true) {
+      throw Error('Verification resource profile is not authorized for publication');
+    }
+  }
   const totals = {verified: 0, verifiedByTrack: {}, mismatch: 0, unavailable: 0, superseded: 0, deferred: 0, corrected: 0, reviewFlagged:0, reviewInboxAdded:0, reasons: {}};
   const queueCache = new Map();
   const acquiredQueueKeys = new Set();
@@ -231,13 +247,15 @@ export async function publishResults(db, jobs, results) {
       if (!stateCacheLoaded) { stateCache = state; stateCacheLoaded = true; }
       const {nativeReason: previousNativeReason,...priorSlot} = existingSlot;
       delete priorSlot.controlProof;
-      const completed=completedSlot({...priorSlot, key: publishedKey}, publication);
+      const completed={...completedSlot({...priorSlot, key: publishedKey}, publication),
+        resourceProfile: publication.binding?.resourceProfile || 'standard',
+        ...(publication.binding?.verifierFingerprint ? {verifierFingerprint:publication.binding.verifierFingerprint} : {})};
       const nativeControlProof=verifiedControlProof(result);
       const controlProof=publication.status==='verified'&&result.status==='verified'&&nativeControlProof&&
-        result.engineDigest===VERIFIER_ENGINE_DIGEST&&result.verifierVersion===VERIFIER_VERSION&&
+        result.engineDigest===VERIFIER_ENGINE_DIGEST&&(result.verifierVersion||result.binding?.verifierVersion)===VERIFIER_VERSION&&
         result.trackId===job.trackId&&result.timeMs===job.timeMs&&result.replayHash===job.replayHash ? {
           ...nativeControlProof,accountId:job.accountId,trackId:job.trackId,timeMs:correct?frames:job.timeMs,
-          replayHash:current.data.replayHash,key:publishedKey,engineDigest:result.engineDigest,verifierVersion:result.verifierVersion,
+          replayHash:current.data.replayHash,key:publishedKey,engineDigest:result.engineDigest,verifierVersion:result.verifierVersion||result.binding?.verifierVersion,
         } : null;
       const slots = {...queue.data.slots, [job.accountId]: {...completed,
         ...(controlProof?{controlProof}:{}),

@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=134',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=135',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='134';
+  const extraCatalogRevision='135';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -2415,6 +2415,18 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         #overallLeaderboardPanel #overallDailyGrid .overall-center-tools{grid-column:1!important;grid-row:2!important}
         #overallLeaderboardPanel #overallDailyGrid .overall-footer-right{grid-column:2!important;grid-row:2!important}
       }
+      @media(min-width:621px) and (max-width:700px){
+        #overallLeaderboardPanel #overallDailyGrid .overall-pager{grid-template-columns:28px 28px minmax(110px,auto) 28px 28px!important;gap:4px!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-page-button{width:28px!important;font-size:22px!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-page-status{font-size:15px!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-page-jump-label{font-size:11px!important}
+        #overallLeaderboardPanel #overallDailyGrid .overall-page-jump-label input{width:40px!important;font-size:15px!important}
+        #overallLeaderboardPanel .overall-top{grid-template-columns:minmax(0,1fr) auto!important;gap:6px!important;padding:8px 10px!important}
+        #overallLeaderboardPanel .overall-top h2{font-size:27px!important;line-height:1.1!important}
+        #overallLeaderboardPanel .overall-top .overall-filter-host{grid-column:1/-1!important;grid-row:2!important}
+        #overallLeaderboardPanel .overall-top .overall-actions{grid-column:2!important;grid-row:1!important;display:flex!important;gap:4px!important}
+        #overallLeaderboardPanel .overall-top .overall-action-btn{font-size:18px!important;min-height:36px!important;padding:5px 9px!important}
+      }
       @media(max-width:620px){
         #overallLeaderboardPanel #overallDailyGrid .overall-pager{grid-template-columns:28px 28px minmax(110px,auto) 28px 28px!important;gap:4px!important}
         #overallLeaderboardPanel #overallDailyGrid .overall-page-button{width:28px!important;font-size:22px!important}
@@ -2793,7 +2805,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=134',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=135',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -4294,7 +4306,12 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       return cached.entries.slice(0,limit);
     }
     let request=trackEntryRequests.get(id);
-    if(forceCloud&&request&&!request.ptForceCloud){await request.catch(()=>{});request=null;}
+    if(forceCloud&&request&&!request.ptForceCloud){
+      await request.catch(()=>{});
+      // Another forced caller may already have started the fresh request while we waited.
+      request=trackEntryRequests.get(id);
+      if(request&&!request.ptForceCloud)request=null;
+    }
     if(!request){
       request=loadTrackEntries(id,500,forceCloud);
       request.ptForceCloud=forceCloud;
@@ -5048,7 +5065,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=134',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=135',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -5068,8 +5085,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=134',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=134',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=134',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=135',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=135',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=135',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -6325,10 +6342,10 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       if(guideHadFocus)guide?.querySelector(guideHadFocus)?.focus({preventScroll:true});
     }).catch(()=>{if(stillCurrent()){const pending=content.querySelector('.profile-guide-pending');if(pending)pending.textContent='Route calculation unavailable. Reopen this profile to retry.';}});
   }
-  function renderEntries(entries,snapshotMeta){
+  function renderEntries(entries,snapshotMeta,{preservePage=false}={}){
     const listEl = document.getElementById('overallLeaderboardList');
     if (!listEl) return;
-    if (Array.isArray(entries)) { overallEntriesCache = overlaySnapshotRacerDirectory(entries,Number(snapshotMeta?.updatedAt||snapshotMeta?.serverUpdatedAt||overallLoadState.serverUpdatedAt||overallLoadState.fetchedAt||0)); setRankedFilterSnapshotMeta(snapshotMeta,entries.length); if(overallCategory!=='events')overallPage = 0; }
+    if (Array.isArray(entries)) { overallEntriesCache = overlaySnapshotRacerDirectory(entries,Number(snapshotMeta?.updatedAt||snapshotMeta?.serverUpdatedAt||overallLoadState.serverUpdatedAt||overallLoadState.fetchedAt||0)); setRankedFilterSnapshotMeta(snapshotMeta,entries.length); if(!preservePage&&overallCategory!=='events')overallPage = 0; }
     const filterRoot=document.getElementById('overallFilterPanel');
     if(filterRoot)filterRoot.hidden=false;
     const columnLabels=document.querySelectorAll('#overallLeaderboardPanel .overall-columns span');
@@ -6643,12 +6660,22 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   let snapshotTrackStatistics = {};
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=134').then(module=>{
-      const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]'))});
-      void reader('track-statistics').then(data=>{if(!data)return;snapshotTrackStatistics=data.tracks;updateTrackFreshnessBanner();}).catch(()=>{});
-      void reader('cosmetic-directory').then(data=>{if(!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries();decorateNativeLeaderboardCosmetics();}).catch(()=>{});
-      void reader('racer-directory').then(data=>{if(!data||!data.entries)return;snapshotRacerDirectoryEntries=data.entries;overallCacheGeneration++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries(overallEntriesCache,overallLoadState);decorateNativeLeaderboardCosmetics();}).catch(()=>{});
-      void reader('snapshot-meta').then(meta=>{const at=Date.parse(meta?.capturedAt||'');if(Number.isFinite(at)&&at>0&&at<=Date.now())publicSnapshotCapturedAt=at;}).catch(()=>{});
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=135').then(module=>{
+      let metadataEpoch=0;
+      function warmMetadata(reader){
+        const epoch=++metadataEpoch;
+        void reader('track-statistics').then(data=>{if(epoch!==metadataEpoch||!data)return;snapshotTrackStatistics=data.tracks;updateTrackFreshnessBanner();}).catch(()=>{});
+        void reader('cosmetic-directory').then(data=>{if(epoch!==metadataEpoch||!data)return;snapshotCosmeticEntries=data.entries;cosmeticEpoch++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries(overallEntriesCache,overallLoadState,{preservePage:true});decorateNativeLeaderboardCosmetics();}).catch(()=>{});
+        void reader('racer-directory').then(data=>{if(epoch!==metadataEpoch||!data?.entries)return;snapshotRacerDirectoryEntries=data.entries;overallCacheGeneration++;if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries(overallEntriesCache,overallLoadState,{preservePage:true});decorateNativeLeaderboardCosmetics();}).catch(()=>{});
+        void reader('snapshot-meta').then(meta=>{if(epoch!==metadataEpoch)return;const at=Date.parse(meta?.capturedAt||'');if(Number.isFinite(at)&&at>0&&at<=Date.now())publicSnapshotCapturedAt=at;}).catch(()=>{});
+      }
+      const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]')),onGenerationChange:()=>{
+        metadataEpoch++;
+        snapshotTrackStatistics={};snapshotCosmeticEntries={};snapshotRacerDirectoryEntries={};publicSnapshotCapturedAt=0;
+        cosmeticEpoch++;overallCacheGeneration++;
+        queueMicrotask(()=>warmMetadata(reader));
+      }});
+      warmMetadata(reader);
       return reader;
     }).catch(error=>{publicSnapshotReaderPromise=null;throw error;});
     try{return await (await publicSnapshotReaderPromise)(kind,id,accountId);}catch{return null;}
@@ -6954,7 +6981,13 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     try{return await rankedQueueFlushPromise;}finally{rankedQueueFlushPromise=null;}
   }
 
-  window.addEventListener('online',()=>setTimeout(()=>{flushRankedNotificationQueue().catch(()=>{});flushPendingCosmeticPublishes().catch(()=>{});},1200));
+  async function resumeRankedNotifications(){
+    // Browsing snapshots must not create anonymous accounts or contact Firebase.
+    if(!rankedNotifyQueue().length||globalThis.navigator?.onLine===false)return;
+    await db();
+    return flushRankedNotificationQueue();
+  }
+  window.addEventListener('online',()=>setTimeout(()=>{resumeRankedNotifications().catch(()=>{});flushPendingCosmeticPublishes().catch(()=>{});},1200));
   setTimeout(()=>flushPendingCosmeticPublishes().catch(()=>{}),2500);
 
   function makeUserPayload(profile={}){
@@ -8239,7 +8272,6 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     ensurePanel();
     hookLegacyNetworking();
     hookMultiplayerNetworking();
-    ensureFirestoreBootstrap();
     injectRankingsButton();
     setUnofficialMessage();
     ensurePersistentInfoBranding();
@@ -8661,7 +8693,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=134',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:134,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=135',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:135,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);
@@ -8673,7 +8705,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     observer.observe(document.body || document.documentElement, uiObserverOptions);
     setInterval(()=>{if(document.visibilityState==='visible')reconcileUI();}, 15000);
     setInterval(tickSnapshotCountdown,1000);
-    setTimeout(()=>db().then(()=>flushRankedNotificationQueue()).catch(()=>{}),2500);
+    setTimeout(()=>resumeRankedNotifications().catch(()=>{}),2500);
     window.addEventListener('keydown', (event)=>{
       handleModeratorSequence(event);
       if(event.defaultPrevented)return;

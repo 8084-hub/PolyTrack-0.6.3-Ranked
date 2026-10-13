@@ -13,9 +13,9 @@ test('normal and forced track refreshes cannot bulk-query canonical races',()=>{
   assert.match(body,/refreshThrottled/);assert.doesNotMatch(body,/!forceCloud&&Date\.now\(\)<Number\(trackCloudRetryAt/);
 });
 test('simultaneous track requests share one load and preserve caller limits',async()=>{
-  let loads=0,finish;const ctx={trackEntryRequests:new Map(),loadTrackEntries:()=>{loads++;return new Promise(resolve=>{finish=resolve;});}};
+  let loads=0,finish;const ctx={unrankedExtraTrackIds:new Set(),readTrackSnapshotCache:()=>null,trackEntryRequests:new Map(),loadTrackEntries:()=>{loads++;return new Promise(resolve=>{finish=resolve;});}};
   vm.createContext(ctx);vm.runInContext(extract('getTrackEntries'),ctx);
-  const a=ctx.getTrackEntries('track',1),b=ctx.getTrackEntries('track',2,true);assert.equal(loads,1);
+  const a=ctx.getTrackEntries('track',1),b=ctx.getTrackEntries('track',2);assert.equal(loads,1);
   finish([1,2,3]);assert.deepEqual(Array.from(await a),[1]);assert.deepEqual(Array.from(await b),[1,2]);
   await Promise.resolve();assert.equal(ctx.trackEntryRequests.size,0);
 });
@@ -74,8 +74,16 @@ test('assignment cache expires at the actual event reset and local assignment is
   const body=extract('loadEventCloudRead');assert.ok(body.indexOf('localEventCatalog()')<body.indexOf('rankedEdgeAvailable()'));
 });
 test('best result fallback excludes fields with fewer than five racers',()=>{
-  const ctx={normalizedFinishSamples:()=>[],knownFinishWeight:()=>1,rankedPlacementCost:()=>0};
+  const ctx={MIN_MEANINGFUL_FINISH_WEIGHT:0.2,normalizedFinishSamples:()=>[],knownFinishWeight:()=>1,rankedPlacementCost:()=>0};
   vm.createContext(ctx);vm.runInContext(extract('bestTrackMarkup'),ctx);
   const result=ctx.bestTrackMarkup({bestTracks:[{trackId:'solo',rank:1,fieldSize:2}],bestTrackId:'solo',bestTrackRank:1,bestTrackField:2});
   assert.match(result,/at least 5/);assert.doesNotMatch(result,/#1/);
+});
+
+test('forced callers share one fresh load after an older non-forced request settles',async()=>{
+ const resolve=[],flags=[];const ctx={unrankedExtraTrackIds:new Set(),readTrackSnapshotCache:()=>null,trackEntryRequests:new Map(),loadTrackEntries:(_id,_limit,force)=>{flags.push(force);return new Promise(done=>resolve.push(done));}};
+ vm.createContext(ctx);vm.runInContext(extract('getTrackEntries'),ctx);
+ const prior=ctx.getTrackEntries('track',1),a=ctx.getTrackEntries('track',1,true),b=ctx.getTrackEntries('track',2,true);
+ assert.equal(flags.length,1);resolve[0]([0]);await prior;await Promise.resolve();
+ assert.deepEqual(flags,[false,true]);resolve[1]([1,2,3]);assert.deepEqual(Array.from(await a),[1]);assert.deepEqual(Array.from(await b),[1,2]);assert.equal(flags.length,2);
 });

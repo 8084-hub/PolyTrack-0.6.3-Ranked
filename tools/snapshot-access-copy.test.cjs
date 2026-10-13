@@ -15,7 +15,7 @@ test('snapshot help only lists unfinished live-refresh requirements',()=>{
   assert.doesNotMatch(notice({remainingMs:0,needsFinish:true}),/timer/);
 });
 test('compact Ranked notice retains coverage warning and full help tooltip',()=>{
-  assert.match(source,/racers loaded\. Rankings and filters may be incomplete/);
+  assert.ok(source.includes('Missing racers are not ranked in this snapshot.'));
   assert.match(source,/notice\.title=protectedReads\?snapshotAccessNotice\(\):coverage/);
   assert.match(source,/Race and save runs now\. Live refresh unlocks below\./);
 });

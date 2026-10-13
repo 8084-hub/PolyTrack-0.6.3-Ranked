@@ -130,7 +130,7 @@ export function createSimilarityReviewer(root) {
       controlProofByResult.delete(result);
       if(!result || !validResult(job,result) || !/^[a-f0-9]{64}$/.test(job.trackId) || !Number.isSafeInteger(job.timeMs)) continue;
       try {
-        const controls=decodeReplay(job.replay,job.timeMs);
+        const controls=decodeReplay(job.replay,job.timeMs,result.binding?.resourceProfile || 'standard');
         const transitionCount=Object.values(controls.lists).reduce((sum,list)=>sum+list.length,0);
         const informative=compareControls(controls,controls,job.timeMs,job.timeMs);
         const signature=createHash('sha256').update(JSON.stringify(controls.lists)).digest('hex');

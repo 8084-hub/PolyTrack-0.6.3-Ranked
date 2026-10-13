@@ -1,6 +1,8 @@
 // Public, same-origin backups never replace the authoritative PB submission path.
-export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now,packed=false}){
+export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now,packed=false,onGenerationChange}){
   const pending=new Map(),saved=new Map(),retryAt=new Map();let manifestValue=null;
+  let generation=0;
+  const generationChanged=Error('Snapshot generation changed');
   const transientFetchErrors=new WeakSet();
   const SHORT_RETRY_MS=30_000,LONG_RETRY_MS=15*60_000;
   function markTransientFetchError(error){
@@ -13,14 +15,14 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
   let packageBase=new URL(baseUrl),indexRequest=null,pointerRecoveryAttempted=false,pointerRecoveryRequest=null,pointerRecoveryFailure=null;
   async function packageIndex(){
     if(!indexRequest){
-      const requestedBase=packageBase;
+      const requestedBase=packageBase,requestedGeneration=generation;
       const request=(async()=>{
         const response=await fetchSnapshot(new URL('index.json',requestedBase),{credentials:'omit',cache:'default',signal:AbortSignal.timeout(5000)});
         if(!response.ok){const error=Error('Snapshot index unavailable');error.status=response.status;error.base=requestedBase.href;throw error;}
         const text=await responseBody(response,'text');if(text.length>8*1024*1024)throw Error('Snapshot index too large');
         const index=JSON.parse(text);
         if(index.schemaVersion!==1||index.encoding!=='gzip-xor-a7-v1'||!index.files||typeof index.files!=='object')throw Error('Unsupported snapshot encoding');
-        return {index,base:requestedBase};
+        return {index,base:requestedBase,generation:requestedGeneration};
       })();
       let tracked;
       tracked=request.catch(error=>{if(indexRequest===tracked)indexRequest=null;throw error;});
@@ -48,8 +50,15 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
         if(typeof pointer.currentdir!=='string'||!/^public-snapshots[1-9]\d*$/.test(pointer.currentdir))return false;
         const nextBase=new URL(`${pointer.currentdir}/`,parent);
         if(nextBase.origin!==packageBase.origin||nextBase.pathname!==`${parent.pathname}${pointer.currentdir}/`)return false;
+        if(nextBase.href===packageBase.href)return false;
+        const previousBaseUrl=packageBase.href;
         packageBase=nextBase;
+        generation++;
         indexRequest=null;
+        // Retired requests may finish later, but their epoch cannot write these caches.
+        pending.clear();saved.clear();retryAt.clear();manifestValue=null;
+        // Notify once after invalidation. Do not await callbacks that may read the new package.
+        try{Promise.resolve(onGenerationChange?.({previousBaseUrl,baseUrl:packageBase.href,generation})).catch(()=>{});}catch{}
         return true;
       }catch(error){if(isTransientFailure(error)){pointerRecoveryFailure={error,retryAt:now()+SHORT_RETRY_MS};throw error;}return false;}
     })();
@@ -57,9 +66,9 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     request.then(()=>{if(pointerRecoveryRequest===request)pointerRecoveryRequest=null;},()=>{if(pointerRecoveryRequest===request)pointerRecoveryRequest=null;});
     return request;
   }
-  async function packedTextAtCurrent(logical){
+  async function packedTextAtCurrent(logical,requestedGeneration){
     const pack=await packageIndex();
-    if(pack.base.href!==packageBase.href)return packedTextAtCurrent(logical);
+    if(requestedGeneration!==generation||pack.generation!==requestedGeneration)throw generationChanged;
     const record=pack.index.files[logical];
     if(!record)return null;
     if(!/^[a-f0-9]{64}\.bin$/.test(record.path)||!Number.isSafeInteger(record.decodedBytes)||record.decodedBytes<1||record.decodedBytes>2*1024*1024)throw Error('Invalid snapshot record');
@@ -77,17 +86,18 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     const output=new Uint8Array(total);let offset=0;for(const chunk of chunks){output.set(chunk,offset);offset+=chunk.length;}
     return new TextDecoder().decode(output);
   }
-  async function packedText(logical){
-    try{return await packedTextAtCurrent(logical);}
+  async function packedText(logical,requestedGeneration){
+    try{return await packedTextAtCurrent(logical,requestedGeneration);}
     catch(error){
+      if(requestedGeneration!==generation)throw generationChanged;
       if(error.status===404||error.status===410){
-        if(error.base!==packageBase.href)return packedTextAtCurrent(logical);
-        if(await recoverCurrentGeneration())return packedTextAtCurrent(logical);
+        if(await recoverCurrentGeneration())throw generationChanged;
       }
       throw error;
     }
   }
-  return async function read(kind,id='',accountId=''){
+  async function readAtGeneration(kind,id,accountId,requestedGeneration){
+    if(requestedGeneration!==generation)return null;
     const path=kind==='snapshot-meta'?'public-export-summary.json':kind==='track-statistics'?'track-statistics.json':kind==='manifest'?'manifest.json':kind==='racer-directory'?'racer-directory.json':kind==='cosmetic-directory'?'cosmetic-directory.json':kind==='overall'?'overall.json':kind==='overall-results'?'overall-results.json':kind==='event-totals'?'event-totals.json':
       kind==='track'&&/^[a-f0-9]{64}$/.test(id)?`tracks/${id}.json`:
       kind==='event'&&/^[A-Za-z0-9_-]{1,64}$/.test(id)?`events/${id}.json`:
@@ -104,10 +114,14 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     if(now()<(retryAt.get(path)||0))return cached?.value||null;
     const request=(async()=>{
       // Fetch capture metadata alongside the board instead of adding another round trip.
-      const trackManifest=kind==='track'?read('manifest'):null;
+      const trackManifest=kind==='track'?readAtGeneration('manifest','','',requestedGeneration):null;
       try{
         let body;
-        if(packed){body=await packedText(path);if(body===null){retryAt.set(path,now()+LONG_RETRY_MS);if(retryAt.size>512)retryAt.delete(retryAt.keys().next().value);return null;}}
+        if(packed){
+          body=await packedText(path,requestedGeneration);
+          if(requestedGeneration!==generation)return null;
+          if(body===null){retryAt.set(path,now()+LONG_RETRY_MS);if(retryAt.size>512)retryAt.delete(retryAt.keys().next().value);return null;}
+        }
         else{
           const response=await fetchSnapshot(new URL(path,baseUrl),{credentials:'omit',cache:'default',signal:AbortSignal.timeout(5000)});
           if(!response.ok){const error=Error('Public backup unavailable');error.status=response.status;throw error;}
@@ -135,6 +149,7 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
           const checkedAt=manifest?.tracks?.[id]?.checkedAt;
           if(Number.isSafeInteger(checkedAt)&&checkedAt>0)result._snapshotCapturedAt=checkedAt;
         }
+        if(requestedGeneration!==generation)return null;
         if(kind==='manifest')manifestValue=result;
         else{
           saved.delete(path);saved.set(path,{value:result,checkedAt:now(),bytes:body.length*2});
@@ -143,10 +158,21 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
         }
         retryAt.delete(path);
         return result;
-      }catch(error){retryAt.set(path,now()+(isTransientFailure(error)?SHORT_RETRY_MS:LONG_RETRY_MS));if(retryAt.size>512)retryAt.delete(retryAt.keys().next().value);return cached?.value||null;}
+      }catch(error){
+        if(requestedGeneration!==generation)return null;
+        retryAt.set(path,now()+(isTransientFailure(error)?SHORT_RETRY_MS:LONG_RETRY_MS));if(retryAt.size>512)retryAt.delete(retryAt.keys().next().value);return cached?.value||null;
+      }
     })();
     pending.set(path,request);
     request.finally(()=>{if(pending.get(path)===request)pending.delete(path);}).catch(()=>{});
     return request;
+  }
+  return async function read(kind,id='',accountId=''){
+    for(;;){
+      const requestedGeneration=generation;
+      const value=await readAtGeneration(kind,id,accountId,requestedGeneration);
+      // Rejoin the current generation even when a retired pending request succeeds or fails.
+      if(requestedGeneration===generation)return value;
+    }
   };
 }

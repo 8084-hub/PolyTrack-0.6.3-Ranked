@@ -29,6 +29,184 @@ async function packedEntry(value){
 }
 const packedIndex=record=>Response.json({schemaVersion:1,encoding:'gzip-xor-a7-v1',files:{'overall.json':record}});
 
+
+function deferred(){
+  let resolve;
+  const promise=new Promise(done=>{resolve=done;});
+  return {promise,resolve};
+}
+
+async function generationFixture(oldFiles,currentFiles,{intercept,onGenerationChange}={}){
+  const packages=new Map();
+  for(const [generation,files] of [[7,oldFiles],[8,currentFiles]]){
+    const entries=new Map();
+    for(const [logical,value] of Object.entries(files))entries.set(logical,await packedEntry(value));
+    packages.set(generation,entries);
+  }
+  const requests=[];
+  const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/app/public-snapshots7/',now:()=>0,onGenerationChange,fetchImpl:async url=>{
+    const path=new URL(url).pathname;requests.push(path);
+    if(path==='/app/snapshot-current.json')return Response.json({currentdir:'public-snapshots8'});
+    for(const [generation,entries] of packages){
+      const base=`/app/public-snapshots${generation}/`;
+      if(path===base+'index.json')return Response.json({schemaVersion:1,encoding:'gzip-xor-a7-v1',files:Object.fromEntries([...entries].map(([logical,entry])=>[logical,entry.record]))});
+      for(const [logical,entry] of entries){
+        if(path!==base+entry.record.path)continue;
+        const response=await intercept?.({generation,logical,entry});
+        return response??new Response(entry.bytes);
+      }
+    }
+    throw Error('Unexpected fixture asset '+path);
+  }});
+  return {read,requests,count:(generation,logical)=>requests.filter(path=>path===`/app/public-snapshots${generation}/`+packages.get(generation).get(logical).record.path).length};
+}
+
+test('generation recovery invalidates warm boards, profiles, capture metadata and manifest together',async()=>{
+  const id='a'.repeat(64),track=`tracks/${id}.json`,profile=`profiles/${id}.json`;
+  const files=generation=>({
+    'overall.json':{updatedAt:generation,entries:[]},
+    [profile]:{updatedAt:generation,accountId:id,name:`Racer ${generation}`},
+    'public-export-summary.json':{capturedAt:`2026-10-0${generation}T00:00:00.000Z`},
+    'manifest.json':{schemaVersion:1,tracks:{[id]:{checkedAt:generation*1000}}},
+    [track]:{updatedAt:generation,trackId:id,entries:[]}
+  });
+  const changes=[];let warmedMetadata;
+  const fixture=await generationFixture(files(7),files(8),{
+    intercept:({generation,logical})=>generation===7&&logical===track?new Response('',{status:410}):undefined,
+    onGenerationChange:change=>{changes.push(change);warmedMetadata=fixture.read('snapshot-meta');return warmedMetadata;}
+  });
+  const {read}=fixture;
+  assert.equal((await read('overall')).updatedAt,7);
+  assert.equal((await read('profile',id)).name,'Racer 7');
+  assert.equal((await read('snapshot-meta')).capturedAt,files(7)['public-export-summary.json'].capturedAt);
+  assert.equal((await read('manifest')).tracks[id].checkedAt,7000);
+  const board=await read('track',id);
+  assert.equal(board.updatedAt,8);assert.equal(board._snapshotCapturedAt,8000);
+  assert.equal((await read('overall')).updatedAt,8);
+  assert.equal((await read('profile',id)).name,'Racer 8');
+  assert.equal((await read('manifest')).tracks[id].checkedAt,8000);
+  assert.equal((await warmedMetadata).capturedAt,files(8)['public-export-summary.json'].capturedAt);
+  assert.equal((await read('snapshot-meta')).capturedAt,files(8)['public-export-summary.json'].capturedAt);
+  assert.equal(fixture.count(8,'public-export-summary.json'),1,'callback reads join the new generation cache');
+  assert.deepEqual(changes,[{previousBaseUrl:'https://example.test/app/public-snapshots7/',baseUrl:'https://example.test/app/public-snapshots8/',generation:1}]);
+  assert.equal(fixture.requests.filter(path=>path.endsWith('/snapshot-current.json')).length,1);
+});
+
+test('late old payload bodies cannot return or overwrite cached current data',{timeout:5000},async()=>{
+  const oldStarted=deferred(),releaseOld=deferred();
+  const files=generation=>({'overall.json':{updatedAt:generation,entries:[]},'event-totals.json':{updatedAt:generation+10,entries:[]}});
+  const fixture=await generationFixture(files(7),files(8),{intercept:({generation,logical,entry})=>{
+    if(generation!==7)return;
+    if(logical==='event-totals.json')return new Response('',{status:410});
+    return {ok:true,arrayBuffer:async()=>{oldStarted.resolve();await releaseOld.promise;return Uint8Array.from(entry.bytes).buffer;}};
+  }});
+  const oldRead=fixture.read('overall');await oldStarted.promise;
+  assert.equal((await fixture.read('event-totals')).updatedAt,18);
+  assert.equal((await fixture.read('overall')).updatedAt,8);
+  releaseOld.resolve();
+  assert.equal((await oldRead).updatedAt,8,'the waiting caller must not receive its retired reply');
+  assert.equal((await fixture.read('overall')).updatedAt,8,'the retired reply must not repopulate saved data');
+  assert.equal(fixture.count(8,'overall.json'),1);
+});
+
+test('late old failure rejoins new pending reads without deleting them or poisoning their cooldown',{timeout:5000},async()=>{
+  const oldStarted=deferred(),releaseOld=deferred(),newStarted=deferred(),releaseNew=deferred();
+  const files=generation=>({'overall.json':{updatedAt:generation,entries:[]},'event-totals.json':{updatedAt:generation+10,entries:[]}});
+  const fixture=await generationFixture(files(7),files(8),{intercept:async({generation,logical})=>{
+    if(generation===7&&logical==='event-totals.json')return new Response('',{status:410});
+    if(logical==='overall.json'){
+      if(generation===7){oldStarted.resolve();await releaseOld.promise;throw new TypeError('Retired network failure');}
+      newStarted.resolve();await releaseNew.promise;
+    }
+  }});
+  const oldRead=fixture.read('overall');await oldStarted.promise;
+  await fixture.read('event-totals');
+  const currentRead=fixture.read('overall');await newStarted.promise;
+  releaseOld.resolve();await new Promise(resolve=>setImmediate(resolve));
+  const anotherRead=fixture.read('overall');
+  releaseNew.resolve();
+  for(const value of await Promise.all([oldRead,currentRead,anotherRead]))assert.equal(value.updatedAt,8);
+  assert.equal(fixture.count(8,'overall.json'),1,'retired cleanup cannot delete the new pending request');
+  assert.equal((await fixture.read('overall')).updatedAt,8);
+});
+
+test('recovery resets both missing-logical and failed-payload negative caches immediately',async()=>{
+  const id='b'.repeat(64),profile=`profiles/${id}.json`;
+  const oldFiles={'overall.json':{updatedAt:7,entries:[]},'event-totals.json':{updatedAt:17,entries:[]}};
+  const currentFiles={'overall.json':{updatedAt:8,entries:[]},'event-totals.json':{updatedAt:18,entries:[]},[profile]:{updatedAt:8,accountId:id,name:'New racer'}};
+  const fixture=await generationFixture(oldFiles,currentFiles,{intercept:({generation,logical})=>{
+    if(generation===7)return new Response('',{status:logical==='overall.json'?503:410});
+  }});
+  assert.equal(await fixture.read('profile',id),null);
+  assert.equal(await fixture.read('overall'),null);
+  assert.equal(await fixture.read('overall'),null);assert.equal(fixture.count(7,'overall.json'),1);
+  assert.equal((await fixture.read('event-totals')).updatedAt,18);
+  assert.equal((await fixture.read('profile',id)).name,'New racer');
+  assert.equal((await fixture.read('overall')).updatedAt,8,'no clock advance is needed after a generation switch');
+});
+
+test('manifest-triggered recovery keeps board and capture metadata in the same generation',{timeout:5000},async()=>{
+  const id='c'.repeat(64),track=`tracks/${id}.json`,manifestStarted=deferred(),releaseManifest=deferred();
+  const files=generation=>({'manifest.json':{schemaVersion:1,tracks:{[id]:{checkedAt:generation*1000}}},[track]:{updatedAt:generation,trackId:id,entries:[]}});
+  const fixture=await generationFixture(files(7),files(8),{intercept:async({generation,logical})=>{
+    if(generation===7&&logical==='manifest.json'){manifestStarted.resolve();await releaseManifest.promise;return new Response('',{status:410});}
+  }});
+  const boardRead=fixture.read('track',id);await manifestStarted.promise;
+  releaseManifest.resolve();
+  const board=await boardRead;
+  assert.equal(board.updatedAt,8);assert.equal(board._snapshotCapturedAt,8000);
+  assert.equal((await fixture.read('track',id)).updatedAt,8);
+  assert.equal(fixture.count(8,track),1);assert.equal(fixture.count(8,'manifest.json'),1);
+});
+
+test('a late retired manifest cannot overwrite current capture metadata',{timeout:5000},async()=>{
+  const id='d'.repeat(64),track=`tracks/${id}.json`,oldStarted=deferred(),releaseOld=deferred();
+  const files=generation=>({
+    'manifest.json':{schemaVersion:1,tracks:{[id]:{checkedAt:generation*1000}}},
+    [track]:{updatedAt:generation,trackId:id,entries:[]},
+    'event-totals.json':{updatedAt:generation,entries:[]}
+  });
+  const fixture=await generationFixture(files(7),files(8),{intercept:async({generation,logical})=>{
+    if(generation===7&&logical==='manifest.json'){oldStarted.resolve();await releaseOld.promise;}
+    if(generation===7&&logical==='event-totals.json')return new Response('',{status:410});
+  }});
+  const oldManifest=fixture.read('manifest');await oldStarted.promise;
+  await fixture.read('event-totals');
+  const currentBoard=await fixture.read('track',id);
+  assert.equal(currentBoard.updatedAt,8);assert.equal(currentBoard._snapshotCapturedAt,8000);
+  releaseOld.resolve();
+  assert.equal((await oldManifest).tracks[id].checkedAt,8000);
+  assert.equal((await fixture.read('manifest')).tracks[id].checkedAt,8000);
+  assert.equal(fixture.count(8,'manifest.json'),1);
+});
+
+test('a retired successful reply is not a fallback when the new generation is unavailable',{timeout:5000},async()=>{
+  const oldStarted=deferred(),releaseOld=deferred();
+  const files=generation=>({'overall.json':{updatedAt:generation,entries:[]},'event-totals.json':{updatedAt:generation+10,entries:[]}});
+  const fixture=await generationFixture(files(7),files(8),{intercept:async({generation,logical})=>{
+    if(generation===7&&logical==='event-totals.json')return new Response('',{status:410});
+    if(logical==='overall.json'){
+      if(generation===7){oldStarted.resolve();await releaseOld.promise;}
+      else return new Response('',{status:503});
+    }
+  }});
+  const oldRead=fixture.read('overall');await oldStarted.promise;
+  await fixture.read('event-totals');
+  assert.equal(await fixture.read('overall'),null);
+  releaseOld.resolve();
+  assert.equal(await oldRead,null);assert.equal(await fixture.read('overall'),null);
+  assert.equal(fixture.count(8,'overall.json'),1,'late old success must respect the current cooldown');
+});
+
+test('generation notification errors cannot break recovery',async()=>{
+  for(const onGenerationChange of [()=>{throw Error('Synchronous observer failure');},()=>Promise.reject(Error('Asynchronous observer failure'))]){
+    const fixture=await generationFixture({'overall.json':{updatedAt:7,entries:[]}},{'overall.json':{updatedAt:8,entries:[]}},{
+      onGenerationChange,intercept:({generation})=>generation===7?new Response('',{status:410}):undefined
+    });
+    assert.equal((await fixture.read('overall')).updatedAt,8);
+  }
+});
+
 test('packed snapshots verify checksums, decompress and reuse immutable data',async()=>{
   const fixture=await packedFixture({updatedAt:1,entries:[]});
   assert.equal((await fixture.read('overall'))._dataSource,'snapshot');
