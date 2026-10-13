@@ -14,6 +14,7 @@ class FakeNode {
     this.value = '';
     this.hidden = false;
     this.disabled = false;
+    this.inert = false;
     this.checked = false;
   }
   set textContent(value) { this._text = String(value); this.children = []; }
@@ -583,27 +584,65 @@ test('track reports expose exactly three reasons and report clear success or fai
 });
 
 test('report dialog Escape restores focus and catalog close clears nested dialog state', async () => {
-  const { root, document, api } = fixture([entry(1)], { onReport: async () => {} });
+  const { root, document, launch, api } = fixture([entry(1)], { onReport: async () => {} });
   api.open();
   const keydown = document.listeners.get('keydown');
+  const parentDialog = cls(root, 'sq-extra-menu')[0];
   const more = cls(root, 'sq-extra-more')[0];
+  assert.equal(parentDialog.getAttribute('aria-modal'), 'true');
+  assert.equal(parentDialog.inert, false);
   await click(more);
   await click(cls(root, 'sq-extra-report-button')[0]);
   const report = cls(root, 'sq-extra-report-modal')[0];
   assert.equal(report.hidden, false);
+  assert.equal(parentDialog.getAttribute('aria-modal'), 'false');
+  assert.equal(parentDialog.inert, true);
   assert.equal(document.activeElement, cls(root, 'sq-extra-submission-close')[1]);
   keydown({ key: 'Escape', preventDefault() {} });
   assert.equal(report.hidden, true);
+  assert.equal(parentDialog.getAttribute('aria-modal'), 'true');
+  assert.equal(parentDialog.inert, false);
   assert.equal(document.activeElement, more);
 
   await click(more);
   await click(cls(root, 'sq-extra-report-button')[0]);
-  keydown({ key: 'Escape', preventDefault() {} });
-  keydown({ key: 'Escape', preventDefault() {} });
-  api.open();
+  api.close();
   assert.equal(report.hidden, true);
-  assert.equal(cls(root, 'sq-extra-overlay')[0].hidden, false);
+  assert.equal(parentDialog.getAttribute('aria-modal'), 'true');
+  assert.equal(parentDialog.inert, false);
+  assert.equal(cls(root, 'sq-extra-overlay')[0].hidden, true);
+  assert.equal(document.activeElement, launch);
+
+  api.open();
+  const submissionTrigger = cls(root, 'sq-extra-submit')[0];
+  submissionTrigger.focus();
+  await click(submissionTrigger);
+  const submission = cls(root, 'sq-extra-submission-modal')[0];
+  assert.equal(submission.hidden, false);
+  assert.equal(parentDialog.getAttribute('aria-modal'), 'false');
+  assert.equal(parentDialog.inert, true);
+  keydown({ key: 'Escape', preventDefault() {} });
+  assert.equal(submission.hidden, true);
+  assert.equal(parentDialog.getAttribute('aria-modal'), 'true');
+  assert.equal(parentDialog.inert, false);
+  assert.equal(document.activeElement, submissionTrigger);
+
+  submissionTrigger.focus();
+  await click(submissionTrigger);
+  await click(cls(root, 'sq-extra-submission-close')[0]);
+  assert.equal(submission.hidden, true);
+  assert.equal(parentDialog.getAttribute('aria-modal'), 'true');
+  assert.equal(parentDialog.inert, false);
+  assert.equal(document.activeElement, submissionTrigger);
+
+  await click(more);
+  await click(cls(root, 'sq-extra-report-button')[0]);
   api.destroy();
+  assert.equal(report.hidden, true);
+  assert.equal(parentDialog.getAttribute('aria-modal'), 'true');
+  assert.equal(parentDialog.inert, false);
+  assert.equal(document.activeElement, launch);
+  assert.equal(cls(root, 'sq-extra-overlay').length, 0);
 });
 
 test('late submission success or rejection cannot close or overwrite a reopened form', async () => {

@@ -80,12 +80,12 @@ test('accepted proof preservation requires a fresh queue and matching current ca
  assert.equal(freshQueue.data.slots.racer.status,'verified','the fresh queue contains the concurrent accepted proof');
 });
 
-test('unavailable retry does not preserve a stale-engine control proof',async()=>{
+test('unavailable retry does not preserve a stale-engine native receipt',async()=>{
  const key=job.queueKey;
  const staleProof={version:1,engineDigest:'stale-engine',verifierVersion:VERIFIER_VERSION,key,
   accountId:'racer',trackId:TRACK,timeMs:row.timeMs,replayHash:row.replayHash,signature:'d'.repeat(64),transitions:24,informative:true};
  const accepted={accountId:'racer',resultId:job.resultId,trackId:TRACK,key,status:'verified',attempts:2,
-  engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,controlProof:staleProof};
+  engineDigest:'stale-engine',verifierVersion:VERIFIER_VERSION,controlProof:staleProof};
  const queue={data:{trackId:TRACK,slots:{racer:accepted}},updateTime:'queue-v1'};let committed;
  const db={get:async(collection)=>collection===VERIFICATION_COLLECTION?queue:collection==='0.6.2_race_results'?{data:row,updateTime:'result-v1'}:collection==='0.6.2_s1_worker_jobs'?{data:{pendingTrackIds:[],pendingResultIds:{}},updateTime:'state-v1'}:null,
   write:(collection,id,data,prior)=>({collection,id,data,prior}),call:async(_path,{writes})=>{committed=writes;return {};}};
@@ -308,3 +308,13 @@ test('publication CAS conflicts invalidate invocation caches and reread concurre
  assert.equal(retriedWrites[1].prior.updateTime,'external-state-v2');
  assert.equal(retriedWrites[1].data.concurrentStateField,true);
 });
+
+for(const optionalProof of [undefined,{informative:false},{version:1,verifierVersion:'undefined'}]){
+ test('failed recheck preserves native verification without a usable clone signature '+JSON.stringify(optionalProof),async()=>{
+  const accepted={...pendingSlot(row),status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,...(optionalProof?{controlProof:optionalProof}:{})};
+  let reads=0,writes=0;const db={get:async collection=>{reads++;if(collection===VERIFICATION_COLLECTION)return {data:{slots:{racer:accepted}}};if(collection==='0.6.2_race_results')return {data:row};throw Error('Unneeded read');},write:()=>{writes++;throw Error('Unexpected write');}};
+  const totals=await publishResults(db,[job],[{resultId:job.resultId,status:'unavailable',reason:'native_engine_error'}]);
+  assert.equal(totals.deferred,1);assert.equal(totals.unavailable,0);assert.equal(reads,2);assert.equal(writes,0);
+  assert.equal(verifiedControlReference(accepted,TRACK),null,'unusable clone signatures remain rejected');
+ });
+}

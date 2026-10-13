@@ -14,6 +14,13 @@ test('Unicode formatting does not hide high-confidence abusive terms', () => {
   }
 });
 
+test('combining marks from every Unicode block cannot overlay blocked words', () => {
+  for (const name of ['n\u0488igger', 'f\u0488uck', 'touch\u0488kids']) {
+    assert.equal(moderatePublicName(name).blocked, true, name);
+  }
+  assert.equal(moderatePublicName('Sof\u0488ia Racer').blocked, false);
+});
+
 test('Unicode policy preserves benign multilingual names and repeated-letter handles', () => {
   for (const name of [
     'NigerianRacer',

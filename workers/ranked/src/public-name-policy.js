@@ -30,7 +30,7 @@ export function normalizeNameForCheck(value) {
     return char;
   }).join('');
   // Preserve the c-shaped lunate sigma's visual meaning before NFKD turns it into ordinary sigma.
-  return Array.from(visibleLetters.replace(/[ϲϹ]/g,'c').replace(/Υ/g,'Y').normalize('NFKD').toLowerCase().replace(/[\u0300-\u036f]/g, ''), char => confusables[char] || char).join('')
+  return Array.from(visibleLetters.replace(/[ϲϹ]/g,'c').replace(/Υ/g,'Y').normalize('NFKD').toLowerCase().replace(/\p{M}/gu, ''), char => confusables[char] || char).join('')
     .replace(/[@4]/g, 'a').replace(/[8]/g, 'b').replace(/[3]/g, 'e')
     .replace(/[1!|]/g, 'i').replace(/[0]/g, 'o').replace(/[5$]/g, 's')
     .replace(/[7+]/g, 't').replace(/[^a-z0-9Ѐ-ӿ぀-ヿ一-鿿]+/g, ' ')

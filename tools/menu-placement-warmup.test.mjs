@@ -10,7 +10,7 @@ const code=source.slice(start,end).replace('import(recordPlacementModuleUrl)','P
 const id='a'.repeat(64),otherId='b'.repeat(64);
 const flush=()=>new Promise(done=>setImmediate(done));
 function fixture(){
-  let options,readerResolve;const reads=[],timers=[];const store={};let visible=true;
+  let options,readerResolve;const reads=[],metadataReads=[],timers=[];const store={};let visible=true;
   const ctx=vm.createContext({URL,Map,Set,Promise,Date,Number,String,Math,Array,Object,
     eventsModuleUrl:'https://game.test/events/client.mjs',RANK_MODEL:'model',TRACK_CACHE_SCHEMA:6,
     trackCacheGeneration:0,localRaceGeneration:0,placementRenderTimer:0,
@@ -19,14 +19,14 @@ function fixture(){
     activeRankedAccountId:()=> 'me',localStorage:{getItem:()=>null},personalFilterRuntime:null,
     cleanUserId:value=>String(value||''),canonicalRaceTimeMs:row=>Number(row?.timeMs)||0,
     localBestRowsForAccount:()=>[{trackId:id,accountId:'me',timeMs:950}],
-    readPublicSnapshotBackup:(kind,trackId)=>{reads.push([kind,trackId]);return new Promise(done=>{readerResolve=done;});},
+    readPublicSnapshotBackup:(kind,trackId)=>{if(kind==='track-statistics'){metadataReads.push(kind);return Promise.resolve({tracks:{}});}assert.equal(kind,'track');reads.push([kind,trackId]);return new Promise(done=>{readerResolve=done;});},
     document:{hidden:false,querySelector:()=>({}),addEventListener(){}},window:{innerWidth:1280,innerHeight:720},
     isElementVisible:()=>visible,setTimeout:fn=>{timers.push(fn);return timers.length;},log(){},
     placementModule:{...placement,installRecordPlacement(value){options=value;return {update(){}};}}
   });
   vm.runInContext(code,ctx);
   const title={closest:()=>({getBoundingClientRect:()=>({left:0,top:10,right:200,bottom:300})})};
-  return {ctx,reads,store,timers,title,get options(){return options;},resolve:value=>readerResolve(value),hide:()=>{visible=false;}};
+  return {ctx,reads,metadataReads,store,timers,title,get options(){return options;},resolve:value=>readerResolve(value),hide:()=>{visible=false;}};
 }
 const board=(revision=2)=>({trackId:id,complete:true,totalEntries:3,revision,algorithmVersion:'model',schemaVersion:6,updatedAt:200,entries:[
   {accountId:'first',timeMs:900,runVerified:true,replay:'must not retain',profileCosmetics:{large:true}},
@@ -36,6 +36,7 @@ test('visible cards warm static snapshots once, keep only placement fields, and 
   const f=fixture();await f.ctx.ensureRecordPlacementUi();
   f.options.requestSnapshot(id,f.title);f.options.requestSnapshot(id,f.title);await flush();
   assert.deepEqual(f.reads,[['track',id]],'no cloud API participates in menu warming');
+  assert.deepEqual(f.metadataReads,['track-statistics'],'the compact static index warms once');
   f.resolve(board());await flush();await flush();
   const saved=f.options.readSnapshots()[id];
   assert.equal(saved.complete,true);assert.equal(saved.checkedAt,0);

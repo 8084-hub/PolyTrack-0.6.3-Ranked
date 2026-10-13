@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import {similarityEvidence,verifiedControlProof} from './similarity.mjs';
 import {reviewInboxWrite} from './review-inbox.mjs';
 import {queueState, reconciledSlot, completedSlot} from './queue.mjs';
-import {VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION, VERIFIER_ENGINE_DIGEST, VERIFIER_VERSION, verificationCollectionForTrack, verificationKey, legacyTimingFrames} from '../../workers/ranked/src/verification.js';
+import {VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION, VERIFIER_ENGINE_DIGEST, VERIFIER_VERSION, verificationCollectionForTrack, verificationKey, legacyTimingFrames, hasAcceptedVerifiedProof} from '../../workers/ranked/src/verification.js';
 
 export const QUEUE_CANDIDATE_LIMIT = 8;
 export const TRACK_AGING_MS = 3600000;
@@ -230,7 +230,9 @@ export async function publishResults(db, jobs, results, {allowExtendedLocal = fa
         totals.superseded++; break;
       }
       const existingSlot=queue.data.slots[job.accountId];
-      if(result.status==='unavailable'&&verifiedControlReference(existingSlot,job.trackId)){
+      // Receipt validity is independent of optional clone-comparison signatures.
+      if(result.status==='unavailable'&&hasAcceptedVerifiedProof(current.data,existingSlot)&&
+          existingSlot.accountId===job.accountId&&existingSlot.trackId===job.trackId&&existingSlot.resultId===job.resultId){
         totals.deferred++;
         totals.reasons.accepted_proof_preserved=(totals.reasons.accepted_proof_preserved||0)+1;
         break;

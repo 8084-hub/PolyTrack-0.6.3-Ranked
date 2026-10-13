@@ -1521,7 +1521,6 @@ async function notifyProfile(request, env, context, uid, body) {
     return json(request.headers.get('Origin') || '', env, 403, { error: 'profile_not_owned' });
   }
   const betaEntitlement = await ensureProfileBetaEntitlement(env, accountId, profile.data.accountCreatedAt);
-  const results = await runQuery(env, COLLECTIONS.raceResults, { field: 'accountId', value: accountId }, 100);
   const identity = {
     accountId,
     name: safePublicName(profile.data.nickname || profile.data.name || 'Racer', accountId),
@@ -1535,14 +1534,19 @@ async function notifyProfile(request, env, context, uid, body) {
   const groupTag = await readDocument(env, COLLECTIONS.groupTags, `account_${accountId}`);
   identity.groupCode = groupTag?.data?.groupCode || '';
   identity.groupCodeUpdatedAt = Number(groupTag?.data?.updatedAt || 0);
-  const trackIds = [...new Set(results.map((result) => safeText(result.data.trackId, 80)).filter(Boolean))].slice(0, 100);
   const signature = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(identity))).then((bytes) => base64Url(new Uint8Array(bytes)));
   const jobId = `profile_${accountId}`;
   const existingDoc=await readDocument(env,COLLECTIONS.jobs,jobId);
   const existing=existingDoc?.data||{};
-  if (existing.signature === signature && (!Array.isArray(existing.pendingTrackIds) || existing.pendingTrackIds.length === 0)) {
-    return json(request.headers.get('Origin') || '', env, 200, { accepted: true, accountId, queued: 0, unchanged: true, betaEntitlement });
+  if (existing.signature === signature) {
+    const queued = Array.isArray(existing.pendingTrackIds) ? existing.pendingTrackIds.length : 0;
+    if (!queued || existing.active === true) {
+      // Scheduled processing continues existing work without re-reading completed tracks.
+      return json(request.headers.get('Origin') || '', env, queued ? 202 : 200, { accepted: true, accountId, queued, unchanged: true, betaEntitlement });
+    }
   }
+  const results = await runQuery(env, COLLECTIONS.raceResults, { field: 'accountId', value: accountId }, 100);
+  const trackIds = [...new Set(results.map((result) => safeText(result.data.trackId, 80)).filter(Boolean))].slice(0, 100);
   const pendingTrackIds = existing.signature === signature
     ? [...new Set([...(existing.pendingTrackIds || []), ...trackIds])]
     : trackIds;

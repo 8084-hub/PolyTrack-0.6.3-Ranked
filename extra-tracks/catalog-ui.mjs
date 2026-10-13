@@ -134,6 +134,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     submissionReturnFocus = document.activeElement;
     submissionGeneration++;
     submissionModal.hidden = false;
+    syncDialogModality();
     showStatus(submissionRequest ? SUBMISSION_PENDING_MESSAGE : pendingAction ? ACTION_PENDING_MESSAGE : '');
     syncSendControls();
     submitName.focus();
@@ -751,6 +752,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       syncSendControls();
       for (const choice of reportChoices.children) choice.children[0].checked = false;
       reportModal.hidden = false;
+      syncDialogModality();
       reportClose.focus();
     }));
     actions.append(more);
@@ -956,13 +958,22 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     overlay.hidden = true;
     closeSubmission(false);
     closeReport(false);
-    if (returnFocus?.focus) returnFocus.focus();
+    syncDialogModality();
+    if (returnFocus?.isConnected !== false) returnFocus?.focus?.();
+    returnFocus = null;
+  }
+
+  function syncDialogModality() {
+    const nestedModalOpen = !submissionModal.hidden || !reportModal.hidden;
+    dialog.inert = nestedModalOpen;
+    dialog.setAttribute('aria-modal', String(!nestedModalOpen));
   }
 
   function closeSubmission(restoreFocus = true) {
     if (submissionModal.hidden) return;
     submissionGeneration++;
     submissionModal.hidden = true;
+    syncDialogModality();
     if (restoreFocus) (submissionReturnFocus?.isConnected !== false ? submissionReturnFocus : submit)?.focus();
     submissionReturnFocus = null;
   }
@@ -972,6 +983,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     reportGeneration++;
     reportModal.hidden = true;
     reportingEntry = null;
+    syncDialogModality();
     if (restoreFocus) (reportReturnFocus?.isConnected !== false ? reportReturnFocus : search)?.focus();
     reportReturnFocus = null;
   }
@@ -984,6 +996,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     cachedRecords = null;
     submissionModal.hidden = true;
     reportModal.hidden = true;
+    syncDialogModality();
     overlay.hidden = false;
     showStatus('');
     render();
