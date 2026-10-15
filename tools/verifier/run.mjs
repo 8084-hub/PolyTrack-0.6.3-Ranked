@@ -4,7 +4,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {connect, decode} from './firestore.mjs';
 import {QUEUE_CANDIDATE_LIMIT, highestPriorityTrack, prioritizeQueueDocuments, selectJobs, publishResults, verifiedTrackCounts} from './runner.mjs';
-import {budgetDatabase, drainVerification, DRAIN_LIMITS, CATCH_UP_LIMITS} from './throughput.mjs';
+import {budgetDatabase, drainVerification, DRAIN_LIMITS, CATCH_UP_LIMITS, VerificationEventConflictError} from './throughput.mjs';
 import {loadWeeklyTrustedTrack} from './weekly-track.mjs';
 import {createSimilarityReviewer} from './similarity.mjs';
 import {VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION, VERIFIER_ENGINE_DIGEST} from '../../workers/ranked/src/verification.js';
@@ -14,6 +14,9 @@ export const TOTAL_JOB_LIMIT = 16;
 export const PREFLIGHT_QUEUE_SAMPLE_LIMIT = 20;
 const isDeferredFirestoreThrottle = error => error?.deferred === true &&
   /^FIRESTORE_(READ|COMMIT)_THROTTLED$/.test(String(error.code || ''));
+const isDeferredEventConflict = error => error instanceof VerificationEventConflictError &&
+  error.cause?.status === 409 && error.cause?.code === 'ABORTED';
+const EVENT_CONFLICT_MESSAGE = 'An event transaction conflicted. Earlier writes may have committed; interrupted-round publication counts are incomplete. No write was replayed; the next invocation will reread queue state.';
 const checkEvents = async (db, options) => (await import('./events.mjs')).checkEventWork(db, options);
 const runEvents = async (db, directory, options) => (await import('./events.mjs')).runEventVerification(db, directory, options);
 const simulate = async (directory, jobs, trustedTracks) => (await import('./verify.cjs')).verifyBatch(directory, jobs, trustedTracks);
@@ -123,9 +126,10 @@ export async function runVerifier({check = false, drain = false, catchUp = false
   if (!drain) {
     try { return await runRound(db,roundOptions); }
     catch (error) {
-      if (!isDeferredFirestoreThrottle(error)) throw error;
-      const summary={deferred:true,reason:'firestore_throttled',interruptedRound:true,countsComplete:false};
-      const message='Firestore throttled verification. This invocation deferred without replaying a write; queue state will be reread on the next scheduled run.';
+      const eventConflict=isDeferredEventConflict(error);
+      if (!eventConflict && !isDeferredFirestoreThrottle(error)) throw error;
+      const summary={deferred:true,reason:eventConflict?'event_conflict':'firestore_throttled',interruptedRound:true,countsComplete:false};
+      const message=eventConflict?EVENT_CONFLICT_MESSAGE:'Firestore throttled verification. This invocation deferred without replaying a write; queue state will be reread on the next scheduled run.';
       log(JSON.stringify(summary));
       if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY,'## Verification deferred\n'+message+'\n\n'+JSON.stringify(summary)+'\n');
       return summary;
@@ -148,7 +152,8 @@ export async function runVerifier({check = false, drain = false, catchUp = false
     'Interrupted-round publication counts are incomplete, not zero. `stop` explains why this invocation ended; a round is not a GitHub workflow run number. '+
     'Unknown or untrusted tracks remain unavailable rather than admitting user-supplied track data.\n'+
     `\nVerified tracks:\n${verifiedTrackCounts(summary.verifiedByTrack).map(track=>`- ${track.trackName}: ${track.count}`).join('\n') || '- None'}\n`+
-    (summary.stop==='firestore_throttled'?'Firestore returned a deferred throttle response. No commit was replayed; queue state will be reread by a later scheduled run. Publication counts for the interrupted round are incomplete.\n':''));
+    (summary.stop==='firestore_throttled'?'Firestore returned a deferred throttle response. No commit was replayed; queue state will be reread by a later scheduled run. Publication counts for the interrupted round are incomplete.\n':'')+
+    (summary.stop==='event_conflict'?EVENT_CONFLICT_MESSAGE+'\n':''));
   return summary;
 }
 

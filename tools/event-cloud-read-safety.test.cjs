@@ -44,7 +44,7 @@ test('event Worker 429 without backup sets cooldown and never reads Firestore or
 test('event Worker 429 serves available public backup without Firestore',async()=>{
   const backup={periods:[{id:'event'}]};const h=harness({status:429,backup});
   const value=await h.context.eventCloudRead('/v1/events/test/snapshot','events','test');
-  assert.deepEqual(JSON.parse(JSON.stringify(value)),backup);
+  assert.deepEqual(JSON.parse(JSON.stringify(value)),{...backup,_publicBackup:true,_eventRefreshFailed:true});
   assert.equal(h.firestoreReads,0);assert.equal(h.quotaNotes,0);
 });
 
@@ -53,14 +53,14 @@ test('event 429 leaves shared edge available for a different event path',async()
   await assert.rejects(h.context.eventCloudRead('/path-a','events','a'),/rate limited/);
   assert.equal(h.context.rankedEdgeAvailable(),true,'429 must not poison shared edge availability');
   const value=await h.context.eventCloudRead('/path-b','events','b');
-  assert.deepEqual(JSON.parse(JSON.stringify(value)),{worker:true});
+  assert.deepEqual(JSON.parse(JSON.stringify(value)),{worker:true,_eventLiveCheckedAt:100000});
   assert.equal(h.workerCalls,2);assert.equal(h.firestoreReads,0);
 });
 
 test('genuine Worker fetch failure retains direct Firestore fallback',async()=>{
   const h=harness({fetchError:Error('network unavailable')});
   const value=await h.context.eventCloudRead('/v1/events/test/snapshot','events','test');
-  assert.deepEqual(JSON.parse(JSON.stringify(value)),{firestore:true});
+  assert.deepEqual(JSON.parse(JSON.stringify(value)),{firestore:true,_eventLiveCheckedAt:100000});
   assert.equal(h.firestoreReads,1);assert.equal(h.quotaNotes,0);
 });
 
@@ -68,7 +68,7 @@ for(const condition of ['blocked','limited'])test('Event RP totals use the corre
  const backup={updatedAt:100,entries:[{accountId:'racer',eventRp:400}]};
  const h=harness({fetchError:condition==='blocked'?Error('network unavailable'):null,status:condition==='limited'?429:200,backup:kind=>kind==='event-totals'?backup:null});
  const value=await h.context.eventCloudRead('/v1/events/totals','0.6.2_event_public','totals');
- assert.deepEqual(JSON.parse(JSON.stringify(value)),backup);
+ assert.deepEqual(JSON.parse(JSON.stringify(value)),{...backup,_publicBackup:true,_eventRefreshFailed:true});
  assert.deepEqual(h.backupReads,[{kind:'event-totals',id:'totals'}]);
  assert.equal(h.firestoreReads,0,'existing static totals avoid a billable fallback read');
 });
@@ -77,4 +77,14 @@ test('protected accounts use event totals snapshot without contacting either liv
  const h=harness({snapshotOnly:true,backup:kind=>kind==='event-totals'?backup:null});
  assert.deepEqual(await h.context.eventCloudRead('/v1/events/totals','0.6.2_event_public','totals'),backup);
  assert.equal(h.workerCalls,0);assert.equal(h.firestoreReads,0);
+});
+
+
+test('failed refresh and retry cooldown retain the last successful check without claiming success',async()=>{
+ const h=harness();const route='/v1/events/test/snapshot';
+ const first=await h.context.eventCloudRead(route,'events','test');assert.equal(first._eventLiveCheckedAt,100000);
+ h.advance(60001);h.context.loadEventCloudRead=async()=>{throw Error('offline');};
+ const failed=await h.context.eventCloudRead(route,'events','test');assert.equal(failed._eventRefreshFailed,true);assert.equal(failed._eventLiveCheckedAt,100000);
+ const retry=await h.context.eventCloudRead(route,'events','test');assert.equal(retry._eventRefreshFailed,true);assert.equal(retry._eventLiveCheckedAt,100000);
+ assert.equal(h.workerCalls,1);assert.equal(h.firestoreReads,0);
 });

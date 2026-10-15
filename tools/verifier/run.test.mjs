@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {runRound} from './run.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {runRound, runVerifier} from './run.mjs';
+import {VerificationEventConflictError} from './throughput.mjs';
 import {prioritizeQueueDocuments} from './runner.mjs';
 import {VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION} from '../../workers/ranked/src/verification.js';
 import {EXTRA_TRACK_IDS} from '../../workers/ranked/src/extra-track-ids.js';
@@ -85,4 +89,106 @@ test('event intake contention lends unused slots to normal work instead of crash
  const logs=[];let seenCapacity=0;
  const result=await runRound({call:async()=>[],requests:()=>1}, {...options,log:message=>logs.push(message),eventRun:async()=>({checked:0,consumed:0,rejected:false,archived:null,results:[],budgetDeferred:true,conflictDeferred:true}),selectNormal:async(_db,_docs,_now,limits)=>{seenCapacity=limits.jobLimit;return {jobs:[],canonicalAttempts:0,selectionConflicts:0};}});
  assert.equal(result.events.conflictDeferred,true);assert.equal(result.infrastructureFailure,false);assert.equal(seenCapacity,16);assert.ok(logs.some(s=>s.includes('normal verification continues')));
+});
+
+function failureFixture(failure, {summaryPath, drain = false, catchUp = false} = {}) {
+  let eventCalls = 0;
+  const logs = [];
+  return {logs, eventCalls: () => eventCalls, options: {
+    drain, catchUp, clock: () => 0,
+    env: {FIREBASE_VERIFIER_SERVICE_ACCOUNT: 'offline-synthetic', GITHUB_EVENT_NAME: 'workflow_dispatch',
+      ...(summaryPath ? {GITHUB_STEP_SUMMARY: summaryPath} : {})},
+    log: message => logs.push(message), validateEngine: async () => {},
+    connectDatabase: async () => ({call: async () => assert.fail('no database work after event conflict')}),
+    eventRun: async () => { eventCalls++; throw failure; },
+    selectNormal: async () => assert.fail('no normal selection after event conflict'),
+    verifyNormal: async () => assert.fail('no normal verification after event conflict'),
+    publishNormal: async () => assert.fail('no normal publication after event conflict'),
+  }};
+}
+
+function summaryFile(t) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'polytrack-event-conflict-summary-'));
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  return path.join(directory, 'summary.md');
+}
+
+const aborted = () => Object.assign(Error('Firestore request failed: 409'), {status: 409, code: 'ABORTED'});
+function assertConflictExplanation(text) {
+  assert.match(text, /Earlier writes may have committed/);
+  assert.match(text, /interrupted-round publication counts are incomplete/);
+  assert.match(text, /No write was replayed/);
+  assert.match(text, /next invocation will reread queue state/);
+  assert.doesNotMatch(text, /Firestore throttled|deferred throttle response/);
+}
+
+test('non-drain exact tagged event conflict defers once with incomplete counts and a truthful summary', async t => {
+  for (const summaryPath of [undefined, summaryFile(t)]) {
+    const f = failureFixture(new VerificationEventConflictError(aborted()), {summaryPath});
+    const result = await runVerifier(f.options);
+    assert.deepEqual(result, {deferred: true, reason: 'event_conflict', interruptedRound: true, countsComplete: false});
+    assert.equal(f.eventCalls(), 1);
+    assert.deepEqual(f.logs.map(line => JSON.parse(line)), [result]);
+    if (summaryPath) {
+      const text = fs.readFileSync(summaryPath, 'utf8');
+      assert.match(text, /## Verification deferred/);
+      assertConflictExplanation(text);
+      assert.ok(text.includes(JSON.stringify(result)));
+    }
+  }
+});
+
+test('non-drain event deferral rejects untagged conflicts, lookalikes and non-ABORTED causes', async t => {
+  const cause = aborted();
+  const denied = Object.assign(Error('denied'), {status: 403, code: 'PERMISSION_DENIED'});
+  const timeout = Error('timeout');
+  const failures = [cause, denied, timeout,
+    Object.assign(Error('lookalike'), {code: 'VERIFICATION_EVENT_CONFLICT', deferred: true, cause}),
+    {name: 'VerificationEventConflictError', code: 'VERIFICATION_EVENT_CONFLICT', deferred: true, cause},
+    new VerificationEventConflictError(denied), new VerificationEventConflictError(timeout),
+    new VerificationEventConflictError(undefined),
+    ...[['409', 'ABORTED'], [503, 'ABORTED'], [409, 'event_lease_lost'], [409, 'FAILED_PRECONDITION'],
+      [409, undefined], [undefined, 'ABORTED']].map(([status, code]) =>
+      new VerificationEventConflictError(Object.assign(Error('not an exact abort'), {status, code}))),
+  ];
+  const summaryPath = summaryFile(t);
+  for (const failure of failures) {
+    const f = failureFixture(failure, {summaryPath});
+    await assert.rejects(runVerifier(f.options), error => error === failure);
+    assert.equal(f.eventCalls(), 1);
+    assert.deepEqual(f.logs, []);
+    assert.equal(fs.existsSync(summaryPath), false, 'failed work must not be summarized as deferred');
+  }
+});
+
+test('drain and Catch-Up summaries explain event-conflict publication uncertainty and rereading', async t => {
+  for (const catchUp of [false, true]) {
+    const summaryPath = summaryFile(t);
+    const f = failureFixture(new VerificationEventConflictError(aborted()), {summaryPath, drain: true, catchUp});
+    const result = await runVerifier(f.options);
+    assert.equal(result.stop, 'event_conflict');
+    assert.equal(result.interruptedRound, true);
+    assert.equal(result.countsComplete, false);
+    assert.equal(result.rounds, 0);
+    assert.equal(f.eventCalls(), 1);
+    const text = fs.readFileSync(summaryPath, 'utf8');
+    assert.match(text, /## Bounded drain/);
+    assertConflictExplanation(text);
+    assert.ok(text.includes(JSON.stringify(result)));
+  }
+});
+
+test('non-drain and drain throttle deferrals keep their existing distinct explanations', async t => {
+  for (const drain of [false, true]) {
+    const summaryPath = summaryFile(t);
+    const failure = Object.assign(Error('throttled'), {status: 429, code: 'FIRESTORE_COMMIT_THROTTLED', deferred: true});
+    const f = failureFixture(failure, {summaryPath, drain});
+    const result = await runVerifier(f.options);
+    assert.equal(drain ? result.stop : result.reason, 'firestore_throttled');
+    assert.equal(result.countsComplete, false);
+    assert.equal(f.eventCalls(), 1);
+    const text = fs.readFileSync(summaryPath, 'utf8');
+    assert.match(text, /Firestore throttled|Firestore returned a deferred throttle response/);
+    assert.doesNotMatch(text, /An event transaction conflicted/);
+  }
 });

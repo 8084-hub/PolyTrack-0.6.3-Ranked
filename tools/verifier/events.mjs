@@ -4,8 +4,17 @@ import { eventRuntime, eventWork, consumeEventInbox } from '../../workers/ranked
 import { VERIFIER_ENGINE_DIGEST, VERIFIER_VERSION } from '../../workers/ranked/src/verification.js';
 import { createSimilarityReviewer, similarityEvidence } from './similarity.mjs';
 import { reviewInboxWrite } from './review-inbox.mjs';
+import { VerificationEventConflictError } from './throughput.mjs';
 
 export const EVENT_JOB_LIMIT = 16;
+async function deferEventConflict(work) {
+  try { return await work(); }
+  catch (error) {
+    if (error?.status !== 409 || error?.code !== 'ABORTED') throw error;
+    // Only this transaction aborted; earlier leases/publications may be durable.
+    throw new VerificationEventConflictError(error);
+  }
+}
 function runtime(db, now = Date.now) {
   if (typeof db?.call !== 'function') throw Error('Event Firestore connection required');
   return eventRuntime((path, init) => db.call(path, init?.body ? JSON.parse(init.body) : undefined), { now });
@@ -68,7 +77,7 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
     if (!canSpend(136)) { budgetDeferred = true; break; }
     const periodId = pending.shift();
     const reviewCandidates = new Map();
-    const published = await r.service.processBatch(periodId, (jobs,period)=>{
+    const published = await deferEventConflict(() => r.service.processBatch(periodId, (jobs,period)=>{
         const verifyAndReview = async (trustedJobs, trustedPeriod, trustedTracks) => {
           const verified = await verifyBatch(root,trustedJobs,trustedTracks);
           if (reviewSimilarity) {
@@ -90,7 +99,7 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
         if(period.kind!=='kodub')return verifyAndReview(jobs,period);
         if(!jobs.every(job=>job.trackId===period.trackId))throw Error('Kodub verifier period mismatch');
         return verifyAndReview(jobs,period,[{trackId:period.trackId,code:period.kodub.trackCode,codeHash:period.kodub.trackCodeHash}]);
-      }, Math.min(4, limit - checked));
+      }, Math.min(4, limit - checked)));
     // A finding is durable only after publication confirms the same result and verdict.
     if (writeFinding) for (const result of published) {
       const candidate = reviewCandidates.get(result?.resultId);
@@ -107,7 +116,7 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
     if (published.length) pending.push(periodId);
   }
   let archived = null;
-  if (work.archiveId && canSpend(24)) { await r.service.archivePeriod(work.archiveId); archived = work.archiveId; }
+  if (work.archiveId && canSpend(24)) { await deferEventConflict(() => r.service.archivePeriod(work.archiveId)); archived = work.archiveId; }
   else if (work.archiveId) budgetDeferred = true;
   return { checked, consumed, rejected, archived, results, budgetDeferred, eventFindingsAdded, eventFindingWriteFailed };
 }

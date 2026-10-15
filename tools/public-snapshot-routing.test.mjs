@@ -271,7 +271,10 @@ test('actual event bridge still gets authoritative live standings from the Worke
   const context=vm.createContext({snapshotOnlyForNewAccount:()=>false,readPublicSnapshotBackup:async()=>live,rankedEdgeAvailable:()=>true,
     rankedBrokerUrl:()=> 'https://example.test',AbortSignal,fetch:async()=>{cloud++;return {status:200,ok:true,headers:new Headers({'content-type':'application/json'}),json:async()=>live};}});
   vm.runInContext(section('  async function loadEventCloudRead(', '  const archiveMonthReads='),context);
-  assert.equal(await context.loadEventCloudRead('/v1/events/d_live/snapshot','0.6.2_event_public','d_live'),live);
+  const result=await context.loadEventCloudRead('/v1/events/d_live/snapshot','0.6.2_event_public','d_live');
+  assert.deepEqual(JSON.parse(JSON.stringify(result)),{...live,_eventLiveCheckedAt:result._eventLiveCheckedAt});
+  assert.ok(Number.isSafeInteger(result._eventLiveCheckedAt)&&result._eventLiveCheckedAt>0);
+  assert.equal(live._eventLiveCheckedAt,undefined,'source data is not mutated');
   assert.equal(cloud,1);
 });
 

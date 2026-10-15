@@ -24,10 +24,11 @@ class FakeNode {
   remove() { if (this.parent) this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; }
   setAttribute(name, value) { this.attributes.set(name, value); }
   getAttribute(name) { return this.attributes.get(name); }
+  removeAttribute(name) { this.attributes.delete(name); }
   addEventListener(name, handler) { const list = this.listeners.get(name) || []; list.push(handler); this.listeners.set(name, list); }
   removeEventListener(name, handler) { this.listeners.set(name, (this.listeners.get(name) || []).filter(item => item !== handler)); }
   dispatch(name, extra = {}) { return Promise.all((this.listeners.get(name) || []).map(handler => handler({ target: this, preventDefault() {}, ...extra }))); }
-  focus() { this.document.activeElement = this; }
+  focus(options) { this.document.activeElement = this; this.focusOptions = options; }
   contains(node) { return node === this || this.children.some(child => child.contains(node)); }
   querySelectorAll() { return walk(this).filter(node => ['BUTTON', 'INPUT', 'SELECT', 'A'].includes(node.tagName) && !node.disabled); }
 }
@@ -145,6 +146,29 @@ test('local picks toggle, rating changes and export callback stay device-scoped'
   api.destroy();
 });
 
+test('async pick export is single-flight and exposes its pending state', async () => {
+  const request = deferred();
+  let exports = 0;
+  const { root, api } = fixture([entry(1)], {
+    onExportFeedback: () => { exports++; return request.promise; }
+  });
+  api.open();
+  const exportButton = cls(root, 'sq-extra-export')[0];
+  const first = click(exportButton);
+  const duplicate = click(exportButton);
+  assert.equal(exports, 1, 'repeated clicks do not start duplicate exports');
+  assert.equal(exportButton.disabled, true);
+  assert.equal(exportButton.textContent, 'Exporting...');
+  assert.equal(exportButton.getAttribute('aria-busy'), 'true');
+  request.resolve();
+  await Promise.all([first, duplicate]);
+  assert.equal(exportButton.disabled, false);
+  assert.equal(exportButton.textContent, 'Export my picks');
+  assert.equal(exportButton.getAttribute('aria-busy'), undefined);
+  assert.match(cls(root, 'sq-extra-status')[0].textContent, /were exported/);
+  api.destroy();
+});
+
 test('reviewer quick ratings map zero to ten, accept number-pad keys and ignore editable controls', async () => {
   const saved = new Map();
   const item = entry(1);
@@ -255,13 +279,13 @@ test('review status filter counts favorite and rating separately from tag edits'
   saved.set(items[0].id, { favorite: true, rating: 10 });
   saved.set(items[1].id, { addedTags: ['scenic'], editedAt: Date.now() });
   api.refresh();
-  const review = tag(cls(root, 'sq-extra-controls')[0].children[5], 'select')[0];
+  const review = tag(cls(root, 'sq-extra-advanced')[0].children[4], 'select')[0];
   const names = () => cls(root, 'sq-extra-card').map(card => tag(card, 'h3')[0].textContent);
   review.value = 'edited'; await review.dispatch('change');
   assert.deepEqual(names(), ['Track 02']);
   review.value = 'not-edited'; await review.dispatch('change');
   assert.deepEqual(names(), ['Track 01', 'Track 03']);
-  const sort = tag(cls(root, 'sq-extra-controls')[0].children[6], 'select')[0];
+  const sort = tag(cls(root, 'sq-extra-advanced')[0].children[5], 'select')[0];
   review.value = 'all'; await review.dispatch('change');
   sort.value = 'edited-first'; await sort.dispatch('change');
   assert.equal(names()[0], 'Track 02');
@@ -275,7 +299,7 @@ test('tag filter reports vocabulary size and disables unused options without hid
     getFeedback: () => ({}), onFeedback: () => {}
   });
   api.open();
-  const tagField = cls(root, 'sq-extra-controls')[0].children[2];
+  const tagField = cls(root, 'sq-extra-advanced')[0].children[1];
   const select = tag(tagField, 'select')[0];
   const scenic = [...select.children].find(option => option.value === 'scenic');
   assert.equal(scenic.disabled, true);
@@ -291,7 +315,7 @@ test('tag filter reports vocabulary size and disables unused options without hid
 test('source counts, suggested tags and the submission dialog stay together', async () => {
   const { root, api } = fixture([entry(1), entry(2), entry(3)]);
   api.open();
-  const source = cls(root, 'sq-extra-controls')[0].children[1].children.find(node => node.tagName === 'SELECT');
+  const source = cls(root, 'sq-extra-advanced')[0].children[0].children.find(node => node.tagName === 'SELECT');
   assert.match(source.textContent, /Kacky \(2\)/);
   assert.match(source.textContent, /Community \(1\)/);
   const modal = cls(root, 'sq-extra-submission-modal')[0];
@@ -780,8 +804,29 @@ test('empty entries still mount and show an accurate zero count', () => {
   assert.equal(cls(root, 'sq-extra-count')[0].textContent, '0 of 0 tracks');
 });
 
+test('advanced filter count tracks active groups and excludes search', async () => {
+  const { root, api } = fixture([entry(1), entry(2)]);
+  api.open();
+  const toggle = cls(root, 'sq-extra-advanced-toggle')[0];
+  const fields = cls(root, 'sq-extra-field');
+  assert.equal(toggle.textContent, 'Filters & sort');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true', 'desktop keeps advanced controls expanded');
+  const search = tag(fields[0], 'input')[0];
+  search.value = 'track'; await search.dispatch('input');
+  assert.equal(toggle.textContent, 'Filters & sort', 'search is not counted as an advanced group');
+  const source = tag(fields[1], 'select')[0];
+  source.value = 'Kacky'; await source.dispatch('change');
+  assert.equal(toggle.textContent, 'Filters & sort (1)');
+  const sort = tag(fields[6], 'select')[0];
+  sort.value = 'name'; await sort.dispatch('change');
+  assert.equal(toggle.textContent, 'Filters & sort (2)', 'sort and source count as distinct groups');
+  await click(cls(root, 'sq-extra-clear')[0]);
+  assert.equal(toggle.textContent, 'Filters & sort', 'reset clears the active-group count');
+  api.destroy();
+});
+
 test('multiple tags combine, and empty results offer a reset', async () => {
-  const { root, api } = fixture([
+  const { document, root, api } = fixture([
     entry(1, { tags: ['technical', 'speed'] }),
     entry(2, { tags: ['technical'] }),
     entry(3, { tags: ['speed'] })
@@ -798,6 +843,8 @@ test('multiple tags combine, and empty results offer a reset', async () => {
   await click(cls(root, 'sq-extra-clear')[0]);
   assert.equal(cls(root, 'sq-extra-card').length, 3);
   assert.equal(cls(root, 'sq-extra-selected-tag').length, 0);
+  assert.equal(document.activeElement, search, 'clearing empty results restores focus to search');
+  assert.equal(search.focusOptions.preventScroll, true, 'restoring focus does not scroll the menu');
   api.destroy();
 });
 

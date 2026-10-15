@@ -18,7 +18,7 @@ function functionSource(name){
 function makeHarness({snapshots,localRows,active='self',savedResults=new Map(),backupBoards={},overallAt=0}){
   const cleanUserId=value=>String(value||'').trim();
   const canonicalRaceTimeMs=row=>Number(row?.timeMs||0);
-  const functions='let profileSnapshotEpoch=0;const profileSnapshotResults=deps.savedResults,profilePlacementRequests=new Map();const readTrackSnapshotCache=id=>deps.trackSnapshotStore()[id],readPublicSnapshotBackup=async(kind,id)=>deps.backupBoards[id]||null;\n'+['localTrackDisplayEntries','visibleTrackEntries','localPlannerProfileEntry','cachedProfileFinishes','warmProfileLocalPlacements'].map(functionSource).join('\n');
+  const functions='let profileSnapshotEpoch=0;const profileSnapshotResults=deps.savedResults,profilePlacementRequests=new Map();const readTrackSnapshotCache=id=>deps.trackSnapshotStore()[id],readPublicSnapshotBackup=async(kind,id)=>deps.backupBoards[id]||null;\n'+['profileBoardIsComplete','localTrackDisplayEntries','visibleTrackEntries','localPlannerProfileEntry','cachedProfileFinishes','warmProfileLocalPlacements'].map(functionSource).join('\n');
   const init=new Function('deps',`const {cleanUserId,canonicalRaceTimeMs,trackSnapshotStore,readLocalRaceRows,safeRecordingId,buildRecordingId,entryTimeMs,pbTimestamp,knownFinishWeight,overallLoadState,readOverallSnapshotCache,activeRankedAccountId,sortProfileFinishes,getLastKnownName}=deps;${functions};return {localPlannerProfileEntry,cachedProfileFinishes,warmProfileLocalPlacements};`);
   return init({backupBoards,savedResults,cleanUserId,canonicalRaceTimeMs,trackSnapshotStore:()=>snapshots,readLocalRaceRows:()=>localRows,safeRecordingId:value=>value||'',buildRecordingId:()=> 'local-id',entryTimeMs:canonicalRaceTimeMs,pbTimestamp:row=>row.createdAt||0,knownFinishWeight:({rank,fieldSize})=>rank?fieldSize/rank:0,overallLoadState:{serverUpdatedAt:overallAt},readOverallSnapshotCache:()=>null,activeRankedAccountId:()=>active,sortProfileFinishes:rows=>rows,getLastKnownName:()=>''});
 }
@@ -89,4 +89,41 @@ test('an explicitly newer per-track summary can update the same PB placement',()
  const h=makeHarness({snapshots:{track:{complete:true,serverUpdatedAt:100,entries:[{accountId:'self',timeMs:19000,rank:1},{accountId:'slow',timeMs:20000,rank:2}]}},localRows:[],overallAt:500});
  const [finish]=h.cachedProfileFinishes('self',{resultSamples:[{trackId:'track',timeMs:19000,rank:2,fieldSize:4,cachedAt:200}]});
  assert.equal(finish.rank,2);assert.equal(finish.fieldSize,4);assert.equal(finish.cachedAt,200);
+});
+
+
+test('partial cached board retains the published field size instead of its prefix length',()=>{
+ const h=makeHarness({snapshots:{track:{complete:false,totalEntries:1000,serverUpdatedAt:100,entries:[{accountId:'rival',timeMs:18000,rank:1},{accountId:'self',timeMs:19000,rank:2}]}},localRows:[]});
+ const [finish]=h.cachedProfileFinishes('self',{});
+ assert.equal(finish.rank,2);assert.equal(finish.fieldSize,1000);
+});
+
+test('partial cached board cannot project a local PB into an invented small field',()=>{
+ const h=makeHarness({snapshots:{track:{complete:false,totalEntries:1000,entries:[{accountId:'rival',timeMs:18000,rank:1}]}},localRows:[{accountId:'self',trackId:'track',timeMs:19000}]});
+ const [finish]=h.cachedProfileFinishes('self',{});
+ assert.equal(finish.rank,null);assert.equal(finish.fieldSize,null);assert.equal(finish.local,true);
+});
+
+test('newer partial rows without field metadata preserve a known indexed placement',()=>{
+ const h=makeHarness({snapshots:{track:{complete:false,serverUpdatedAt:200,entries:[{accountId:'self',timeMs:19000}]}},localRows:[],savedResults:new Map([['self',{updatedAt:100,results:[{trackId:'track',rank:25,fieldSize:1000,timeMs:19000}]}]])});
+ const [finish]=h.cachedProfileFinishes('self',{});
+ assert.equal(finish.rank,25);assert.equal(finish.fieldSize,1000);
+});
+
+test('contradictory completeness metadata cannot rank a local PB',()=>{
+ const h=makeHarness({snapshots:{track:{complete:true,totalEntries:1000,entries:[{accountId:'rival',timeMs:18000,rank:1}]}},localRows:[{accountId:'self',trackId:'track',timeMs:19000}]});
+ assert.equal(h.cachedProfileFinishes('self',{})[0].rank,null);
+});
+
+test('partial cache falls through to the complete packaged board for local placement',async()=>{
+ const trackId='c'.repeat(64);
+ const h=makeHarness({snapshots:{[trackId]:{complete:false,totalEntries:2,entries:[{accountId:'rival',timeMs:14000,rank:1}]}},localRows:[{accountId:'self',trackId,timeMs:15000}],backupBoards:{[trackId]:{complete:true,totalEntries:2,updatedAt:100,entries:[{accountId:'rival',timeMs:14000},{accountId:'slow',timeMs:16000}]}}});
+ assert.equal(await h.warmProfileLocalPlacements('self'),true);
+ const [finish]=h.cachedProfileFinishes('self',{});assert.equal(finish.rank,2);assert.equal(finish.fieldSize,3);
+});
+
+
+test('row field sizes synthesized from a partial prefix are not authoritative',()=>{
+ const h=makeHarness({snapshots:{track:{complete:false,serverUpdatedAt:200,entries:[{accountId:'rival',timeMs:18000,rank:1,fieldSize:2},{accountId:'self',timeMs:19000,rank:2,fieldSize:2}]}},localRows:[],savedResults:new Map([['self',{updatedAt:100,results:[{trackId:'track',rank:2,fieldSize:1000,timeMs:19000}]}]])});
+ const [finish]=h.cachedProfileFinishes('self',{});assert.equal(finish.rank,2);assert.equal(finish.fieldSize,1000);
 });

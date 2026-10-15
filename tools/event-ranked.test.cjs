@@ -106,3 +106,16 @@ test('event freshness labels source separately from successful check and failure
  ctx.eventTotalsSnapshot={updatedAt:100,entries:[],source:'cloud',lastLiveCheckedAt:200};ctx.eventTotalsState={status:'cloud'};ctx.updateEventFreshness(el);assert.match(el.textContent,/Live results.*check succeeded 200/);
  ctx.eventTotalsState={status:'stale',checkedAt:999};ctx.updateEventFreshness(el);assert.match(el.textContent,/Cached results.*last live check 200.*Live check failed/);assert.doesNotMatch(el.textContent,/999/);
 });
+
+
+test('resolved snapshot fallback is not reported as a successful live Event RP check',async()=>{
+ const {ctx}=setup();ctx.eventCloudRead=async()=>({updatedAt:5,entries:[row()],_publicBackup:true,_snapshotCapturedAt:123,_eventRefreshFailed:true});
+ await ctx.fetchEventTotals(true);assert.equal(ctx.eventTotalsSnapshot.source,'snapshot');assert.equal(ctx.eventTotalsSnapshot.snapshotCapturedAt,123);
+ assert.equal(ctx.eventTotalsSnapshot.lastLiveCheckedAt,0);assert.equal(ctx.eventTotalsState.status,'stale');
+});
+test('shared live Event RP responses retain their actual check time',async()=>{
+ const {ctx}=setup();ctx.eventCloudRead=async()=>({updatedAt:5,entries:[row()],_eventLiveCheckedAt:200});
+ await ctx.fetchEventTotals(true);assert.equal(ctx.eventTotalsSnapshot.lastLiveCheckedAt,200);assert.equal(ctx.eventTotalsState.status,'cloud');
+ ctx.eventCloudRead=async()=>({updatedAt:5,entries:[row()],_eventLiveCheckedAt:200,_eventRefreshFailed:true});
+ await ctx.fetchEventTotals(true);assert.equal(ctx.eventTotalsSnapshot.lastLiveCheckedAt,200);assert.equal(ctx.eventTotalsState.status,'stale');
+});

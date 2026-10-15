@@ -12,7 +12,7 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
   function isTransientFailure(error){return Boolean(error&&(transientFetchErrors.has(error)||error.status===429||(error.status>=500&&error.status<=599)));}
   async function fetchSnapshot(url,options){try{return await fetchImpl(url,options);}catch(error){throw markTransientFetchError(error);}}
   async function responseBody(response,method){try{return await response[method]();}catch(error){throw markTransientFetchError(error);}}
-  let packageBase=new URL(baseUrl),indexRequest=null,pointerRecoveryAttempted=false,pointerRecoveryRequest=null,pointerRecoveryFailure=null;
+  let packageBase=new URL(baseUrl),indexRequest=null,pointerRecoveryRetryAt=0,pointerRecoveryRequest=null,pointerRecoveryFailure=null;
   async function packageIndex(){
     if(!indexRequest){
       const requestedBase=packageBase,requestedGeneration=generation;
@@ -34,10 +34,11 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     if(pointerRecoveryRequest)return pointerRecoveryRequest;
     if(pointerRecoveryFailure){
       if(now()<pointerRecoveryFailure.retryAt)throw pointerRecoveryFailure.error;
-      pointerRecoveryFailure=null;pointerRecoveryAttempted=false;
+      pointerRecoveryFailure=null;pointerRecoveryRetryAt=0;
     }
-    if(pointerRecoveryAttempted)return false;
-    pointerRecoveryAttempted=true;
+    if(now()<pointerRecoveryRetryAt)return false;
+    // Bound pointer checks without permanently stranding a tab after another deployment.
+    pointerRecoveryRetryAt=now()+LONG_RETRY_MS;
     pointerRecoveryRequest=(async()=>{
       try{
         const parent=new URL('../',packageBase),pointerUrl=new URL('snapshot-current.json',parent);

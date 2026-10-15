@@ -18,6 +18,117 @@ const rankedSource = fs.readFileSync(new URL('../polytrack_062_patch.js', import
 const rankedCssFragments = [...rankedSource.matchAll(/(?:style|rankedPolish)\.textContent\s*(?:\+=|=)\s*("(?:\\.|[^"\\\\])*?")/g)];
 const rankedCss = rankedCssFragments.map(fragment => JSON.parse(fragment[1])).join('\n');
 
+test('phone filter disclosure stays accessible and preserves state across rerender, reopen, and resize', {skip: browserSkip}, async () => {
+  const browser = await chromium.launch({headless: true});
+  try {
+    const page = await browser.newPage({viewport: {width: 844, height: 900}});
+    await page.route('**/*', async route => {
+      const url = route.request().url();
+      if (url === 'http://extra-tracks.test/review.mjs') await route.fulfill({contentType: 'text/javascript', body: reviewSource});
+      else if (url === 'http://extra-tracks.test/catalog-ui.mjs') await route.fulfill({contentType: 'text/javascript', body: moduleSource});
+      else if (url === 'http://extra-tracks.test/') await route.fulfill({contentType: 'text/html', body: '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><main id="root"></main>'});
+      else await route.abort();
+    });
+    await page.goto('http://extra-tracks.test/');
+    await page.addStyleTag({content: css});
+    await page.evaluate(async entries => {
+      const {mountExtraTracks} = await import('/catalog-ui.mjs');
+      window.catalog = mountExtraTracks({document, root: document.querySelector('#root'), entries});
+      window.catalog.open();
+    }, catalog);
+
+    const search = page.getByRole('searchbox', {name: 'Search tracks'});
+    const toggle = page.getByRole('button', {name: 'Filters & sort'});
+    const advanced = page.locator('.sq-extra-advanced');
+    assert.equal(await advanced.isVisible(), true, 'desktop starts expanded');
+    assert.equal(await toggle.isHidden(), true, 'desktop hides the disclosure');
+    await page.setViewportSize({width: 390, height: 844});
+    await page.waitForFunction(() => matchMedia('(max-width: 600px)').matches && document.querySelector('.sq-extra-advanced')?.hidden);
+    assert.equal(await search.isVisible(), true, 'search remains visible on a phone');
+    assert.equal(await advanced.isHidden(), true, 'first desktop-to-phone resize starts collapsed before any toggle');
+    assert.equal(await advanced.evaluate(el => el.inert), true, 'collapsed controls leave the tab order');
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+    const collapsedChevron = await toggle.evaluate(el => getComputedStyle(el, '::after').transform);
+    assert.notEqual(await toggle.evaluate(el => getComputedStyle(el, '::after').content), 'none', 'disclosure has a visible chevron');
+    assert.equal(await toggle.evaluate(el => getComputedStyle(el, '::after').width), '8px', 'chevron stays compact within the 44px control');
+    await page.keyboard.press('Tab');
+    assert.equal(await toggle.evaluate(el => el === document.activeElement), true, 'keyboard reaches the disclosure directly after search');
+    await page.keyboard.press('Enter');
+    assert.equal(await advanced.isVisible(), true);
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+    await page.waitForFunction(collapsed => {
+      const button = document.querySelector('.sq-extra-advanced-toggle');
+      return button && getComputedStyle(button, '::after').transform !== collapsed;
+    }, collapsedChevron);
+    assert.notEqual(await toggle.evaluate(el => getComputedStyle(el, '::after').transform), collapsedChevron, 'chevron indicates expanded state');
+    const source = page.getByLabel('Source');
+    const sourceValue = await source.locator('option:not([value=""])').first().getAttribute('value');
+    await source.focus();
+    await source.selectOption(sourceValue);
+    assert.equal(await source.evaluate(el => el === document.activeElement), true, 'filter change keeps focus on its surviving control');
+    assert.equal(await toggle.textContent(), 'Filters & sort (1)', 'active advanced group is counted while search is excluded');
+
+    await page.setViewportSize({width: 844, height: 390});
+    await page.waitForFunction(() => !matchMedia('(max-width: 600px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
+    assert.equal(await advanced.isVisible(), true, 'desktop/tablet layout stays expanded');
+    assert.equal(await toggle.isHidden(), true, 'disclosure is hidden outside the phone breakpoint');
+    await page.setViewportSize({width: 390, height: 844});
+    await page.waitForFunction(() => matchMedia('(max-width: 600px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
+    assert.equal(await advanced.isVisible(), true, 'expanded phone state survives a desktop round trip');
+    await toggle.click();
+    assert.equal(await advanced.isHidden(), true);
+    await page.evaluate(() => { window.catalog.close(); window.catalog.open(); });
+    assert.equal(await advanced.isHidden(), true, 'collapsed state survives close and reopen on the same instance');
+    await toggle.click();
+    await page.getByRole('button', {name: 'Reset filters'}).click();
+    assert.equal(await toggle.textContent(), 'Filters & sort', 'reset updates the active-group count');
+    assert.equal(await search.evaluate(el => el === document.activeElement), true, 'reset returns focus to the always-visible search field');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'phone layout has no horizontal overflow');
+    await page.setViewportSize({width: 844, height: 390});
+    await page.waitForFunction(() => !matchMedia('(max-width: 600px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
+    assert.equal(await advanced.isVisible(), true, 'short landscape tablet layout remains usable');
+    await page.evaluate(() => window.catalog.destroy());
+  } finally {
+    await browser.close();
+  }
+});
+
+test('no-results Clear filters restores search focus without scrolling when activated by keyboard', {skip: browserSkip}, async () => {
+  const browser = await chromium.launch({headless: true});
+  try {
+    const page = await browser.newPage({viewport: {width: 390, height: 844}});
+    await page.route('**/*', async route => {
+      const url = route.request().url();
+      if (url === 'http://extra-tracks.test/review.mjs') await route.fulfill({contentType: 'text/javascript', body: reviewSource});
+      else if (url === 'http://extra-tracks.test/catalog-ui.mjs') await route.fulfill({contentType: 'text/javascript', body: moduleSource});
+      else if (url === 'http://extra-tracks.test/') await route.fulfill({contentType: 'text/html', body: '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><main id="root"></main>'});
+      else await route.abort();
+    });
+    await page.goto('http://extra-tracks.test/');
+    await page.addStyleTag({content: css});
+    await page.evaluate(async () => {
+      const {mountExtraTracks} = await import('/catalog-ui.mjs');
+      window.catalog = mountExtraTracks({document, root: document.querySelector('#root'), entries: [{id: 'keyboard-clear', name: 'Keyboard Clear', author: 'Tester'}]});
+      window.catalog.open();
+    });
+
+    const search = page.getByRole('searchbox', {name: 'Search tracks'});
+    await search.fill('no matching track');
+    const clear = page.locator('.sq-extra-empty').getByRole('button', {name: 'Clear filters'});
+    await clear.focus();
+    const scrollBefore = await page.locator('.sq-extra-menu').evaluate(menu => menu.scrollTop);
+    await page.keyboard.press('Enter');
+
+    assert.equal(await search.evaluate(element => element === document.activeElement), true, 'search receives focus after the empty-state button is removed');
+    assert.equal(await search.inputValue(), '', 'Clear filters resets the query');
+    assert.equal(await page.locator('.sq-extra-count').textContent(), '1 of 1 tracks', 'the catalog results return');
+    assert.equal(await page.locator('.sq-extra-menu').evaluate(menu => menu.scrollTop), scrollBefore, 'preventScroll preserves the current menu position');
+    await page.evaluate(() => window.catalog.destroy());
+  } finally {
+    await browser.close();
+  }
+});
+
 test('Extra Tracks nested dialogs contain focus, close correctly, and restore their launchers', {skip: browserSkip}, async () => {
   const browser = await chromium.launch({headless: true});
   try {
@@ -482,6 +593,7 @@ test('delayed dialog requests cannot mutate a newer close/reopen session', {skip
         await page.waitForFunction(() => !document.querySelector('.sq-extra-send').disabled);
         assert.equal(await submission.isVisible(), true, 'late submission result leaves the newer form open');
         assert.doesNotMatch(await page.locator('.sq-extra-submission-status').textContent(), /received for review|Could not send/);
+        await submission.getByRole('button', {name: 'Close'}).click();
       }
     }
 

@@ -595,3 +595,16 @@ test('earned cosmetic hover preserves reason and award date',()=>{
   const rows=await run('expandRankedResults',ctx)({entries:[{userId:'me'}],entryDetailsVersion:1,entryDetailsBundle:'packed'});
   assert.equal(expanded,1);assert.equal(rows[0].bestTracks[0].trackId,'summer1');assert.equal(rows[0].cosmeticUnlocks[0],'ice');
  });
+
+
+test('multiplayer listener asks only for this socket and never consumes another tab message',async()=>{
+ const filters=[],deleted=[],events=[];let deliver,unsubscribed=0;
+ const query={where(...args){filters.push(args);return this;},onSnapshot(callback){deliver=callback;return()=>{unsubscribed++;};}};
+ const socket=socketHarness(async()=>({collection:name=>{assert.equal(name,'messages');return query;}}));await Promise.resolve();
+ socket.onmessage=event=>events.push(JSON.parse(event.data));await socket._listen('tester');
+ assert.deepEqual(filters,[['targetUid','==','tester'],['targetSocketId','==','test-socket']]);
+ const change=(id,targetSocketId,expiresAt)=>({type:'added',doc:{id,data:()=>({targetSocketId,expiresAt,payload:{type:'offer'}}),ref:{delete:async()=>{deleted.push(id);}}}});
+ deliver({docChanges:()=>[change('other','other-tab',1),change('mine','test-socket',Date.now()+60000)]});
+ assert.deepEqual(deleted,['mine']);assert.equal(events.length,1);
+ await socket._listen('tester');assert.equal(filters.length,2,'the same listener is not duplicated');socket.close();assert.equal(unsubscribed,1);
+});

@@ -466,3 +466,20 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
 .profile-guide-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;width:100%}.profile-guide-controls .profile-guide-metric{margin:0}.profile-guide-controls .profile-guide-filters{margin:0 0 0 auto;gap:6px}.profile-guide-controls .profile-guide-filter{min-height:34px;padding:6px 12px;font-style:italic;background:#263d76;border-color:#7295c9}.profile-guide-controls .profile-guide-filter[aria-pressed="true"]{background:#8ce5f5;color:#102746;border-color:#c3f5ff;box-shadow:inset 0 -3px 0 #3297b5}.profile-guide-controls .profile-guide-filter[aria-pressed="true"]:before{content:"✓ ";}@media(max-width:650px){.profile-guide-controls .profile-guide-filters{margin-left:0;flex-basis:100%}.profile-guide-controls .profile-guide-filter{flex:1}}
 
 .profile-guide{position:relative}.profile-guide-status{position:absolute;z-index:3;top:8px;right:8px;max-width:calc(100% - 16px);padding:9px 12px;background:#17284e;color:#baf3ff;border:1px solid #86dbef;box-shadow:0 2px 8px #08132b;font-size:.95em;pointer-events:none}.profile-guide[aria-busy="true"] .profile-guide-grid{opacity:.35}.guide-start-note{color:#f6da97}
+
+
+/* Mobile hides the first/last shortcuts, so reserve columns for the three remaining controls. */
+@media(max-width:480px){
+  #overallLeaderboardPanel #overallDailyGrid .overall-center-tools .overall-pager{grid-template-columns:44px minmax(132px,auto) 44px!important;gap:6px!important;justify-content:center!important}
+  #overallLeaderboardPanel #overallDailyGrid .overall-center-tools .overall-page-button:not(.overall-page-edge){width:44px!important;min-width:44px!important}
+  #overallLeaderboardPanel #overallDailyGrid .overall-page-position .overall-page-jump-label input{flex:0 0 42px!important;min-width:42px!important}
+  #overallLeaderboardPanel #overallDailyGrid .overall-page-position .overall-page-status{flex:0 0 auto!important}
+}
+
+/* Keep podium labels inside their cards beside the profile's compact racer preview. */
+@media(max-width:340px){
+  #overallProfilePopup .profile-achievement-medals{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  #overallProfilePopup .profile-achievement-medals .profile-medal-card{grid-template-columns:20px minmax(0,1fr)!important;column-gap:4px!important}
+  #overallProfilePopup .profile-achievement-medals .profile-medal-card img{width:18px!important;height:18px!important}
+  #overallProfilePopup .profile-achievement-medals .profile-medal-card small{min-width:0!important;font-size:9px!important;letter-spacing:0!important;white-space:nowrap!important}
+}

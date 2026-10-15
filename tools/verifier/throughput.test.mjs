@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {budgetDatabase,drainVerification,DRAIN_LIMITS,CATCH_UP_LIMITS,VerificationBudgetError} from './throughput.mjs';
+import {budgetDatabase,drainVerification,DRAIN_LIMITS,CATCH_UP_LIMITS,VerificationBudgetError,VerificationEventConflictError} from './throughput.mjs';
 import {runVerifier} from './run.mjs';
 import {encode} from './firestore.mjs';
 
@@ -90,6 +90,43 @@ test('interrupted publication reports incomplete counts, never fabricated approv
   assert.equal(result.rounds,1);assert.equal(result.verified,2);assert.equal(result.processed,4);
   assert.equal(result.interruptedRound,true);assert.equal(result.countsComplete,false);
   assert.equal(result.stop,'request_budget');
+});
+
+test('tagged event conflicts preserve completed rounds and stop without replaying the interrupted round',async()=>{
+  for(const limits of [DRAIN_LIMITS,CATCH_UP_LIMITS]) {
+    let calls=0;const logs=[];
+    const cause=Object.assign(Error('conflict'),{status:409,code:'ABORTED'});
+    const result=await drainVerification({limits,now:()=>0,requests:()=>20,log:line=>logs.push(JSON.parse(line)),runRound:async()=>{
+      if(calls++===0)return round({processed:4,verified:2,unavailable:2,events:{checked:3,consumed:1},
+        reasons:{native_exact_finish:2,missing_trusted_track:2},verifiedByTrack:{summer:2}});
+      throw new VerificationEventConflictError(cause);
+    }});
+    assert.equal(calls,2);
+    assert.equal(result.rounds,1);
+    assert.equal(result.processed,4);
+    assert.equal(result.verified,2);
+    assert.equal(result.unavailable,2);
+    assert.equal(result.eventChecked,3);
+    assert.deepEqual(result.reasons,{native_exact_finish:2,missing_trusted_track:2});
+    assert.deepEqual(result.verifiedByTrack,{summer:2});
+    assert.equal(result.stop,'event_conflict');
+    assert.equal(result.interruptedRound,true);
+    assert.equal(result.countsComplete,false);
+    assert.deepEqual(logs,[{drain:result}]);
+  }
+});
+
+test('drain never treats untagged conflicts, lookalike tags or denied writes as event deferrals',async()=>{
+  const aborted=Object.assign(Error('conflict'),{status:409,code:'ABORTED'});
+  const denied=Object.assign(Error('denied'),{status:403,code:'PERMISSION_DENIED'});
+  for(const failure of [aborted,denied,
+    Object.assign(Error('lookalike'),{code:'VERIFICATION_EVENT_CONFLICT',deferred:true,cause:aborted}),
+    new VerificationEventConflictError(denied),new VerificationEventConflictError(Error('timeout'))]) {
+    let calls=0;
+    await assert.rejects(drainVerification({now:()=>0,requests:()=>1,log:quiet,
+      runRound:async()=>{calls++;throw failure;}}),error=>error===failure);
+    assert.equal(calls,1);
+  }
 });
 
 test('drain summary aggregates returned queue documents and idle-slot counts',async()=>{

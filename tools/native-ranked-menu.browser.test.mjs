@@ -57,10 +57,14 @@ test('native home Ranked button opens the real panel with offline Firebase', { s
         const filter = panel.querySelector('[data-personal-filter-button]');
         const header = panel.querySelector('.overall-top').getBoundingClientRect();
         const bounds = filter.getBoundingClientRect();
-        return {pagerWidth:pager.clientWidth,pagerContentWidth:pager.scrollWidth,shellHeight: shell.clientHeight, shellContentHeight: shell.scrollHeight, shellOverflow: getComputedStyle(shell).overflowY,
+        const jump=panel.querySelector('#overallPageJump').getBoundingClientRect(),next=panel.querySelector('#overallNextPage').getBoundingClientRect(),pageStatus=panel.querySelector('#overallPageStatus');
+        return {jumpWidth:jump.width,jumpRight:jump.right,nextLeft:next.left,pageStatusWidth:pageStatus.clientWidth,pageStatusContentWidth:pageStatus.scrollWidth,pagerWidth:pager.clientWidth,pagerContentWidth:pager.scrollWidth,shellHeight: shell.clientHeight, shellContentHeight: shell.scrollHeight, shellOverflow: getComputedStyle(shell).overflowY,
           statusHeight: status.clientHeight, statusContentHeight: status.scrollHeight,
           filterLeft: bounds.left, filterRight: bounds.right, filterContentWidth: filter.scrollWidth, filterWidth: filter.clientWidth, headerHeight: header.height};
       });
+      assert.ok(layout.jumpWidth>=34, `page number stays readable at ${width}x${height}`);
+      assert.ok(layout.jumpRight<=layout.nextLeft, `page number never overlaps Next at ${width}x${height}`);
+      assert.ok(layout.pageStatusContentWidth<=layout.pageStatusWidth+1, `page total stays readable at ${width}x${height}`);
       assert.ok(layout.pagerContentWidth<=layout.pagerWidth+1, `page controls fit at ${width}x${height}`);
       assert.ok(layout.statusContentHeight <= layout.statusHeight + 1, `refresh instructions must not clip at ${width}x${height}`);
       assert.ok(layout.filterLeft >= 0 && layout.filterRight <= width, `filters fit at ${width}x${height}`);

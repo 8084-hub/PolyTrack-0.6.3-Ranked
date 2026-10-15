@@ -187,7 +187,11 @@ export function publicEventBackup(value, eventId) {
   const result = project(value, eventFields);
   if (value.period) result.period = projectPeriod(value.period);
   result.id = eventId;
-  result.entries = value.entries.map(row => project(row, eventEntryFields));
+  result.entries = value.entries.map(row => {
+    const entry = project(row, eventEntryFields);
+    for (const key of ['runId', 'replayHash']) if (typeof row?.[key] === 'string' && TRACK_ID.test(row[key])) entry[key] = row[key];
+    return entry;
+  });
   if (value.archived !== true && Array.isArray(value.pendingPlaybacks) && value.pendingPlaybacks.length) {
     const pending = projectPendingEventRows(value.pendingPlaybacks, eventId, value.period);
     if (pending) result.pendingPlaybacks = pending;
@@ -205,6 +209,7 @@ export function publicEventReplayBackup(value, {periodId, trackId, entry}) {
   if (!EVENT_ID.test(periodId || '') || !TRACK_ID.test(trackId || '') || !PUBLIC_ACCOUNT_ID.test(entry?.accountId || '') ||
       !Number.isSafeInteger(entry?.timeMs) || !value || typeof value !== 'object' || value.periodId !== periodId ||
       value.trackId !== trackId || value.accountId !== entry.accountId || value.timeMs !== entry.timeMs ||
+      entry.runId && value.runId !== entry.runId || entry.replayHash && value.replayHash !== entry.replayHash ||
       value.verificationStatus !== 'verified' || value.verified !== true || value.eventRpEligible !== true ||
       value.frames !== entry.timeMs || typeof value.runId !== 'string' || !/^[a-f0-9]{64}$/.test(value.runId) ||
       typeof value.replay !== 'string' || !value.replay.length || Buffer.byteLength(value.replay) > 65536 ||
@@ -397,7 +402,6 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
           const replay = JSON.parse(await fs.readFile(path.join(directory, relative), 'utf8'));
           const projected=publicEventReplayBackup({...replay, verificationStatus:'verified', verified:true, eventRpEligible:true}, {periodId:id, trackId:value.period.trackId, entry});
           if (JSON.stringify(projected) !== JSON.stringify(replay)) throw Error('Replay is not a public projection');
-          if (entry.runId && replay.runId !== entry.runId || entry.replayHash && replay.replayHash !== entry.replayHash) throw Error('Replay changed');
           retainedReplays[relative] = prior; entry.runId = replay.runId; entry.replayHash = replay.replayHash;
           continue;
         } catch { /* A changed or corrupt replay must be replaced. */ }
@@ -417,15 +421,16 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
     }
   });
 
-  const nextTracks = {...previous.tracks}, nextEvents = {...previous.events};
+  const nextTracks = {...cachedTracks}, nextEvents = {...previous.events};
   const pendingWrites = new Map([['overall.json', overall]]);
   let missingTracks = 0, missingEvents = 0;
   const trackSummaryMismatches = [];
   for (const {id, value} of trackRows) {
     if (!value) {
       missingTracks++;
-      if (nextTracks[id]) nextTracks[id] = {...nextTracks[id], checkedAt: nextTracks[id].checkedAt || now, missing: true};
-      else nextTracks[id] = {path: null, checkedAt: now, missing: true};
+      // A failed fetch must not freshen a retained board or resurrect an invalid path.
+      if (nextTracks[id]?.path) nextTracks[id] = {...nextTracks[id], missing: true};
+      else nextTracks[id] = {...nextTracks[id], path: null, checkedAt: now, missing: true};
       continue;
     }
     const relative = `tracks/${id}.json`;

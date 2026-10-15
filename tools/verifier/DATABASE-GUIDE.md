@@ -4,7 +4,7 @@
 
 | What you want | Collection | What to filter or inspect |
 | --- | --- | --- |
-| Suspicious runs to review | `0.6.2_s1_review_inbox` | `status == open`. Similar inputs and verification mismatches only. Neither proves cheating. |
+| Suspicious runs to review | `0.6.2_s1_review_inbox` | `status == open`. Input similarity, rapid inputs, exact duplicates, and verification mismatches. Review evidence; no automatic account ban. |
 | Track reports from players | `0.6.2_extra_track_reports` | Track ID, report reasons, and reporter records. A complaint is not a confirmed violation. |
 | Submitted tracks to consider | `0.6.2_extra_track_submissions` | `status == pending`; permission, code, author, tags. |
 | Normal verification backlog | `0.6.2_s1_verification` | `pending == true`; per-track `slots` and `notBefore`. |
@@ -25,13 +25,15 @@
 Open the review inbox and add an equality filter for `status` with value `open`.
 Each document includes the racer ID, track ID, run ID, detection time, category,
 reason, and audit ID. Similarity findings also include reference evidence.
-The document ID matches its verification audit ID, so the exact original verdict
-is easy to find without searching thousands of audits.
+For normal and Extra runs, the document ID matches its verification audit ID.
+For event findings, use `periodId` and `resultId` to locate the run in
+`0.6.2_event_runs`; its finding ID is a stable event-specific identifier, not a
+normal verification-audit document ID.
 
-The inbox currently covers normal and Extra verification. Event-only verdicts
-remain in `0.6.2_event_runs` under their proof/status fields and in the existing
-private verifier diagnostic report. Temporary unavailable verdicts are not
-treated as suspicious runs.
+The inbox covers normal, Extra, and event verification. Temporary unavailable
+verdicts are not treated as suspicious runs. A rapid-input or similarity flag
+requires review; it does not establish that a person cheated. Exact-copy
+rejections are recorded here too, without automatically banning the account.
 
 After investigating, change only `status` to `resolved` or `dismissed`, and add a
 `reviewNote` if useful. These are private administrative decisions, not automatic

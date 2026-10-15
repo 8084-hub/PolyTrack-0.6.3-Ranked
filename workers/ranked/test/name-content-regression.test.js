@@ -4,6 +4,8 @@ import { moderatePublicName } from '../src/public-name-policy.js';
 
 const blockedNames = [
   'send me nudes',
+  'send noods',
+  'send n00ds',
   'sendnudes',
   'freenudes',
   'free nudes on my insta',
@@ -60,10 +62,13 @@ const allowedNames = [
   'Peacock',
   'Cockpit Racer',
   'Cockatoo',
+  'CockneyRacer',
+  'Cock-a-doodle-doo',
   'Grapevine',
   'Draper',
   'Therapist',
   'Scunthorpe',
+  'Peniscola',
   'Pussini',
   'noogre',
   'こんにちは',
@@ -121,6 +126,6 @@ test('child-directed sexual compounds block obfuscations without penalizing beni
 
 test('obfuscation and lexical exceptions never exempt a different unsafe section',()=>{
   for(const name of ['Sćunthorpe','PeacockPilot','Cöckburn','GrapefruitRacer','BenedictRacer','Rapper','Scrapper','Wrapper'])assert.equal(moderatePublicName(name).blocked,false,name);
-  for(const name of ['PeacockFuck','TherapistRapist','DicksonBigDick','ScunthorpeCunt'])assert.equal(moderatePublicName(name).blocked,true,name);
+  for(const name of ['PeacockFuck','TherapistRapist','DicksonBigDick','ScunthorpeCunt','CockneyFuck','PeniscolaPorn','Cock-a-doodle-dooFuck'])assert.equal(moderatePublicName(name).blocked,true,name);
   for(const name of ['TeenRacer','ChildRacer','TouchTheFinish','FingerPainter','GoldenRacer'])assert.equal(moderatePublicName(name).blocked,false,name);
 });

@@ -79,10 +79,11 @@ const EMBEDDED_UNSAFE_WORDS = Object.freeze([
 const BENIGN_EMBEDDED_WORDS = Object.freeze({
   cunt:['scunthorpe'], rape:['grape','drape','scrape'], rapist:['therapist'], raper:['rapper','draper','scraper'],
   dick:['dickinson','dickens','dickson','benedict','dickey','dickman','dickerson'],
-  cock:['peacock','cockpit','cockatoo','cockburn','hancock','woodcock','shuttlecock','cockrell','cockermouth','cockerell','cockerspaniel'],
-  penis:['peniston'], pussi:['pussini','pussinboots'], shit:['shitake','shitzu','shittim'], fuk:['fukushima','fukuda','fukui','fukuoka','fukuyama','fukuzawa'],
+  cock:['peacock','cockpit','cockatoo','cockburn','hancock','woodcock','shuttlecock','cockrell','cockermouth','cockerell','cockerspaniel','cockney'],
+  penis:['peniston','peniscola'], pussi:['pussini','pussinboots'], shit:['shitake','shitzu','shittim'], fuk:['fukushima','fukuda','fukui','fukuoka','fukuyama','fukuzawa'],
   killall:['skillall'], nazi:['nazim','nazir'], trump:['trumpet','trumpington']
 });
+const BENIGN_EXACT_NAMES = new Set(['cockadoodledoo']);
 const PREPARED_EMBEDDED_RULES = Object.freeze([...new Set(EMBEDDED_UNSAFE_WORDS.concat(EXPLICIT_COMPOUNDS,CURATED_EXPLICIT_TERMS)
   .map(value=>normalizeNameForCheck(value).replace(/ /g,'')))].map(term=>Object.freeze({term,
     pattern:new RegExp(term.replace(/([a-z0-9])\1*/g,run=>run[0]+'{'+run.length+',}'))
@@ -144,7 +145,7 @@ function contextualNameMatch(comparison) {
   return null;
 }
 
-const CLEAR_SLUR_ALIASES = /^(?:[xi]*)(?:nijjer|nigher|niigher|nighger|niggef|niggej|nigja|nixxer)(?:[x0-9]*)$/;
+const CLEAR_SLUR_ALIASES = /^(?:[xi]*)(?:nijjer|nigher|niigher|nighger|niggef|niggej|nigja|niqqer|nixxer)(?:[x0-9]*)$/;
 
 
 // Deliberately curated: ambiguous ordinary words (e.g. trump, bush, may) are not substring bans.
@@ -157,6 +158,7 @@ const POLITICAL_IDENTIFIERS = Object.freeze([
 const POLITICAL_TOKENS = new Set(['maga','trump','biden','putin','obama','political','republican','democrat','fascist','nazism']);
 const CONTACT_BRANDS = Object.freeze(['discord','instagram','insta','snapchat','telegram','onlyfans','tiktok','youtube','twitch','facebook','patreon']);
 const CONTACT_PATTERNS = Object.freeze(CONTACT_BRANDS.map(term=>new RegExp(term.replace(/([a-z])\1*/g,run=>run[0]+'{'+run.length+',}'))));
+const HOMOGLYPH_ADULT_SITE_ALIASES = Object.freeze(['poгnhub']);
 function promotionMatch(clean, normalized, compact) {
   // Check structure before leetspeak changes dots, numbers, or @ in URLs and contact addresses.
   const raw=String(clean).normalize('NFKD').toLowerCase().replace(/[\u0300-\u036f]/g,'');
@@ -167,9 +169,10 @@ function promotionMatch(clean, normalized, compact) {
     const candidate=CONTACT_BRANDS[i]==='insta'?compact.replace(/(?:instant|instance|install|instability|winstanley)/g,' '):compact;
     if(CONTACT_PATTERNS[i].test(candidate))return 'contact-promotion';
   }
+  if(HOMOGLYPH_ADULT_SITE_ALIASES.some(term=>compact.includes(normalizeNameForCheck(term).replace(/ /g,''))))return 'contact-promotion';
   const domainForm=normalizeNameForCheck(clean.replace(/[.。\uff0e]/g,' dot '));
   if(/\bdot\s+(?:com|net|org|gg|io|xyz|app|dev|me|co|uk|us|tv|link|site|online|info|biz|club|shop|ru|de|fr|ca|au|jp|cn|in|it|nl|br|ly)\b/.test(domainForm))return 'website-link';
-  if (/(?:^|\s)(?:follow|subscribe|sub|add|dm|message|contact)\s*(?:me|my|to)\b/.test(normalized) || /(?:followme|subscribeto|addmeon|dmme|joinmy|usemycode|buyfollowers|freerobux|freevbucks|freerobucks|playinstead)/.test(compact) || /\bplay\b.+\binstead\b/.test(normalized)) return 'advertising';
+  if (/(?:^|\s)(?:snap\s+me|my\s+snap|find\s+me\s+on\s+snap|hmu\s+on\s+snap)\b/.test(normalized) || /\bf4llow\s*me\b/.test(raw) || /(?:^|\s)(?:follow|subscribe|sub|add|dm|message|contact)\s*(?:me|my|to)\b/.test(normalized) || /(?:followme|subscribeto|addmeon|dmme|joinmy|usemycode|buyfollowers|freerobux|freevbucks|freerobucks|playinstead)/.test(compact) || /\bplay\b.+\binstead\b/.test(normalized)) return 'advertising';
   return '';
 }
 
@@ -211,6 +214,7 @@ export function moderatePublicName(value) {
   }
   const contextual=contextualNameMatch(comparison);
   if(contextual)return decision(true,'contextual-unsafe-phrase',detail('contextual-unsafe-phrase',contextual.term,contextual.normalized));
+  if(BENIGN_EXACT_NAMES.has(compact))return decision(false);
   for (const term of PREPARED_NAME_TERMS) {
     if (term.phrase && normalized.includes(term.value)) return decision(true, 'unsafe-phrase', detail('unsafe-phrase', term.value));
     if (!term.phrase && tokens.includes(term.value)) return decision(true, 'unsafe-word', detail('unsafe-word', term.value));
@@ -227,6 +231,7 @@ export function moderatePublicName(value) {
     if(/(?:is|isa|iam|im|youare|ur)pedo(?:$|[^a-z])/.test(form))return decision(true,'unsafe-compound',detail('unsafe-compound','sexual-abuse-reference',form));
   }
   if(/(?:18\s*(?:\+|plus)|adult)[\s_.-]*(?:content|videos|chat|nudes|sex)/i.test(clean))return decision(true,'unsafe-compound',detail('unsafe-compound','adult-content-promotion'));
+  if(/(?:send|dm|hmu|trade|sell|buy|free)(?:me)?n[o0]{2}d[z5s]/.test(compact))return decision(true,'unsafe-compound',detail('unsafe-compound','noods-solicitation',compact));
   for (const needle of PREPARED_SEVERE_NEEDLES) {
     const severeEmbedded = UNAMBIGUOUS_EMBEDDED_TERMS.has(needle);
     const candidate=withoutBenignMatches(compact,needle);

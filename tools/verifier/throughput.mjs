@@ -10,6 +10,13 @@ export class VerificationBudgetError extends Error {
   constructor() { super('verification_request_budget'); this.code='VERIFICATION_REQUEST_BUDGET'; }
 }
 
+export class VerificationEventConflictError extends Error {
+  constructor(cause) {
+    super('verification_event_conflict', {cause});
+    this.code='VERIFICATION_EVENT_CONFLICT';this.deferred=true;
+  }
+}
+
 // Counts HTTP requests, not billed document reads/writes. Never retries denied work.
 export function budgetDatabase(db, limit=DRAIN_LIMITS.requests, limits=DRAIN_LIMITS) {
   validateLimits(limits);
@@ -49,6 +56,10 @@ export async function drainVerification({runRound,requests,now=()=>performance.n
     let round;
     try { round=await runRound(); }
     catch(error) {
+      if(error instanceof VerificationEventConflictError && error.cause?.status===409 && error.cause?.code==='ABORTED') {
+        // A batch may have committed a prefix. Keep only completed-round counts.
+        interruptedRound=true;stop='event_conflict';break;
+      }
       if(error?.deferred===true && /^FIRESTORE_(READ|COMMIT)_THROTTLED$/.test(String(error.code||''))) {
         interruptedRound=true;stop='firestore_throttled';break;
       }

@@ -23,6 +23,9 @@ const mustBlock = [
   'join my discord server',
   'DiscordRacer',
   'Discord server builder',
+  'snap me @racer123',
+  'my snap racer123',
+  'f4llow me',
   'instagram.com/racername',
   'https://www.instagram.com/racername/',
   '@racername on insta',
@@ -39,8 +42,11 @@ const mustBlock = [
   // Requested slur variant.
   'Nixxer',
   'NixxerRacer',
+  'niqqer',
   // Nudes and profanity embedded in otherwise ordinary-looking handles.
   'instagram/freenudes',
+  'poгnhub',
+  'pогnhub',
   'send-me-nudes',
   'TurboFuckRacer',
   'RacerShithead'

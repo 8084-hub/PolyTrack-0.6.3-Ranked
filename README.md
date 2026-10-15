@@ -16,7 +16,7 @@ Race PolyTrack, chase personal bests, and compare times with other players.
 
 ## Your Leaderboard
 
-Open **Filters** to choose who you see. **Normal** keeps published RP. **Smart** calculates a separate group score from results loaded on your device. Choose global or group placements, and apply filters to Ranked or all leaderboards.
+Open **Filters** to choose who you see. **Normal** keeps published Rank Points (RP). **Smart** calculates a separate group score from results loaded on your device. Choose global or group placements, and apply filters to Ranked or all leaderboards.
 
 The button shows **Filters-Active** or **Filters-Inactive**. Right-click it to pause or resume, or right-click a racer in Ranked to include or exclude them. Save loadouts and share them by code; imports keep a recovery copy of your previous filter.
 

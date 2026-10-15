@@ -12,13 +12,13 @@ test('all thirty collection tracks import serially with the native importer and 
  const root=new URL('../',import.meta.url);const {fileURLToPath}=await import('node:url');
  const engine=snapshot(fileURLToPath(root)),server=await serve(engine),browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE}:{})});
  try{
- const page=await browser.newPage();await page.addInitScript(()=>localStorage.setItem('polytrack_v5_prod_startup_info',JSON.stringify({lastVersion:'0.6.3',isTutorialCompleted:true})));await page.route('**/*',route=>new URL(route.request().url()).origin===server.origin?route.continue():route.abort());
+ const page=await browser.newPage();await page.addInitScript(()=>localStorage.setItem('polytrack_v5_prod_startup_info',JSON.stringify({lastVersion:'0.6.3',isTutorialCompleted:true})));await page.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin===server.origin&&url.pathname==='/tools/track-import-storage.mjs')return route.fulfill({status:200,contentType:'application/javascript',body:fs.readFileSync(new URL('./track-import-storage.mjs',import.meta.url),'utf8')});return url.origin===server.origin?route.continue():route.abort();});
  await page.goto(server.origin,{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>globalThis.__vrRequire);
  await page.locator('.main-buttons-container button').filter({hasText:/^Play$/}).click();
  await page.locator('.track-selection-ui').waitFor();
  const entries=JSON.parse(fs.readFileSync(new URL('../extra-tracks/catalog.json',import.meta.url),'utf8')).filter(e=>e.packId==='tmnf-ab');assert.equal(entries.length,30);
  await page.evaluate(({body,base})=>{
-  window.extraTracksBaseUrl=base+'/extra-tracks/';window.extraTrackKnownIds={};window.extraTrackIds=()=>window.extraTrackKnownIds;window.extraTrackIdsKey='test-extra-ids';window.extraTracksUi=null;window.__pt062WebpackRequire=()=>window.__vrRequire;
+  window.eventsModuleUrl=base+'/events/client.mjs?v=142';window.extraTracksBaseUrl=base+'/extra-tracks/';window.extraTrackKnownIds={};window.extraTrackIds=()=>window.extraTrackKnownIds;window.extraTrackIdsKey='test-extra-ids';window.extraTracksUi=null;window.volatileLeaderboardCache=new Map();window.jsonStorageCache=new Map();window.__pt062WebpackRequire=()=>window.__vrRequire;
   window.testNativeImport=new Function('return '+body.trim())();
  },{body:source.slice(start,end),base:server.origin});
  for(const entry of entries)await page.evaluate(entry=>window.testNativeImport(entry,{saveOnly:true}),entry);

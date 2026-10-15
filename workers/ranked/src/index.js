@@ -1241,7 +1241,11 @@ export async function reconcileCanonicalChanges(env, {scanResults = true, now = 
   }
   for(const row of legacy){
     const trackId=safeText(row.data?.trackId,80);
-    if(trackId&&structurallyValidResult(row.data,trackId)){queued.add(trackId);fullRebuildTracks.add(trackId);}
+    if(trackId&&structurallyValidResult(row.data,trackId)){
+      queued.add(trackId);fullRebuildTracks.add(trackId);
+      // Keep legacy publication requirements when this track waits for a later batch.
+      pendingFullRebuildTrackIds.add(trackId);
+    }
   }
   if(forceFullRebuildAll)for(const trackId of queued)fullRebuildTracks.add(trackId);
   let rebuilt=0,targeted=0;
@@ -1287,6 +1291,8 @@ export async function reconcileCanonicalChanges(env, {scanResults = true, now = 
         result=await mergeCanonicalResultsIntoTrack(env,trackId,targetedIds,canonicalDocuments);
       }else result={fallback:true};
       if(result.fallback) {
+        // Persist the fallback so its cooldown skips targeted reads and selection too.
+        pendingFullRebuildTrackIds.add(trackId);
         if (rebuildCoolingDown(trackId)
           || !failedFullRebuilds[trackId] && Object.keys(failedFullRebuilds).length >= RECONCILE_REBUILD_FAILURE_LIMIT) continue;
         attemptedFullRebuild = true;
@@ -1996,8 +2002,11 @@ async function unrankedExtraBoard(request, env, origin, uid, body) {
     if (old && old.timeMs <= timeMs) return json(origin, env, 200, {accepted:true,improved:false});
     const now = Date.now();
     const entries = [...rows.filter(row=>row.accountId!==accountId),{accountId,name,timeMs,frames,runVerified:false,integrityVerified:false,verifiedState:0,unranked:true,pbAt:now,uploadId:Number(body.uploadId)||0}].sort((a,b)=>a.timeMs-b.timeMs||a.accountId.localeCompare(b.accountId)).slice(0,TRACK_LIMIT);
+    // A run outside the retained top 500 changes no published entry.
+    const rank = entries.findIndex(row=>row.accountId===accountId)+1;
+    if (!rank) return json(origin, env, 200, {accepted:true,improved:false,rank:0});
     const data={trackId,trackName:'Poly Dip 2',unranked:true,entries,total:Math.max(Number(prior?.data.total||0),rows.length)+(!old?1:0),updatedAt:now};
-    try {await commitDocuments(env,[{collection:COLLECTIONS.unrankedExtra,id:trackId,data,prior}]);return json(origin, env, 201, {accepted:true,improved:true,rank:entries.findIndex(row=>row.accountId===accountId)+1});}
+    try {await commitDocuments(env,[{collection:COLLECTIONS.unrankedExtra,id:trackId,data,prior}]);return json(origin, env, 201, {accepted:true,improved:true,rank});}
     catch(error){if(!/FIRESTORE_(409|412)/.test(String(error?.message))||attempt===2)throw error;}
   }
   return json(origin, env, 503, {error:'service_unavailable'});

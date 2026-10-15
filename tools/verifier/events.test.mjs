@@ -8,6 +8,10 @@ import { deflateSync } from 'node:zlib';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createEventService, EVENT_COLLECTIONS as EC, EVENT_LIMITS as EL } from '../../workers/ranked/src/events.js';
+import { createEventFirestoreStore, eventEncode, eventDecode } from '../../workers/ranked/src/events-store.js';
+import { runVerifier } from './run.mjs';
+import { drainVerification } from './throughput.mjs';
 
 function fixture(counts, inboxCount = 0, unavailable = false) {
   let intakes = 0, native = 0;
@@ -240,4 +244,218 @@ test('event intake never hides permission failures or ambiguous write outcomes',
  for(const failure of [Object.assign(Error('denied'),{status:403,code:'PERMISSION_DENIED'}),Object.assign(Error('unavailable'),{status:503}),Error('timeout')]){
   const f=fixture({daily:10});await assert.rejects(runEventCoordinator(f.runtime,'/repo',{...f.options,consumeInbox:async()=>{throw failure;}}),e=>e===failure);
  }
+});
+
+
+const eventConflict = () => Object.assign(Error('Firestore request failed: 409'), { status: 409, code: 'ABORTED' });
+const conflictVerdict = job => ({ ...job, status: 'verified', reason: 'native_exact_finish',
+  engineDigest: VERIFIER_ENGINE_DIGEST, binding: { resultId: job.resultId, trackId: job.trackId,
+    nativeTrackId: job.trackId, timeMs: job.timeMs, replayHash: job.replayHash, actualReplayHash: job.replayHash,
+    engineDigest: VERIFIER_ENGINE_DIGEST, verifierVersion: VERIFIER_VERSION } });
+
+// Real service and REST adapter; all transport state and native results stay in memory.
+async function conflictFixture(stage) {
+  const docs = new Map(), versions = new Map(), transactions = new Map();
+  const stats = { native: 0, normalQueries: 0, rollbacks: 0, completionAttempts: 0, committed: 0, aborts: 0 };
+  const trackId = 'a'.repeat(64), periodId = 'conflict_day';
+  const period = { id: periodId, enabled: true, trackId, startsAt: 1000, endsAt: 86401000, graceMs: 3600000,
+    targetMs: 10000, maxRp: 1000, eligibility: 'best-submitted-during-period',
+    capacity: { policyVersion: 'test-reviewed-v1', entrants: 200, admissionsPerPeriod: 512,
+      replayBytesPerPeriod: 8388608, minIntervalMs: 1000, verificationsPerDay: 128 } };
+  let now = 0, sequence = 0, armed = false;
+  const failure = eventConflict();
+  const request = async (route, init = {}) => {
+    const body = init.body ? JSON.parse(init.body) : {};
+    if (route === ':beginTransaction') {
+      const transaction = 'tx' + sequence++;
+      transactions.set(transaction, new Set());
+      return { transaction };
+    }
+    if (route === ':rollback') { stats.rollbacks++; transactions.delete(body.transaction); return {}; }
+    if (route === ':runQuery') { stats.normalQueries++; return []; }
+    if (route.startsWith('/')) {
+      const [key, query] = route.slice(1).split('?');
+      transactions.get(new URLSearchParams(query).get('transaction'))?.add(key);
+      return docs.has(key) ? { fields: eventEncode(docs.get(key)).mapValue.fields,
+        updateTime: 'v' + (versions.get(key) || 0) } : null;
+    }
+    assert.equal(route, ':commit');
+    const keyOf = write => (write.update?.name || write.delete).split('/documents/')[1];
+    const keys = body.writes.map(keyOf);
+    const completion = keys.some(key => key.startsWith(EC.runs + '/'));
+    if (armed && completion) stats.completionAttempts++;
+    const kind = keys.some(key => key.startsWith(EC.archives + '/')) ? 'archive' : completion ? 'completion' :
+      keys.includes(EC.quotas + '/verification_global') ? 'lease' : !keys.length &&
+      [...transactions.get(body.transaction)].join() === EC.periods + '/' + periodId ? 'period-read' : 'other';
+    if (armed && (stage === kind || stage === 'completion2' && kind === 'completion' && stats.completionAttempts === 2)) {
+      stats.aborts++;
+      throw failure;
+    }
+    for (const write of body.writes) {
+      const key = keyOf(write);
+      assert.deepEqual(write.currentDocument, docs.has(key) ?
+        { updateTime: 'v' + (versions.get(key) || 0) } : { exists: false });
+    }
+    const next = new Map(docs);
+    for (const write of body.writes) {
+      const key = keyOf(write);
+      if (write.delete) next.delete(key);
+      else {
+        const value = eventDecode({ mapValue: { fields: write.update.fields } });
+        for (const transform of write.updateTransforms || []) {
+          assert.equal(transform.setToServerValue, 'REQUEST_TIME');
+          value[transform.fieldPath] = { __firestoreTimestamp: new Date(now).toISOString() };
+        }
+        next.set(key, write.updateMask ? { ...next.get(key), ...value } : value);
+      }
+    }
+    docs.clear();
+    for (const [key, value] of next) docs.set(key, value);
+    for (const key of keys) versions.set(key, (versions.get(key) || 0) + 1);
+    transactions.delete(body.transaction);
+    if (armed && completion) stats.committed++;
+    return {};
+  };
+  const serviceFor = transport => createEventService({
+    store: createEventFirestoreStore({ request: transport, projectId: 'offline-event-tests', retries: 0 }),
+    now: () => now, hash: value => createHash('sha256').update(value).digest('hex'),
+    randomId: () => 'lease_' + sequence++,
+  });
+  const service = serviceFor(request);
+  await service.createPeriod(period);
+  now = period.startsAt;
+  const runIds = [], accounts = ['b'.repeat(64), 'c'.repeat(64)];
+  for (const [index, accountId] of accounts.entries()) {
+    const ownerUid = 'owner' + index;
+    docs.set(EC.profiles + '/' + accountId, { accountId, ownerUid, name: 'Racer ' + index });
+    await service.bindOwner(ownerUid, accountId);
+    const run = await service.submit(periodId, ownerUid, { accountId, trackId, attemptId: 'attempt' + index,
+      timeMs: 20000 + index, frames: 20000 + index, replay: 'AAAA', carStyle: '' });
+    runIds.push(run.runId);
+  }
+  now = stage === 'archive' ? period.endsAt + period.graceMs : 2500;
+  armed = true;
+  const db = { call: (route, body) => request(route, { body: JSON.stringify(body) }) };
+  const eventRun = (bounded, root, options) => runEventCoordinator({ service: serviceFor((route, init) =>
+    bounded.call(route, init?.body ? JSON.parse(init.body) : undefined)) }, root, { ...options,
+    consumeInbox: async () => ({ consumed: 0 }),
+    readWork: async () => ({ periodIds: [periodId], archiveId: stage === 'archive' ? periodId : null }),
+    verifyBatch: async (_root, jobs) => { stats.native += jobs.length; return jobs.map(conflictVerdict); },
+  });
+  const run = ({ catchUp = false, drain = true } = {}) => runVerifier({ drain, catchUp, clock: () => 0,
+    env: { FIREBASE_VERIFIER_SERVICE_ACCOUNT: 'offline-synthetic', GITHUB_EVENT_NAME: 'workflow_dispatch' },
+    validateEngine: async () => {}, connectDatabase: async () => db, eventRun, log: () => {},
+    prioritizeNormal: async (_db, rows) => rows,
+    selectNormal: async () => assert.fail('normal selection must not continue after event conflict'),
+    verifyNormal: async () => assert.fail('normal verification must not continue after event conflict'),
+    publishNormal: async () => assert.fail('normal publication must not continue after event conflict'),
+  });
+  return { docs, stats, runIds, accounts, service, run, failure, periodId, trackId,
+    disarm: () => { armed = false; }, expireLease: () => { now += EL.leaseMs; } };
+}
+
+for (const [stage, native, quota, committed] of [
+  ['lease', 0, 0, 0], ['period-read', 0, 2, 0], ['completion2', 2, 2, 1], ['archive', 2, 2, 2],
+]) test(`real event ${stage} abort stops drain and Catch-Up without retry or invented counts`, async () => {
+  for (const catchUp of [false, true]) {
+    const f = await conflictFixture(stage);
+    const summary = await f.run({ catchUp });
+    assert.equal(summary.stop, 'event_conflict');
+    assert.equal(summary.countsComplete, false);
+    assert.equal(summary.interruptedRound, true);
+    assert.equal(summary.rounds, 0);
+    assert.equal(summary.processed, 0);
+    assert.equal(summary.eventChecked, 0, 'interrupted-round work is unknown, not included in completed-round totals');
+    assert.equal(summary.verified, 0);
+    assert.equal(f.stats.native, native);
+    assert.equal(f.stats.normalQueries, 0);
+    assert.equal(f.stats.aborts, 1);
+    assert.equal(f.stats.rollbacks, 1);
+    assert.equal(f.stats.committed, committed);
+    assert.equal(f.stats.completionAttempts, native);
+    assert.equal(f.docs.get(EC.quotas + '/verification_global')?.used || 0, quota);
+    assert.deepEqual(f.runIds.map(id => f.docs.get(EC.runs + '/' + id).status),
+      f.runIds.map((_, index) => index < committed ? 'verified' : 'waiting'));
+    const queue = f.docs.get(EC.queues + '/' + f.periodId);
+    assert.equal(queue.slots.length, 2 - committed);
+    assert.ok(queue.slots.every(slot => slot.attempts === (stage === 'lease' ? 0 : 1)));
+    assert.equal([...f.docs.keys()].filter(key => key.startsWith(EC.canonical + '/')).length, committed);
+    assert.equal(f.docs.has(EC.archives + '/' + f.periodId), false);
+    assert.notEqual(f.docs.get(EC.history + '/' + f.periodId)?.archived, true);
+  }
+});
+
+test('event partial publication survives conflict and only unfinished work recovers after lease expiry', async () => {
+  const f = await conflictFixture('completion2');
+  assert.equal((await f.run()).stop, 'event_conflict');
+  const firstTotal = structuredClone(f.docs.get(EC.totals + '/' + f.accounts[0]));
+  const firstCanonical = structuredClone(f.docs.get(EC.canonical + '/' + f.accounts[0] + '_' + f.trackId));
+  assert.ok(firstTotal.rp > 0);
+  f.disarm();
+  assert.deepEqual(await f.service.processBatch(f.periodId, async () => assert.fail('live lease cannot run again')), []);
+  assert.equal(f.docs.get(EC.quotas + '/verification_global').used, 2);
+  f.expireLease();
+  let checked = 0;
+  const recovered = await f.service.processBatch(f.periodId, async jobs => {
+    checked += jobs.length;
+    assert.deepEqual(jobs.map(job => job.resultId), [f.runIds[1]]);
+    return jobs.map(conflictVerdict);
+  });
+  assert.equal(checked, 1);
+  assert.equal(recovered.length, 1);
+  assert.equal(f.docs.get(EC.quotas + '/verification_global').used, 3, 'no refund for the interrupted attempt');
+  assert.deepEqual(f.docs.get(EC.totals + '/' + f.accounts[0]), firstTotal);
+  assert.deepEqual(f.docs.get(EC.canonical + '/' + f.accounts[0] + '_' + f.trackId), firstCanonical);
+  assert.equal(f.docs.get(EC.queues + '/' + f.periodId).slots.length, 0);
+});
+
+test('event archive abort preserves earlier publications and later archival is atomic and idempotent', async () => {
+  const f = await conflictFixture('archive');
+  assert.equal((await f.run()).stop, 'event_conflict');
+  const canonical = () => [...f.docs].filter(([key]) => key.startsWith(EC.canonical + '/'));
+  const before = structuredClone(canonical());
+  assert.equal(before.length, 2);
+  const catalog = () => f.docs.get(EC.catalog + '/main').periods.find(row => row.id === f.periodId);
+  assert.notEqual(catalog().archived, true);
+  f.disarm();
+  assert.deepEqual(await f.service.archivePeriod(f.periodId), { archived: true, duplicate: false });
+  assert.deepEqual(await f.service.archivePeriod(f.periodId), { archived: true, duplicate: true });
+  assert.deepEqual(canonical(), before);
+  assert.equal(catalog().archived, true);
+  assert.equal(f.docs.get(EC.archives + '/' + f.periodId).settled, true);
+  assert.equal(f.docs.get(EC.history + '/' + f.periodId).archived, true);
+});
+
+test('batch and archive deferral never hide permission, domain, malformed or ambiguous failures', async () => {
+  const failures = [
+    [403, 'PERMISSION_DENIED'], [409, 'event_lease_lost'], [409, 'event_binding_changed'],
+    [409, 'event_settlement_open'], [409, 'FAILED_PRECONDITION'], [503, 'UNAVAILABLE'],
+    [503, 'ABORTED'], ['409', 'ABORTED'], [409, undefined], [undefined, 'ABORTED'],
+  ].map(([status, code]) => Object.assign(Error('Firestore request failed: 409 ABORTED'), { status, code }));
+  failures.push(Error('timeout'));
+  for (const phase of ['batch', 'archive']) for (const failure of failures) {
+    let calls = 0;
+    const fail = async () => { calls++; throw failure; };
+    const runtime = { service: { processBatch: phase === 'batch' ? fail : async () => [], archivePeriod: fail } };
+    await assert.rejects(drainVerification({ now: () => 0, requests: () => 0, log: () => {},
+      runRound: () => runEventCoordinator(runtime, '/offline', {
+        consumeInbox: async () => ({ consumed: 0 }),
+        readWork: async () => ({ periodIds: phase === 'batch' ? ['daily'] : [], archiveId: 'old' }),
+        verifyBatch: async () => assert.fail('native verification must not run'),
+      }),
+    }), error => error === failure);
+    assert.equal(calls, 1);
+  }
+});
+
+test('non-drain runner defers tagged event conflict without continuing normal work', async () => {
+  const f = await conflictFixture('completion2');
+  assert.deepEqual(await f.run({ drain: false }), {
+    deferred: true, reason: 'event_conflict', interruptedRound: true, countsComplete: false,
+  });
+  assert.equal(f.stats.normalQueries, 0);
+  assert.equal(f.stats.native, 2);
+  assert.equal(f.stats.committed, 1);
+  assert.equal(f.stats.aborts, 1);
+  assert.equal(f.docs.get(EC.quotas + '/verification_global').used, 2);
 });

@@ -15,6 +15,14 @@ export function eventRunDate(row,at=Date.now()){
   const seconds=Math.floor((at-stamp)/1000),minutes=Math.floor(seconds/60),hours=Math.floor(minutes/60),days=Math.floor(hours/24);
   return {label:days?days+' day'+(days===1?'':'s')+' ago':hours?hours+' hour'+(hours===1?'':'s')+' ago':minutes?minutes+' min ago':'Just now',title:new Date(stamp).toLocaleString()};
 }
+export function eventStandingsLabel(board,at=Date.now(),failed=false){
+  const capture=board?._publicBackup&&Number(board._snapshotCapturedAt)>0?Number(board._snapshotCapturedAt):0;
+  const stamp=capture||Number(board?.updatedAt)||0,seconds=stamp?Math.max(0,Math.floor((at-stamp)/1000)):null;
+  const age=seconds===null?'':seconds<60?'just now':seconds<3600?Math.floor(seconds/60)+'m':seconds<86400?Math.floor(seconds/3600)+'h':Math.floor(seconds/86400)+'d';
+  const source=board?._publicBackup?'Snapshot data':board?.saved?'Cached standings':board?.archived?'Final standings':'Published standings';
+  const freshness=capture?(seconds<60?'less than 1m old':age+' old'):age?'updated '+age+(seconds<60?'':' ago'):'update time unavailable';
+  return (failed||board?._eventRefreshFailed?'Refresh failed. ':'')+source+' · '+freshness;
+}
 export function liveTimedEventPeriods(periods,at=Date.now()){
   const unique=new Map();
   for(const period of (Array.isArray(periods)?periods:[]))if(period?.id&&period.id!==PERMANENT_ROLLING.id&&period.kind!=='permanent'&&period.enabled!==false&&!period.archived&&period.startsAt<=at&&period.endsAt>at&&!unique.has(period.id))unique.set(period.id,period);
@@ -158,7 +166,7 @@ export function installEvents(bridge){
   const sessions=createEventSession();let capture=null,catalog=read(STORE,{periods:[],archives:[]}),catalogAt=0,catalogFreshUntil=0,fetching=null,flushing=false,retryAt=0,dialog=null,returnFocus=null,selected=null,requestId=0,entryRequest=0;
   let boundaryTimer=null;
   let statusText='',latestFinish=null,permanent=read(STORE+'-permanent',null),permanentAt=0,permanentFetching=null;
-  const cache=new Map(),snapshotFetching=new Map(),knownPeriods=new Map();let lastInline='';let bestRecords=read(BEST,{}),hasPending=read(QUEUE,[]).length>0;
+  const cache=new Map(),snapshotFetching=new Map(),snapshotAttempts=new Map(),knownPeriods=new Map();let lastInline='';let bestRecords=read(BEST,{}),hasPending=read(QUEUE,[]).length>0;
   const now=()=>Date.now();
   const activePeriods=()=>liveTimedEventPeriods(catalog.periods,now());
   const livePeriods=activePeriods;
@@ -192,8 +200,12 @@ export function installEvents(bridge){
   async function snapshot(period,force=false){
     const valid=value=>value&&Array.isArray(value.entries)&&value.period?.id===period.id&&value.period.trackId===period.trackId&&value.period.kind===period.kind&&Number.isSafeInteger(value.updatedAt)&&value.updatedAt>=0;
     const candidate=cache.get(period.id)||read(STORE+'-'+period.id,null),saved=valid(candidate)?candidate:null;
-    if(!force&&saved&&now()-saved.fetchedAt<120000)return saved;
     if(snapshotFetching.has(period.id))return snapshotFetching.get(period.id);
+    const attempt=snapshotAttempts.get(period.id);
+    if(attempt&&now()<attempt.nextAt){if(saved)return saved;if(attempt.error)throw attempt.error;}
+    if(!force&&saved&&now()-saved.fetchedAt<120000)return saved;
+    const state={nextAt:now()+60000,error:null};snapshotAttempts.set(period.id,state);
+    if(snapshotAttempts.size>128)snapshotAttempts.delete(snapshotAttempts.keys().next().value);
     const confirmSchedulePeriod=value=>{
       const confirmed=value.period,index=(catalog.periods||[]).findIndex(item=>item.id===confirmed.id&&item.scheduleOnly===true&&item.trackId===confirmed.trackId&&item.kind===confirmed.kind);
       if(index<0)return;
@@ -202,13 +214,21 @@ export function installEvents(bridge){
       catalog={...catalog,periods:catalog.periods.map((item,i)=>i===index?enriched:item)};
       cacheWrite(STORE,catalog);catalogAt=now();catalogFreshUntil=eventCatalogFreshUntil(catalog.periods,catalogAt);
     };
-    const pending=(async()=>{
-      try{const value=await bridge.readSnapshot(period.id);if(!valid(value))throw Error('Invalid event snapshot');confirmSchedulePeriod(value);const current=cache.get(period.id)||saved;if(valid(current)&&current.updatedAt>value.updatedAt)return current;const next={...value,fetchedAt:now(),saved:false};cache.set(period.id,next);cacheWrite(STORE+'-'+period.id,next);return next;}
-      catch(error){if(saved){const fallback={...saved,saved:true};cache.set(period.id,fallback);return fallback;}throw error;}
+    let pending;pending=(async()=>{
+      try{const value=await bridge.readSnapshot(period.id);if(!valid(value))throw Error('Invalid event snapshot');if(value._eventRefreshFailed){state.error=Error('Event refresh failed');state.nextAt=now()+120000;}confirmSchedulePeriod(value);const current=cache.get(period.id)||saved;if(valid(current)&&current.updatedAt>value.updatedAt)return current;const next={...value,fetchedAt:now(),saved:false};cache.set(period.id,next);cacheWrite(STORE+'-'+period.id,next);return next;}
+      catch(error){state.error=error;state.nextAt=now()+120000;if(saved){const fallback={...saved,saved:true};cache.set(period.id,fallback);return fallback;}throw error;}
       finally{if(snapshotFetching.get(period.id)===pending)snapshotFetching.delete(period.id);}
     })();
     snapshotFetching.set(period.id,pending);
     return pending;
+  }
+  function updateEventRefreshControl(){
+    const button=dialog?.querySelector('[data-event-refresh]');if(!button||!selected)return;
+    const remaining=Math.max(0,Math.ceil(((snapshotAttempts.get(selected.id)?.nextAt||0)-now())/1000));
+    button.disabled=remaining>0;
+    const label=remaining?'Refresh in '+remaining+'s':'Refresh standings';
+    if(button.textContent!==label)button.textContent=label;
+    button.title=remaining?'Standings are saved. A short cooldown prevents repeated cloud requests.':'Check for newer event standings';
   }
   function message(text){statusText=text;for(const status of document.querySelectorAll('.sq-event-status,.sq-event-inline-status'))if(status.textContent!==text)status.textContent=text;}
   async function flush(){
@@ -218,7 +238,7 @@ export function installEvents(bridge){
       for(const run of read(QUEUE,[])){
         if(run.accountId!==bridge.accountId())continue;
         if(now()>=run.endsAt){message('An offline event run missed the closing time. Your normal PB is unchanged.');write(QUEUE,read(QUEUE,[]).filter(row=>row.attemptId!==run.attemptId));continue;}
-        try{await bridge.submit(run);write(QUEUE,read(QUEUE,[]).filter(row=>row.attemptId!==run.attemptId));message('Event PB submitted. Waiting for replay verification.');cache.delete(run.periodId);ownReceiptAt.delete(run.periodId+'_'+run.accountId);ownReceipts.delete(run.periodId+'_'+run.accountId);}
+        try{await bridge.submit(run);write(QUEUE,read(QUEUE,[]).filter(row=>row.attemptId!==run.attemptId));message('Event PB submitted. Waiting for replay verification.');cache.delete(run.periodId);invalidateReceipt(run.periodId+'_'+run.accountId);}
         catch(error){retryAt=now()+60000;message('Event PB saved on this device. Cloud submission will retry.');break;}
       }
     }finally{hasPending=read(QUEUE,[]).length>0;flushing=false;}
@@ -232,7 +252,7 @@ export function installEvents(bridge){
       const key=eventRun.periodId+'_'+eventRun.accountId,prior=bestRecords[key];
       if(intent?.periodId===eventRun.periodId)latestFinish={...eventRun,previousTimeMs:prior?.timeMs};
       if(prior&&prior.timeMs<=eventRun.timeMs)continue;
-      ownReceiptAt.delete(key);ownReceipts.delete(key);
+      invalidateReceipt(key);
       write(QUEUE,keepEventBest(read(QUEUE,[]),eventRun));hasPending=true;
       bestRecords[key]={timeMs:eventRun.timeMs,attemptId:eventRun.attemptId,carStyle:eventRun.carStyle,at};
       write(BEST,bestRecords);
@@ -325,11 +345,11 @@ export function installEvents(bridge){
   }
   async function openPeriod(period,force=false){
     if(period?.scheduleOnly)return race(period,{direct:true});
-    shell();const closed=now()>=period.endsAt;selectView(closed?'archives':'home');selected=period;const token=++requestId;body('<p>Loading event standings...</p>');
+    shell();const accountId=bridge.accountId(),closed=now()>=period.endsAt;selectView(closed?'archives':'home');selected=period;const token=++requestId;body('<p role="status">Loading event standings...</p>');
     try{
-      const board=await snapshot(period,force&&!closed),receipt=await readReceipt(period.id,bridge.accountId(),force&&!closed);
-      if(!dialog||token!==requestId)return;
-      period=board.period;selected=period;ownReceipts.set(period.id+'_'+bridge.accountId(),receipt);
+      const board=await snapshot(period,force&&!closed),receipt=await readReceipt(period.id,accountId);
+      if(!dialog||token!==requestId||accountId!==bridge.accountId())return;
+      period=board.period;selected=period;
       const local=localBest(period),published=board.entries.find(row=>row.accountId===bridge.accountId());
       const submitted=receipt&&['waiting','verified'].includes(receipt.status)&&Number.isSafeInteger(receipt.timeMs)&&receipt.timeMs>0?receipt:null;
       const provisional=local&&(!submitted||local.timeMs<=submitted.timeMs)?local:submitted;
@@ -339,9 +359,9 @@ export function installEvents(bridge){
       const filtered=bridge.filterRows?.(rawStandings,{trackId:period.trackId,event:true,maxRp:period.maxRp,complete:board.complete===true}),standings=filtered?.rows||rawStandings;
       const winner=counts?.winner?` · Winner ${escape(displayName(counts.winner))} ${time(counts.winner.timeMs)}`:'';
       const archiveMeta=counts?`<p>${counts.racers} ${counts.racers===1?'racer':'racers'}${winner}</p>`:'';
-      body(`<div class="sq-event-heading"><span class="sq-event-thumb">${bridge.thumbnail(period.trackId)}</span><div><h3>${escape(periodName(period))}</h3><p>${escape(reset(period))} · ${closed?'Closed':'Open'}</p>${archiveMeta}<p>Your event PB: <b>${time(best?.timeMs)}</b> ${best?(isLocal?(provisional===local?'(saved on this device)':'(submitted)'):'(published)'):''}</p></div></div><div class="sq-event-actions">${actions}</div>${receiptText(receipt,local,period)?`<p class="sq-event-receipt" role="status">${escape(receiptText(receipt,local,period))}</p>`:''}<p class="${board.saved?'sq-event-saved':''}">${board.saved?'Saved standings':board.archived?'Final standings':closed?'Finalizing standings':'Published standings'} · Only verified event runs earn points.</p><ol class="sq-event-results sq-event-verified-results">${rows(standings)||'<li>No verified event times yet.</li>'}</ol>`);
-      message((filtered?.active?'Personal filters are active. ':'')+(closed?'Final standings. Practice runs do not submit to the expired event.':'Only verified event runs earn Event RP.'));
-      bridge.filterButton?.(dialog.querySelector('.sq-event-actions'));
+      body(`<div class="sq-event-heading"><span class="sq-event-thumb">${bridge.thumbnail(period.trackId)}</span><div><h3>${escape(periodName(period))}</h3><p>${escape(reset(period))} · ${closed?'Closed':'Open'}</p>${archiveMeta}<p>Your event PB: <b>${time(best?.timeMs)}</b> ${best?(isLocal?(provisional===local?'(saved on this device)':'(submitted)'):'(published)'):''}</p></div></div><div class="sq-event-actions">${actions}</div>${receiptText(receipt,local,period)?`<p class="sq-event-receipt" role="status">${escape(receiptText(receipt,local,period))}</p>`:''}<p class="${board.saved?'sq-event-saved':''}">${escape(eventStandingsLabel(board,now(),!!snapshotAttempts.get(period.id)?.error))}</p><ol class="sq-event-results sq-event-verified-results">${rows(standings)||'<li>No verified event times yet.</li>'}</ol>`);
+      message((filtered?.active?'Personal filters are active. ':'')+(closed?(board.archived?'Final standings. ':'Finalizing standings. ')+'Practice runs do not submit to the expired event.':'Only verified event runs earn Event RP.'));
+      bridge.filterButton?.(dialog.querySelector('.sq-event-actions'));updateEventRefreshControl();
     }catch{if(token===requestId)body('<p>Event standings are unavailable. Please try again later.</p>');}
   }
   async function practice(period){
@@ -624,13 +644,26 @@ export function installEvents(bridge){
     catch{if(sessions.current()===session)message('Event race could not start safely. No normal PB ghost was loaded.');}
     finally{launching=false;}
   }
-  const ownReceipts=new Map(),ownReceiptAt=new Map();
-  async function readReceipt(periodId,accountId,force=false){
+  const ownReceipts=new Map(),ownReceiptAt=new Map(),ownReceiptRequests=new Map();
+  function invalidateReceipt(key){
+    ownReceiptAt.delete(key);ownReceipts.delete(key);ownReceiptRequests.delete(key);
+  }
+  async function readReceipt(periodId,accountId){
     const key=periodId+'_'+accountId;
-    if(!force&&ownReceiptAt.has(key)&&now()-ownReceiptAt.get(key)<15000)return ownReceipts.get(key);
-    const receipt=await bridge.readOwnStatus?.(periodId,accountId).catch(()=>null)??null;
-    ownReceipts.set(key,receipt);ownReceiptAt.set(key,now());
-    return receipt;
+    if(bridge.snapshotOnly?.()&&!bestRecords[key])return ownReceipts.get(key)||null;
+    if(ownReceiptRequests.has(key))return ownReceiptRequests.get(key);
+    if(ownReceiptAt.has(key)&&now()-ownReceiptAt.get(key)<60000)return ownReceipts.get(key);
+    const at=now();ownReceiptAt.set(key,at);
+    let pending;pending=(async()=>{
+      try{
+        const receipt=await bridge.readOwnStatus?.(periodId,accountId)??null;
+        // A newly submitted PB invalidates the old in-flight receipt too.
+        if(ownReceiptAt.get(key)===at&&ownReceiptRequests.get(key)===pending)ownReceipts.set(key,receipt);
+        return receipt;
+      }catch{return ownReceipts.get(key)||null;}
+      finally{if(ownReceiptRequests.get(key)===pending)ownReceiptRequests.delete(key);}
+    })();
+    ownReceiptRequests.set(key,pending);return pending;
   }
   function clearNativeView(){
     if(!nativeView)return;
@@ -836,7 +869,7 @@ export function installEvents(bridge){
     if(position.title!==detail)position.title=detail;
   }
   function tick({cachedOnly=false}={}){
-    syncFinishPlace();
+    syncFinishPlace();updateEventRefreshControl();
     if(!cachedOnly)void flush();
     const view=nativeView,at=now();
     if(view&&!view.carObserver&&view.deferredCarRows.size&&at>=(view.nextDeferredCarRetryAt||0)){

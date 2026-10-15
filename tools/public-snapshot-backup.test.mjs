@@ -233,6 +233,9 @@ test('event replay backup requires exact public entry binding and valid content 
   assert.throws(() => publicEventReplayBackup({...value, timeMs: 24}, {periodId: period.id, trackId, entry}), /unbound/);
   assert.throws(() => publicEventReplayBackup({...value, replayHash: '0'.repeat(64)}, {periodId: period.id, trackId, entry}), /unbound/);
   assert.throws(() => publicEventReplayBackup({...value, verified: false}, {periodId: period.id, trackId, entry}), /unbound/);
+  for (const binding of [{runId: 'e'.repeat(64)}, {replayHash: 'f'.repeat(64)}]) {
+    assert.throws(() => publicEventReplayBackup(value, {periodId: period.id, trackId, entry: {...entry, ...binding}}), /unbound/);
+  }
 });
 
 test('track registry parser and bounded selection prioritize dirty snapshots and reuse matching timestamps', () => {
@@ -393,4 +396,123 @@ test('finalized archive backups are reused, while live events and weekly correct
   await runPublicSnapshotBackup({fetchImpl, directory,
     now: now + PUBLIC_SNAPSHOT_LIMITS.archivedEventRecheckMs + 1, trackIds: [], log: () => {}});
   assert.ok(calls.some(url => url.includes('/daily_old/')));
+});
+
+test('public event projection preserves valid replay bindings across repeated captures', () => {
+  const row = {accountId: 'b'.repeat(64), timeMs: 23, runId: 'c'.repeat(64), replayHash: 'd'.repeat(64),
+    replay: 'private-payload', ownerUid: 'private-owner'};
+  const snapshot = publicEventBackup({id: period.id, period, updatedAt: 180, entries: [row]}, period.id);
+  assert.equal(snapshot.entries[0].runId, row.runId);
+  assert.equal(snapshot.entries[0].replayHash, row.replayHash);
+  assert.equal(snapshot.entries[0].replay, undefined);
+  assert.equal(snapshot.entries[0].ownerUid, undefined);
+  assert.deepEqual(publicEventBackup(snapshot, period.id), snapshot);
+  for (const invalid of ['private', [row.runId], null]) {
+    const projected = publicEventBackup({...snapshot, entries: [{...row, runId: invalid, replayHash: invalid}]}, period.id);
+    assert.equal(projected.entries[0].runId, undefined);
+    assert.equal(projected.entries[0].replayHash, undefined);
+  }
+});
+
+test('same-time replay replacements cannot reuse or publish a conflicting run binding', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'snapshot-replay-binding-'));
+  t.after(() => fs.rm(directory, {recursive: true, force: true}));
+  const accountId = 'b'.repeat(64);
+  const versions = ['old-replay', 'new-replay'].map((replay, index) => ({
+    replay, replayHash: createHash('sha256').update(replay).digest('hex'), runId: String(index + 1).repeat(64)
+  }));
+  let boardVersion = 0, replayVersion = 0, replayRequests = 0;
+  const fetchImpl = async input => {
+    const url = new URL(input);
+    if (url.pathname.endsWith('/overall')) return Response.json({...overall, trackSummaries: []});
+    if (url.pathname.endsWith('/catalog')) return Response.json({periods: [period], archives: []});
+    if (url.pathname.includes('/replays/')) {
+      replayRequests++;
+      return Response.json({...versions[replayVersion], periodId: period.id, trackId, accountId, timeMs: 23,
+        frames: 23, carStyle: '', verificationStatus: 'verified', verified: true, eventRpEligible: true});
+    }
+    if (url.pathname.includes('/permanent-rolling-hills/')) return Response.json({updatedAt: 180, entries: []});
+    return Response.json({id: period.id, period, updatedAt: 180 + boardVersion,
+      entries: [{accountId, timeMs: 23, runId: versions[boardVersion].runId, replayHash: versions[boardVersion].replayHash}]});
+  };
+  const capture = now => runPublicSnapshotBackup({fetchImpl, directory, now, trackIds: [], log: () => {}});
+  const relative = `event-replays/${period.id}/${accountId}.json`;
+  await capture(1000);
+  boardVersion = 1;
+  const mismatched = await capture(1001);
+  assert.equal(replayRequests, 2, 'changed run with the same finish time is refetched');
+  assert.equal(mismatched.eventReplays[relative], undefined, 'stale endpoint reply is not rebound to the new board');
+  await assert.rejects(fs.readFile(path.join(directory, relative)), {code: 'ENOENT'});
+  const saved = JSON.parse(await fs.readFile(path.join(directory, `events/${period.id}.json`), 'utf8'));
+  assert.equal(saved.entries[0].runId, versions[1].runId);
+  replayVersion = 1;
+  const recovered = await capture(1002);
+  assert.equal(recovered.eventReplays[relative].replayHash, versions[1].replayHash);
+  await capture(1003);
+  assert.equal(replayRequests, 3, 'matching replacement is reused without further cloud reads');
+});
+
+test('missing or corrupt cached track paths are not counted as present after a 404', async t => {
+  for (const state of ['missing', 'corrupt']) {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'snapshot-missing-track-'));
+    t.after(() => fs.rm(directory, {recursive: true, force: true}));
+    const now = 10 * 86400000;
+    await fs.writeFile(path.join(directory, 'manifest.json'), JSON.stringify({schemaVersion: 1, events: {},
+      tracks: {[trackId]: {path: `tracks/${trackId}.json`, sourceUpdatedAt: 250, checkedAt: 1}}}));
+    if (state === 'corrupt') {
+      await fs.mkdir(path.join(directory, 'tracks'));
+      await fs.writeFile(path.join(directory, `tracks/${trackId}.json`), '{}');
+    }
+    let trackRequests = 0;
+    const fetchImpl = async input => {
+      const url = new URL(input);
+      if (url.pathname.endsWith('/overall')) return Response.json({...overall, trackSummaries: []});
+      if (url.pathname.endsWith('/catalog')) return Response.json({periods: [], archives: []});
+      if (url.pathname.endsWith('/track')) { trackRequests++; return new Response('', {status: 404}); }
+      return new Response('', {status: 404});
+    };
+    const capture = at => runPublicSnapshotBackup({fetchImpl, directory, now: at, trackIds: [trackId], log: () => {}});
+    const result = await capture(now);
+    assert.equal(result.tracks[trackId].path, null, state);
+    assert.equal(result.tracks[trackId].checkedAt, now);
+    assert.equal(result.trackBackupsPresent, 0);
+    assert.equal(result.trackBackupsMissing, 1);
+    await capture(now + 86400000);
+    assert.equal(trackRequests, 1, 'known missing track observes the existing seven-day cooldown');
+    await capture(now + 7 * 86400000);
+    assert.equal(trackRequests, 2);
+    await capture(now + 8 * 86400000);
+    assert.equal(trackRequests, 2, 'each unsuccessful recheck renews the missing-track cooldown');
+  }
+});
+
+test('a 404 preserves a valid stale track without advancing its capture timestamp', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'snapshot-stale-track-'));
+  t.after(() => fs.rm(directory, {recursive: true, force: true}));
+  await fs.mkdir(path.join(directory, 'tracks'));
+  const board = {trackId, updatedAt: 250, entries: []};
+  await fs.writeFile(path.join(directory, `tracks/${trackId}.json`), JSON.stringify(board));
+  await fs.writeFile(path.join(directory, 'manifest.json'), JSON.stringify({schemaVersion: 1, events: {},
+    tracks: {[trackId]: {path: `tracks/${trackId}.json`, sourceUpdatedAt: 250, checkedAt: 1000}}}));
+  const result = await runPublicSnapshotBackup({directory, now: 2000, trackIds: [trackId], log: () => {}, fetchImpl: async input => {
+    if (input.endsWith('/overall')) return Response.json({...overall, trackSummaries: [{trackId, updatedAt: 251}]});
+    if (input.endsWith('/catalog')) return Response.json({periods: [], archives: []});
+    return new Response('', {status: 404});
+  }});
+  assert.equal(result.trackBackupsPresent, 1);
+  assert.equal(result.tracks[trackId].checkedAt, 1000);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(directory, `tracks/${trackId}.json`), 'utf8')), board);
+});
+
+test('public capture workflows remain serialized and avoid full profile scans', async () => {
+  const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  for (const name of ['sync-event-catalog.yml', 'sync-kodub-weekly.yml']) {
+    const workflow = await fs.readFile(path.join(repo, '.github/workflows', name), 'utf8');
+    assert.match(workflow, /group: public-repository-captures-\$\{\{ github\.repository \}\}/);
+    assert.match(workflow, /cancel-in-progress: false/);
+    assert.match(workflow, /github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)/);
+    assert.match(workflow, /node tools\/push-public-capture\.mjs/);
+    assert.doesNotMatch(workflow, /--full-public|--force/);
+    if (name === 'sync-event-catalog.yml') assert.match(workflow, /node tools\/update-public-snapshot\.mjs --refresh-replays/);
+  }
 });

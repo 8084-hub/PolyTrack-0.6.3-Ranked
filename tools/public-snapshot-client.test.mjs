@@ -517,3 +517,47 @@ test('transient current-pointer failure can recover later without concurrent poi
   now=30_000;const results=await Promise.all(Array.from({length:20},()=>read('overall')));
   assert.ok(results.every(r=>r.updatedAt===8));assert.equal(pointers,2);
 });
+
+test('long-lived readers recover a second retired generation without pointer polling',async()=>{
+  const entries=new Map();
+  for(const generation of [8,9])entries.set(generation,await packedEntry({updatedAt:generation,entries:[]}));
+  let now=0,current=8,pointers=0;const changes=[];
+  const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/app/public-snapshots7/',now:()=>now,
+    onGenerationChange:change=>changes.push(change),fetchImpl:async url=>{
+      const pathname=new URL(url).pathname;
+      if(pathname==='/app/snapshot-current.json'){pointers++;return Response.json({currentdir:`public-snapshots${current}`});}
+      const entry=entries.get(current),base=`/app/public-snapshots${current}/`;
+      if(pathname===base+'index.json')return Response.json({schemaVersion:1,encoding:'gzip-xor-a7-v1',
+        files:{'overall.json':entry.record,'event-totals.json':entry.record}});
+      return pathname===base+entry.record.path?new Response(entry.bytes):new Response('',{status:404});
+    }});
+  assert.equal((await read('overall')).updatedAt,8);
+  current=9;
+  assert.equal(await read('event-totals'),null);
+  assert.equal(pointers,1,'an immediate failure in the replacement does not loop through the pointer');
+  now=15*60_000-1;
+  assert.equal(await read('event-totals'),null);
+  assert.equal(pointers,1);
+  now=15*60_000;
+  const recovered=await Promise.all(Array.from({length:20},()=>read('event-totals')));
+  assert.ok(recovered.every(value=>value?.updatedAt===9));
+  assert.equal((await read('overall')).updatedAt,9,'second recovery invalidates the warm earlier generation');
+  assert.equal(pointers,2,'concurrent reads share each bounded recovery');
+  assert.deepEqual(changes.map(change=>change.generation),[1,2]);
+});
+
+test('an unchanged pointer can be checked again after the deployment cooldown',async()=>{
+  const entry=await packedEntry({updatedAt:8,entries:[]});let now=0,current=7,pointers=0;
+  const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/public-snapshots7/',now:()=>now,fetchImpl:async url=>{
+    const pathname=new URL(url).pathname;
+    if(pathname==='/snapshot-current.json'){pointers++;return Response.json({currentdir:`public-snapshots${current}`});}
+    if(current===8&&pathname==='/public-snapshots8/index.json')return packedIndex(entry.record);
+    if(current===8&&pathname==='/public-snapshots8/'+entry.record.path)return new Response(entry.bytes);
+    return new Response('',{status:404});
+  }});
+  assert.equal(await read('overall'),null);assert.equal(pointers,1);
+  current=8;now=30_000;
+  assert.equal(await read('overall'),null);assert.equal(pointers,1);
+  now=15*60_000;
+  assert.equal((await read('overall'))?.updatedAt,8);assert.equal(pointers,2);
+});

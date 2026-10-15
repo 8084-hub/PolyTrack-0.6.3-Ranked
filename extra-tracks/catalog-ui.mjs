@@ -88,6 +88,8 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   let expandedCardTrigger = null;
   let cardMenuNumber = 0;
   let cardMenuPositionFrame = null;
+  const phoneFiltersQuery = document.defaultView?.matchMedia?.('(max-width: 600px)') || null;
+  let filtersExpanded = false;
   const state = { search: '', source: '', tags: [], difficulty: '', curated: false, favorites: false, completion: 'all', review: 'all', sort: 'recommended' };
   const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
   const make = (tag, className, content) => {
@@ -111,6 +113,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   overlay.append(cardMenuLayer);
   const titleId = `sq-extra-title-${++mountNumber}`;
   dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('tabindex', '-1');
   dialog.setAttribute('aria-modal', 'true');
   dialog.setAttribute('aria-labelledby', titleId);
   overlay.append(dialog);
@@ -122,10 +125,28 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   titleGroup.append(eyebrow, title);
   const closeButton = button('Close', 'sq-extra-close', close);
   header.append(titleGroup);
-  if (typeof onExportFeedback === 'function') header.append(button('Export my picks', 'sq-extra-export', async () => {
-    try { await onExportFeedback(); showStatus('Your track picks and saved progress were exported.'); }
-    catch { showStatus('The export could not be downloaded on this device.', true); }
-  }));
+  if (typeof onExportFeedback === 'function') {
+    let exportPending = false;
+    const exportButton = button('Export my picks', 'sq-extra-export', async () => {
+      if (exportPending) return;
+      exportPending = true;
+      exportButton.disabled = true;
+      exportButton.textContent = 'Exporting...';
+      exportButton.setAttribute('aria-busy', 'true');
+      try {
+        await onExportFeedback();
+        if (!destroyed) showStatus('Your track picks and saved progress were exported.');
+      } catch {
+        if (!destroyed) showStatus('The export could not be downloaded on this device.', true);
+      } finally {
+        exportPending = false;
+        exportButton.disabled = false;
+        exportButton.textContent = 'Export my picks';
+        exportButton.removeAttribute('aria-busy');
+      }
+    });
+    header.append(exportButton);
+  }
   header.append(closeButton);
   dialog.append(header);
   const invitation = make('p', 'sq-extra-invite', 'Made a track? Direct submissions get priority review for this collection. Inclusion and featured placement are not guaranteed.');
@@ -150,6 +171,10 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   search.type = 'search';
   search.placeholder = 'Name, author, source, tag';
   searchLabel.append(search);
+  const advancedToggle = button('Filters & sort', 'sq-extra-advanced-toggle', toggleAdvancedFilters);
+  const advancedControls = make('div', 'sq-extra-advanced');
+  advancedControls.id = `sq-extra-advanced-${mountNumber}`;
+  advancedToggle.setAttribute('aria-controls', advancedControls.id);
   const selectField = (caption, choices) => {
     const label = make('label', 'sq-extra-field', caption);
     const select = make('select');
@@ -189,8 +214,9 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   const favoritesLabel = make('label', 'sq-extra-check');
   const favorites = make('input'); favorites.type = 'checkbox';
   favoritesLabel.append(favorites, make('span', '', 'My favorites'));
-  controls.append(searchLabel, sourceField.label, tagField.label, difficultyField.label, completionField.label, reviewField.label, sortField.label, curatedLabel, favoritesLabel);
-  controls.append(button('Reset filters', 'sq-extra-clear', clearFilters));
+  advancedControls.append(sourceField.label, tagField.label, difficultyField.label, completionField.label, reviewField.label, sortField.label, curatedLabel, favoritesLabel);
+  advancedControls.append(button('Reset filters', 'sq-extra-clear', clearFilters));
+  controls.append(searchLabel, advancedToggle, advancedControls);
   dialog.append(controls);
 
   const summary = make('div', 'sq-extra-summary');
@@ -790,6 +816,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     const tagMatches = state.tags.length ? all.filter(entry => state.tags.every(tag => effectiveReviewTags(entry, feedbackById.get(entry.id)).includes(tag))).length : null;
     filterCount(tagField, tagMatches === null ? `${tags.length} Tags` : `${tagMatches} tracks`);
     filterCount(difficultyField, state.difficulty ? difficultyCounts.get(state.difficulty) || 0 : all.length);
+    syncAdvancedFilters();
     for (const [field, value, fallback] of [[sourceField, state.source, 'All sources'], [difficultyField, state.difficulty, 'Any level']]) {
       const selected = [...field.select.children].find(option => option.value === value);
       if (selected) selected.textContent = value ? field === difficultyField ? `${value} · ${DIFFICULTY_LABELS[Number(value)]}` : value : fallback;
@@ -948,6 +975,30 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     search.value = ''; sourceField.select.value = ''; difficultyField.select.value = '';
     completionField.select.value = 'all'; reviewField.select.value = 'all'; sortField.select.value = 'recommended'; curated.checked = false; favorites.checked = false;
     page = 1; render();
+    search.focus({preventScroll: true});
+  }
+
+  function activeAdvancedFilterGroups() {
+    return Number(Boolean(state.source)) + Number(state.tags.length > 0) + Number(Boolean(state.difficulty)) +
+      Number(state.curated) + Number(state.favorites) + Number(state.completion !== 'all') +
+      Number(state.review !== 'all') + Number(state.sort !== 'recommended');
+  }
+
+  function syncAdvancedFilters() {
+    const isPhone = phoneFiltersQuery?.matches === true;
+    const expanded = !isPhone || filtersExpanded;
+    advancedControls.hidden = !expanded;
+    advancedControls.inert = !expanded;
+    advancedToggle.hidden = !isPhone;
+    advancedToggle.setAttribute('aria-expanded', String(expanded));
+    const activeCount = activeAdvancedFilterGroups();
+    advancedToggle.textContent = activeCount ? `Filters & sort (${activeCount})` : 'Filters & sort';
+    if (!expanded && advancedControls.contains(document.activeElement)) advancedToggle.focus({preventScroll: true});
+  }
+
+  function toggleAdvancedFilters() {
+    filtersExpanded = !filtersExpanded;
+    syncAdvancedFilters();
   }
 
   function close() {
@@ -1164,6 +1215,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   document.addEventListener('click', onCardMenuOutside, true);
   document.addEventListener('scroll', scheduleCardMenuPosition, true);
   document.defaultView?.addEventListener('resize', scheduleCardMenuPosition);
+  phoneFiltersQuery?.addEventListener?.('change', syncAdvancedFilters);
   render();
   return {
     open, close, refresh() { cachedRecords = null; render(); },
@@ -1175,6 +1227,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       document.removeEventListener('click', onCardMenuOutside, true);
       document.removeEventListener('scroll', scheduleCardMenuPosition, true);
       document.defaultView?.removeEventListener('resize', scheduleCardMenuPosition);
+      phoneFiltersQuery?.removeEventListener?.('change', syncAdvancedFilters);
       overlay.remove();
     }
   };
