@@ -227,3 +227,17 @@ test('deferred event budgets do not advance the in-memory period cursor', async 
   assert.equal(result.checked, 4);
   assert.equal(f.batches[0].period, 'weekly');
 });
+
+
+test('aborted intake defers only event work without adding immediate retries',async()=>{
+ const f=fixture({daily:10});let calls=0;
+ const options={...f.options,consumeInbox:async()=>{if(calls++===0)return {consumed:1,rejected:false};throw Object.assign(Error('Firestore request failed: 409'),{status:409,code:'ABORTED'});},readWork:async()=>assert.fail('no more event reads after contention')};
+ const result=await runEventCoordinator(f.runtime,'/repo',options);
+ assert.equal(result.consumed,1);assert.equal(result.checked,0);assert.equal(result.conflictDeferred,true);assert.equal(result.budgetDeferred,true);assert.equal(f.native(),0);assert.equal(calls,2);
+});
+
+test('event intake never hides permission failures or ambiguous write outcomes',async()=>{
+ for(const failure of [Object.assign(Error('denied'),{status:403,code:'PERMISSION_DENIED'}),Object.assign(Error('unavailable'),{status:503}),Error('timeout')]){
+  const f=fixture({daily:10});await assert.rejects(runEventCoordinator(f.runtime,'/repo',{...f.options,consumeInbox:async()=>{throw failure;}}),e=>e===failure);
+ }
+});

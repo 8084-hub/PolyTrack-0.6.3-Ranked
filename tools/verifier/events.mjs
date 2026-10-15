@@ -40,7 +40,14 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
   for (let i = 0; i < intakeLimit; i++) {
     // Two bounded intake transactions plus discovery and one leased batch must fit.
     if (!canSpend(48 + 24 + 128)) { budgetDeferred = true; break; }
-    const intake = await consumeInbox(r, { preferRetry: i % 2 === 0 });
+    let intake;
+    try { intake = await consumeInbox(r, { preferRetry: i % 2 === 0 }); }
+    catch (error) {
+      // ABORTED confirms this transaction did not commit. The event runtime
+      // disables immediate retries to bound reads; reread next invocation instead.
+      if (error?.status !== 409 || error?.code !== 'ABORTED') throw error;
+      return {checked:0,consumed,rejected,archived:null,results:[],budgetDeferred:true,conflictDeferred:true};
+    }
     consumed += intake.consumed;
     rejected ||= intake.rejected === true;
     if (!intake.consumed) break;

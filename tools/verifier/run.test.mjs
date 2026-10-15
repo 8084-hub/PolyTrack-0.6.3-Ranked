@@ -79,3 +79,10 @@ test('top-weight due track gets one targeted lookup inside the existing eight-do
   assert.equal(selected.length,8,'the Core candidate count remains capped at eight');
 });
 
+
+
+test('event intake contention lends unused slots to normal work instead of crashing',async()=>{
+ const logs=[];let seenCapacity=0;
+ const result=await runRound({call:async()=>[],requests:()=>1}, {...options,log:message=>logs.push(message),eventRun:async()=>({checked:0,consumed:0,rejected:false,archived:null,results:[],budgetDeferred:true,conflictDeferred:true}),selectNormal:async(_db,_docs,_now,limits)=>{seenCapacity=limits.jobLimit;return {jobs:[],canonicalAttempts:0,selectionConflicts:0};}});
+ assert.equal(result.events.conflictDeferred,true);assert.equal(result.infrastructureFailure,false);assert.equal(seenCapacity,16);assert.ok(logs.some(s=>s.includes('normal verification continues')));
+});

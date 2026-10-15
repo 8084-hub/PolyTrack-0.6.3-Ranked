@@ -86,3 +86,23 @@ test('Event RP does not report empty or unavailable standings before the first r
  for(const status of ['idle','loading']){ctx.eventTotalsState={status};ctx.renderEventEntries(list);assert.match(list.innerHTML,/overall-loading/);assert.doesNotMatch(list.innerHTML,/No Event RP earned|unavailable/);}
  ctx.eventTotalsState={status:'error'};ctx.renderEventEntries(list);assert.match(list.innerHTML,/Event RP unavailable/);
 });
+
+
+test('event snapshot provenance and successful live check survive a failed refresh',async()=>{
+ const {ctx}=setup();ctx.readPublicSnapshotBackup=async()=>({updatedAt:5,entries:[row()],_snapshotCapturedAt:123});
+ await ctx.fetchEventTotals();assert.equal(ctx.eventTotalsSnapshot.source,'snapshot');assert.equal(ctx.eventTotalsSnapshot.snapshotCapturedAt,123);assert.equal(ctx.eventTotalsSnapshot.lastLiveCheckedAt,0);
+ ctx.eventCloudRead=async()=>({updatedAt:6,entries:[row()]});await ctx.fetchEventTotals(true);
+ const checked=ctx.eventTotalsSnapshot.lastLiveCheckedAt;assert.ok(checked>0);assert.equal(ctx.eventTotalsSnapshot.source,'cloud');
+ ctx.eventCloudRead=async()=>{throw Error('offline');};await ctx.fetchEventTotals(true);assert.equal(ctx.eventTotalsSnapshot.lastLiveCheckedAt,checked);assert.equal(ctx.eventTotalsSnapshot.source,'cloud');assert.equal(ctx.eventTotalsState.status,'stale');
+});
+
+
+test('event freshness labels source separately from successful check and failure',()=>{
+ const {ctx}=setup();vm.runInContext(extract('rankedFreshnessText'),ctx);
+ ctx.syncSnapshotRefreshControl=()=>{};ctx.publicSnapshotCapturedAt=123;ctx.rankedManualRefreshFailed=false;
+ const el={dataset:{},className:'',textContent:'',title:''};
+ ctx.eventTotalsSnapshot={updatedAt:100,entries:[],source:'snapshot',snapshotCapturedAt:123};ctx.eventTotalsState={status:'snapshot'};ctx.updateEventFreshness(el);
+ assert.match(el.textContent,/Snapshot data/);assert.equal(el.dataset.source,'snapshot');assert.doesNotMatch(el.textContent,/check succeeded/);
+ ctx.eventTotalsSnapshot={updatedAt:100,entries:[],source:'cloud',lastLiveCheckedAt:200};ctx.eventTotalsState={status:'cloud'};ctx.updateEventFreshness(el);assert.match(el.textContent,/Live results.*check succeeded 200/);
+ ctx.eventTotalsState={status:'stale',checkedAt:999};ctx.updateEventFreshness(el);assert.match(el.textContent,/Cached results.*last live check 200.*Live check failed/);assert.doesNotMatch(el.textContent,/999/);
+});

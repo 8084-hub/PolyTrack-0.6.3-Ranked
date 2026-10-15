@@ -217,14 +217,16 @@ export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNorma
   if(db.remainingRequests)jobs=jobs.slice(0,Math.floor(db.remainingRequests()/18));
   const eventSummary = {checked: events.checked, consumed: events.consumed,
     rejected: events.rejected, archived: events.archived, budgetDeferred:events.budgetDeferred===true,
+    conflictDeferred:events.conflictDeferred===true,
     reviewInboxAdded:Number(events.eventFindingsAdded||0),reviewInboxWriteFailed:Number(events.eventFindingWriteFailed||0)};
   const idleCounts = {normalQueueReturnedDocuments,
     unusedEventReservedSlots: Math.max(0, eventLimit - events.checked),
     normalIdleSlots: Math.max(0, (borrowUnusedEvents ? TOTAL_JOB_LIMIT - events.checked : NORMAL_JOB_LIMIT) - jobs.length),
     idleNativeSlots: Math.max(0, TOTAL_JOB_LIMIT - events.checked - jobs.length)};
   log(JSON.stringify({events: eventSummary}));
+  if(eventSummary.conflictDeferred)log('Event inbox deferred after transaction contention. No contested write was replayed; normal verification continues.');
   if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY,
-    '## Event verification\n' + JSON.stringify(eventSummary) + `\nNative work: ${events.checked} event checks (${eventLimit} reserved slots), ${jobs.length} normal; at most ${TOTAL_JOB_LIMIT} total per round (unused event slots may be borrowed). Inbox intake: at most ${TOTAL_JOB_LIMIT}.\nPriority: estimated RP impact; event ties favor faster times. One in four selection slots is reserved for runs overdue by at least one hour (normal lanes reserve at least one when capacity is smaller). Queue discovery remains bounded.\n`);
+    '## Event verification\n' + JSON.stringify(eventSummary) + (eventSummary.conflictDeferred?'\nEvent inbox deferred after transaction contention; normal verification continues. The next invocation rereads the contested receipt.\n':'') + `\nNative work: ${events.checked} event checks (${eventLimit} reserved slots), ${jobs.length} normal; at most ${TOTAL_JOB_LIMIT} total per round (unused event slots may be borrowed). Inbox intake: at most ${TOTAL_JOB_LIMIT}.\nPriority: estimated RP impact; event ties favor faster times. One in four selection slots is reserved for runs overdue by at least one hour (normal lanes reserve at least one when capacity is smaller). Queue discovery remains bounded.\n`);
   if (events.results?.some(result => result.reason === 'engine_unavailable')) process.exitCode = 1;
   const infrastructure = result => result?.status==='unavailable' && /^(engine_|isolate_|process_|page_error|cpu_|wall_|deadline|native_engine_error)/.test(String(result.reason||''));
   const eventFailure=(events.results||[]).some(infrastructure);

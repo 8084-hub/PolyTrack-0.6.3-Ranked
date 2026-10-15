@@ -321,8 +321,8 @@ test('planner selector excludes average and non-actionable categories',()=>{
  const options=source.match(/const PLANNER_METRICS=Object.freeze\(([^;]+)\);/)[1];assert.doesNotMatch(options,/average|playtime|veterans/);for(const key of ['medals','wins','podiumRate','weight'])assert.ok(options.includes(key));
 });
 
-test('planner fills nine unique suggestions after the rival routes',()=>{
- const select=run('orderedPlannerRoutes');const rows=select([{trackId:'r'}],[{trackId:'r'},...Array.from({length:8},(_,i)=>({trackId:String(i)}))]);assert.deepEqual(Array.from(rows,r=>r.trackId),['r','0','1','2','3','4','5','6','7']);
+test('planner fills eight unique suggestions after the rival routes',()=>{
+ const select=run('orderedPlannerRoutes');const rows=select([{trackId:'r'}],[{trackId:'r'},...Array.from({length:8},(_,i)=>({trackId:String(i)}))]);assert.deepEqual(Array.from(rows,r=>r.trackId),['r','0','1','2','3','4','5','6']);
 });
 test('defense requires first place on every important known track and complete personal data',()=>{
  const defense=run('plannerDefenseAllowed');const tracks=[{trackId:'a',fieldSize:5,weight:2},{trackId:'b',fieldSize:8,weight:3}];assert.equal(defense([{trackId:'a',rank:1}],{raceCount:1},tracks),false);assert.equal(defense([{trackId:'a',rank:1},{trackId:'b',rank:2}],{raceCount:2},tracks),false);assert.equal(defense([{trackId:'a',rank:1},{trackId:'b',rank:1}],{raceCount:2},tracks),true);assert.equal(defense([],{raceCount:0},[]),false);

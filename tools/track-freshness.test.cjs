@@ -69,3 +69,17 @@ test('snapshot markup bolds an escaped age label',()=>{
   assert.equal(renderContext.trackFreshnessSourceHtml('snapshot','Snapshot 2h old'),'<b class="track-data-snapshot-age">Snapshot</b> 2h old');
   assert.match(renderContext.trackFreshnessSourceHtml('snapshot','Snapshot <img> old'),/&lt;img&gt;/);
 });
+
+
+test('ranked status separates successful checks, saved sources, failure and refresh cooldown',()=>{
+ const extract=name=>source.match(new RegExp('  function '+name+'\\([\\s\\S]*?\\r?\\n  \\}'))[0];
+ const ctx=vm.createContext({ageLabel:()=> '1m ago',durationLabel:()=> '1m',snapshotOnlyForNewAccount:()=>false,overallCategory:'overall',overallLoadState:{status:'cloud'},lastRankedManualRefreshAt:Date.now(),RANKED_MANUAL_REFRESH_COOLDOWN_MS:120000});
+ vm.runInContext(extract('rankedFreshnessText')+';'+extract('applyRankedRefreshCooldown'),ctx);
+ assert.equal(ctx.rankedFreshnessText({source:'snapshot',ageAt:1,status:'snapshot'}),'Snapshot data · 1m old');
+ assert.equal(ctx.rankedFreshnessText({source:'live',ageAt:1,status:'cloud'}),'Live results · check succeeded 1m ago');
+ assert.match(ctx.rankedFreshnessText({source:'snapshot',ageAt:1,status:'stale',failed:true}),/Snapshot data.*Live check failed/);
+ assert.equal(ctx.rankedFreshnessText({source:'live',ageAt:1,status:'loading'}),'Checking live results...');
+ assert.equal(ctx.rankedFreshnessText({source:'cache',status:'cache'}),'Cached results · last live check time unknown');
+ const button={textContent:'Live results · check succeeded just now',setAttribute(){}};
+ ctx.applyRankedRefreshCooldown(button);assert.equal(button.disabled,true);assert.match(button.textContent,/Next refresh in 1m/);assert.doesNotMatch(button.textContent,/retry/i);
+});
