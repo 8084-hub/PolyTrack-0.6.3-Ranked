@@ -47,3 +47,16 @@ test('an incomplete field without an authoritative summary cannot supply a new-t
  const html=await h.context.profileGuideMarkup({userId:'self',name:'Me',raceCount:3},null,true,finishes,finishes,[]);
  assert.ok(!html.includes('data-route="new"'));
 });
+
+
+test('profile opportunity summaries open without planner-local variables',()=>{
+ const h=harness(false,false);h.context.readLocalRaceRows=()=>[];h.context.cleanUserId=x=>x;h.context.activeRankedAccountId=()=> 'self';h.context.cachedTrackWeight=()=>2;
+ const start=source.indexOf('  function profileOpportunityCandidates('),end=source.indexOf('  function profileComparisonRoutes(',start);vm.runInContext(source.slice(start,end),h.context);
+ const rows=h.context.profileOpportunityCandidates({opportunityTracks:[]},finishes,true);assert.ok(rows.some(row=>row.trackId==='new'));
+});
+
+test('official control has the requested accessible label and route limit is nine',()=>{
+ const h=harness(false,false);assert.match(h.context.plannerFilterMarkup(),/aria-label="Only suggests official tracks"/);
+ const start=source.indexOf('  function orderedPlannerRoutes('),end=source.indexOf('  function plannerDefenseAllowed(',start);vm.runInContext(source.slice(start,end),h.context);
+ const actions=Array.from({length:12},(_,i)=>({trackId:'track'+i,value:12-i}));assert.equal(h.context.orderedPlannerRoutes([],actions).length,9);
+});

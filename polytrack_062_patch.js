@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=137',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=140',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='137';
+  const extraCatalogRevision='140';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -2805,7 +2805,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=137',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=140',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -5091,7 +5091,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=137',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=140',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -5111,8 +5111,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=137',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=137',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=137',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=140',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=140',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=140',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -5848,7 +5848,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(isSelf){
       const store=trackSnapshotStore();
       for(const track of TRACK_CATALOG.values()){
-        if(plannerCurrentTracksOnly||completed.has(track.id)||!plannerTrackAllowed(track.id,played))continue;
+        if(completed.has(track.id))continue;
         const fieldSize=Math.max(1,Number(store[track.id]?.entries?.length||0)||1);
         const weight=cachedTrackWeight(track.id,store[track.id]);
         candidates.push({trackId:track.id,rank:0,fieldSize,weight,improvementValue:100*weight,unplayed:true});
@@ -5893,7 +5893,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     return (!plannerCurrentTracksOnly||played.has(trackId))&&(!plannerOfficialOnly||trackInfo(trackId).type==='official'||trackId==='fb769ac2ea77e8f19a21a9dd3071742f2342bd49c41e4748d7e8c7903d4f0778');
   }
   function plannerFilterMarkup(){
-    return '<div class="profile-guide-filters" role="group" aria-label="Route filters">'+[['current','Current tracks only',plannerCurrentTracksOnly,'Only suggest improvements on tracks you have played.'],['official','Official only',plannerOfficialOnly,'Suggest official tracks and Rolling Hills Racer.']].map(([key,label,on,title])=>'<button type="button" class="profile-guide-filter'+(on?' selected':'')+'" data-planner-filter="'+key+'" aria-pressed="'+on+'" title="'+title+'">'+label+'</button>').join('')+'</div>';
+    return '<div class="profile-guide-filters" role="group" aria-label="Route filters">'+[['current','Current tracks only',plannerCurrentTracksOnly,'Only suggest improvements on tracks you have played.'],['official','Official only',plannerOfficialOnly,'Only suggests official tracks']].map(([key,label,on,title])=>'<button type="button" class="profile-guide-filter'+(on?' selected':'')+'" data-planner-filter="'+key+'" aria-pressed="'+on+'" aria-label="'+title+'" title="'+title+'">'+label+'</button>').join('')+'</div>';
   }
   try{if(localStorage.getItem('polytrack-0.6.2-planner-sort')==='ease')plannerSort='ease';}catch{}
   try{const stored=localStorage.getItem('polytrack-0.6.2-planner-metric');if(Object.hasOwn(PLANNER_METRICS,stored))plannerMetric=stored;}catch{}
@@ -5919,13 +5919,13 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       const minimumTime=Math.min(300000,Math.floor(period.maxRp*period.targetMs/(currentRp+1)));
       routes.push({period,trackId:period.trackId,targetTime,minimumTime,currentTime,localTime,currentRp,gain,rivalRp:Number.isSafeInteger(rival?.timeMs)&&rival.timeMs>0?score(rival.timeMs):null,savedAt:board.updatedAt||0});
     }
-    return Object.assign(routes.sort((a,b)=>b.gain-a.gain||a.period.endsAt-b.period.endsAt).slice(0,6),{dataAvailable});
+    return Object.assign(routes.sort((a,b)=>b.gain-a.gain||a.period.endsAt-b.period.endsAt).slice(0,9),{dataAvailable});
   }
   function eventPlannerMarkup(entry,self,isSelf,routes,availability){
     const rival=isSelf?'Your next event points':`Your event plan against <strong class="planner-rival-name">&quot;${escapeHtml(safeDisplayName(entry.name,entry.userId))}&quot;</strong>`;
     const maximum=Math.max(1,...routes.map(r=>r.gain));
     const card=r=>`<button type="button" class="profile-guide-track" data-planner-event="${escapeHtml(r.period.id)}" data-event-kind="${r.period.kind}" data-event-track="${escapeHtml(r.trackId)}"><span class="profile-guide-image">${trackThumbnailMarkup(r.trackId)}</span><span class="profile-guide-copy"><b>${r.currentTime?'Improve':'Try'} <strong>${escapeHtml(trackInfo(r.trackId).name)}</strong></b><small>Aim for ${formatRaceTime(r.targetTime)} · up to +${r.gain} Event RP</small><small>${r.currentTime?'Verified event PB: '+formatRaceTime(r.currentTime):'No verified event PB yet'}</small>${r.localTime&&(!r.currentTime||r.localTime<r.currentTime)?`<small>Local attempt: ${formatRaceTime(r.localTime)} · not included in points yet</small>`:''}<small>${formatRaceTime(r.minimumTime)} or faster earns more points${r.rivalRp===null?'':' · rival: '+r.rivalRp+' RP'}</small></span><span class="profile-helpfulness" title="Potential Event RP gain relative to the strongest shown event route. Not a success probability."><b>${routeBenefitPercent(r.gain,maximum)}%</b><small>ROUTE BENEFIT</small></span></button>`;
-    return `<details class="profile-guide without-carry"><summary>${routes.slice(0,3).map(r=>`<span class="route-preview-item"><span class="route-preview-image">${trackThumbnailMarkup(r.trackId)}</span><span class="route-preview-copy"><b>${r.period.kind} event</b><strong>${escapeHtml(trackInfo(r.trackId).name)}</strong><small>Aim for ${formatRaceTime(r.targetTime)}</small><small>Up to +${r.gain} Event RP</small></span></span>`).join('')||(routes.filteredOut?'<span>No event routes match these filters</span>':routes.dataAvailable?'<span>Maximum points reached in loaded events</span>':'<span>Not enough event data</span>')}<em class="route-open-label">Full plan</em></summary><div class="profile-guide-body"><header><div><label class="profile-guide-metric">Improve <select data-planner-metric aria-label="Leaderboard to improve">${Object.entries(PLANNER_METRICS).map(([k,v])=>`<option value="${k}" ${k==='events'?'selected':''} ${availability[k]?'':'disabled title="Not enough information at this time"'}>${v}${availability[k]?'':' (not enough data)'}</option>`).join('')}</select></label><h4>${rival}</h4>${plannerFilterMarkup()}</div></header><p>Uses saved event standings. Points require run verification. Repeated runs do not stack points.</p><div class="profile-guide-grid">${routes.map(card).join('')||(routes.filteredOut?'<p>No event routes match these filters. Change a filter to see more options.</p>':routes.dataAvailable?'<p>You have reached the points cap in these loaded events. Check the next event for more opportunities.</p>':'<p>Not enough information at this time. Open an active event leaderboard first.</p>')}</div></div></details>`;
+    return `<details class="profile-guide without-carry"><summary>${routes.slice(0,3).map(r=>`<span class="route-preview-item"><span class="route-preview-image">${trackThumbnailMarkup(r.trackId)}</span><span class="route-preview-copy"><b>${r.period.kind} event</b><strong>${escapeHtml(trackInfo(r.trackId).name)}</strong><small>Aim for ${formatRaceTime(r.targetTime)}</small><small>Up to +${r.gain} Event RP</small></span></span>`).join('')||(routes.filteredOut?'<span>No event routes match these filters</span>':routes.dataAvailable?'<span>Maximum points reached in loaded events</span>':'<span>Not enough event data</span>')}<em class="route-open-label">Full plan</em></summary><div class="profile-guide-body"><header><div><div class="profile-guide-controls"><label class="profile-guide-metric">Improve <select data-planner-metric aria-label="Leaderboard to improve">${Object.entries(PLANNER_METRICS).map(([k,v])=>`<option value="${k}" ${k==='events'?'selected':''} ${availability[k]?'':'disabled title="Not enough information at this time"'}>${v}${availability[k]?'':' (not enough data)'}</option>`).join('')}</select></label>${plannerFilterMarkup()}</div><h4>${rival}</h4></div></header><p>Uses saved event standings. Points require run verification. Repeated runs do not stack points.</p><div class="profile-guide-grid">${routes.map(card).join('')||(routes.filteredOut?'<p>No event routes match these filters. Change a filter to see more options.</p>':routes.dataAvailable?'<p>You have reached the points cap in these loaded events. Check the next event for more opportunities.</p>':'<p>Not enough information at this time. Open an active event leaderboard first.</p>')}</div></div></details>`;
   }
 
   function plannerCategoryAvailability(finishes,summaries){
@@ -6123,7 +6123,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const effortScore=spacing===null?null:relativeGap/Math.max(.005,spacing/current);
     return {gapMs:current-targetTime,relativeGap,targetTime,fieldSpacingMs:spacing,effortScore};
   }
-  function orderedPlannerRoutes(rival,personal,limit=6,sort='impact'){
+  function orderedPlannerRoutes(rival,personal,limit=9,sort='impact'){
     const compare=(a,b)=>{
       if(sort==='ease'){
         const left=a.ease?(a.ease.effortScore??a.ease.relativeGap/.005):undefined,right=b.ease?(b.ease.effortScore??b.ease.relativeGap/.005):undefined;
@@ -6206,7 +6206,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const personal=[...improve,...starts.filter(action=>worthwhileStart(action,maximumWeight))].filter(rankedRoute).sort((a,b)=>b.value-a.value||b.weight-a.weight);
     const matchupPersonal=rivalMode?personal.map(action=>matchupPersonalAction(action,snapshotFinishes)).filter(Boolean):personal;
     const addEase=action=>({...action,ease:plannerEase(action,store[action.trackId],plannerEntry.userId||plannerEntry.accountId)});
-    const priority=orderedPlannerRoutes((rivalMode?rival:[]).map(addEase),matchupPersonal.map(addEase),6,plannerSort);
+    const priority=orderedPlannerRoutes((rivalMode?rival:[]).map(addEase),matchupPersonal.map(addEase),9,plannerSort);
     const allowDefense=plannerMetric==='overall'&&priority.length===0&&plannerDefenseAllowed(simulationFinishes,plannerEntry,overallTrackSummariesCache);
     const priorityIds=new Set(priority.map((action)=>action.trackId));
     const allCarrying=(allowDefense?(plannerFinishes||[]):[]).filter((finish)=>Number(finish.fieldSize||0)>=2).sort((a,b)=>Number(b.contribution||0)-Number(a.contribution||0)).map((finish)=>recommendationAction(finish,'carry',plannerEntry,simulationFinishes)).filter(Boolean);
@@ -6222,7 +6222,37 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const coverageNote=simulationFinishes.length>=Math.max(0,Number(plannerEntry?.raceCount||0)||0)&&(!rivalMode||snapshotFinishes.length>=Math.max(0,Number(entry?.raceCount||0)||0))?'Results loaded':'More results needed';
     const noRoute=!priority.length&&!carrying.length;
     const emptySummary='<span class="route-preview-empty"><strong>No helpful move found</strong><small>No useful upgrade found in the loaded results. Try another category or change the filters.</small></span>';
-    return `<details class="profile-guide ${noRoute?'is-empty ':''}${strongest?'':'without-carry'}" ${noRoute?'open':''}><summary>${previewMarkup||emptySummary}${noRoute?'':'<em class="route-open-label" aria-hidden="true">Full plan</em>'}</summary><div class="profile-guide-body"><header><div><span class="profile-kicker">YOUR PLAN</span><label class="profile-guide-metric">Improve <select data-planner-metric aria-label="Leaderboard to improve">${Object.entries(PLANNER_METRICS).map(([key,label])=>`<option value="${key}" ${plannerMetric===key?'selected':''} ${availability[key]?'':'disabled title="Not enough information at this time"'}>${label}${availability[key]?'':' (not enough data)'}</option>`).join('')}</select></label><label class="profile-guide-metric">Sort by <select data-planner-sort aria-label="Route order"><option value="impact" ${plannerSort==='impact'?'selected':''}>Biggest benefit</option><option value="ease" ${plannerSort==='ease'?'selected':''}>Ease (estimated)</option></select></label><h4>${context}</h4>${plannerFilterMarkup()}</div><small>${coverageNote} · ${escapeHtml(overallLoadState.serverUpdatedAt?`snapshot changed ${ageLabel(overallLoadState.serverUpdatedAt)}`:'saved profile data')}</small></header><section class="profile-route-priorities"><p class="route-benefit-key" title="100% is the strongest shown route, not a success probability. Estimated ease compares time to gain and typical field spacing, with unknown times last.">Benefit compares these routes. Ease considers time gaps and field spacing.</p>${plannerMetric==='weight'?'<p>Complete new tracks to add weight.</p>':''}<div class="profile-guide-grid">${cards(priority)}</div></section>${carrying.length?`<section class="profile-route-strengths"><h5>Your other strong contributions</h5><p>Track Strength compares each contribution with your highest-weight loaded track.</p><div class="profile-guide-grid compact">${cards(carrying)}</div></section>`:''}</div></details>`;
+    return `<details class="profile-guide ${noRoute?'is-empty ':''}${strongest?'':'without-carry'}" ${noRoute?'open':''}><summary>${previewMarkup||emptySummary}${noRoute?'':'<em class="route-open-label" aria-hidden="true">Full plan</em>'}</summary><div class="profile-guide-body"><header><div><span class="profile-kicker">YOUR PLAN</span><div class="profile-guide-controls"><label class="profile-guide-metric">Improve <select data-planner-metric aria-label="Leaderboard to improve">${Object.entries(PLANNER_METRICS).map(([key,label])=>`<option value="${key}" ${plannerMetric===key?'selected':''} ${availability[key]?'':'disabled title="Not enough information at this time"'}>${label}${availability[key]?'':' (not enough data)'}</option>`).join('')}</select></label><label class="profile-guide-metric">Sort by <select data-planner-sort aria-label="Route order"><option value="impact" ${plannerSort==='impact'?'selected':''}>Biggest benefit</option><option value="ease" ${plannerSort==='ease'?'selected':''}>Ease (estimated)</option></select></label>${plannerFilterMarkup()}</div><h4>${context}</h4></div><small>${coverageNote} · ${escapeHtml(overallLoadState.serverUpdatedAt?`snapshot changed ${ageLabel(overallLoadState.serverUpdatedAt)}`:'saved profile data')}</small></header><section class="profile-route-priorities"><p class="route-benefit-key" title="100% is the strongest shown route, not a success probability. Estimated ease compares time to gain and typical field spacing, with unknown times last.">Benefit compares these routes. Ease considers time gaps and field spacing.</p>${plannerMetric==='weight'?'<p>Complete new tracks to add weight.</p>':''}<div class="profile-guide-grid">${cards(priority)}</div></section>${carrying.length?`<section class="profile-route-strengths"><h5>Your other strong contributions</h5><p>Track Strength compares each contribution with your highest-weight loaded track.</p><div class="profile-guide-grid compact">${cards(carrying)}</div></section>`:''}</div></details>`;
+  }
+  function refreshProfilePlanner(content,context){
+    const {entry,self,isSelf,cachedFinishes,snapshotFinishes,selfSnapshotFinishes,popup,profileCard}=context;
+    const previous=content.querySelector('.profile-guide');
+    const scroll=previous?profileCard.scrollTop:context.scroll;
+    const open=previous?previous.open:context.open;
+    const focused=document.activeElement;
+    const filter=focused?.getAttribute('data-planner-filter');
+    const focus=filter?'[data-planner-filter="'+filter+'"]':focused?.matches?.('[data-planner-metric]')?'[data-planner-metric]':focused?.matches?.('[data-planner-sort]')?'[data-planner-sort]':context.focus;
+    const token={};content.__guideToken=token;
+    const settings=[plannerMetric,plannerSort,plannerCurrentTracksOnly,plannerOfficialOnly].join('|');
+    const current=()=>content.__guideToken===token&&settings===[plannerMetric,plannerSort,plannerCurrentTracksOnly,plannerOfficialOnly].join('|')&&popup.dataset.profileUser===cleanUserId(entry.userId||entry.accountId)&&isElementVisible(popup);
+    if(previous)previous.setAttribute('aria-busy','true');
+    return cachedProfileGuideMarkup(entry,self,isSelf,cachedFinishes,snapshotFinishes,selfSnapshotFinishes,current).then(markup=>{
+      if(!current()||!markup)return;
+      const target=content.querySelector('.profile-guide-pending')||content.querySelector('.profile-guide');if(!target)return;
+      const latestScroll=previous?profileCard.scrollTop:scroll;
+      const latestAnchor=focus&&previous?.querySelector(focus)?.getBoundingClientRect().top;
+      const restoreFocus=document.activeElement===focused;
+      target.outerHTML=markup;
+      const guide=content.querySelector('.profile-guide');if(guide)guide.open=open||guide.open;
+      const control=focus?guide?.querySelector(focus):null;
+      if(restoreFocus)control?.focus({preventScroll:true});
+      profileCard.scrollTop=latestScroll;
+      if(Number.isFinite(latestAnchor)&&control)profileCard.scrollTop+=control.getBoundingClientRect().top-latestAnchor;
+    }).catch(()=>{if(current()){previous?.removeAttribute('aria-busy');const pending=content.querySelector('.profile-guide-pending');if(pending)pending.textContent='Route calculation unavailable. Reopen this profile to retry.';}});
+  }
+  function refreshOpenProfilePlanner(){
+    const content=document.getElementById('overallProfileContent');
+    if(content?.__plannerContext)return refreshProfilePlanner(content,content.__plannerContext);
   }
   function openRankedProfile(userId){
     const profileContent=document.querySelector('#overallProfileContent');if(profileContent)profileContent.dataset.accountId=cleanUserId(userId);
@@ -6322,10 +6352,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const focusedPlannerFilter=document.activeElement?.getAttribute('data-planner-filter');
     const guideHadFocus=focusedPlannerFilter?'[data-planner-filter="'+focusedPlannerFilter+'"]':content.querySelector('[data-planner-metric]')===document.activeElement?'[data-planner-metric]':content.querySelector('[data-planner-sort]')===document.activeElement?'[data-planner-sort]':null;
     const focusedProfileSort=content.contains(document.activeElement)?document.activeElement?.getAttribute('data-profile-sort'):null;
-    const guideToken={};content.__guideToken=guideToken;
-    const metricAtStart=plannerMetric;
-    const sortAtStart=plannerSort;
-    const filtersAtStart=plannerCurrentTracksOnly+'|'+plannerOfficialOnly;
+
     const guideMarkup='<div class="profile-guide-pending" role="status">Finding your next improvements from saved standings...</div>';
     const stat=(value,label,title)=>`<span title="${escapeHtml(title)}"><b>${value}</b>${label}</span>`;
     const averagePlacement=Number(entry.averagePlacementVersion||0)>=AVERAGE_PLACEMENT_VERSION&&Number.isFinite(Number(entry.averagePlacement))?Number(entry.averagePlacement).toFixed(2):'Not available';
@@ -6380,13 +6407,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     popup.dataset.profileUser=cleanUserId(userId);
     profileCard.scrollTop=profileScroll;
     hydrateOverallCarModels(content);
-    const stillCurrent=()=>content.__guideToken===guideToken&&plannerMetric===metricAtStart&&plannerSort===sortAtStart&&filtersAtStart===plannerCurrentTracksOnly+'|'+plannerOfficialOnly&&popup.dataset.profileUser===cleanUserId(userId)&&isElementVisible(popup);
-    cachedProfileGuideMarkup(entry,self,isSelf,cachedFinishes,snapshotFinishes,selfSnapshotFinishes,stillCurrent).then(markup=>{
-      if(!stillCurrent()||!markup)return;
-      const pending=content.querySelector('.profile-guide-pending');if(!pending)return;pending.outerHTML=markup;
-      const guide=content.querySelector('.profile-guide');if(guide&&guideWasOpen)guide.open=true;
-      if(guideHadFocus)guide?.querySelector(guideHadFocus)?.focus({preventScroll:true});
-    }).catch(()=>{if(stillCurrent()){const pending=content.querySelector('.profile-guide-pending');if(pending)pending.textContent='Route calculation unavailable. Reopen this profile to retry.';}});
+    content.__plannerContext={entry,self,isSelf,cachedFinishes,snapshotFinishes,selfSnapshotFinishes,popup,profileCard,scroll:profileScroll,open:guideWasOpen,focus:guideHadFocus};
+    void refreshOpenProfilePlanner();
   }
   function renderEntries(entries,snapshotMeta,{preservePage=false}={}){
     const listEl = document.getElementById('overallLeaderboardList');
@@ -6706,7 +6728,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   let snapshotTrackStatistics = {};
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=137').then(module=>{
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=140').then(module=>{
       let metadataEpoch=0;
       function warmMetadata(reader){
         const epoch=++metadataEpoch;
@@ -8740,7 +8762,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=137',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:137,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=140',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:140,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);
@@ -8781,7 +8803,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         else if(key==='official')plannerOfficialOnly=!plannerOfficialOnly;
         else return;
         try{localStorage.setItem('polytrack-planner-current-only',String(plannerCurrentTracksOnly));localStorage.setItem('polytrack-planner-official-only',String(plannerOfficialOnly));}catch{}
-        const id=document.getElementById('overallProfileContent')?.dataset.accountId;if(id)openRankedProfile(id);
+        void refreshOpenProfilePlanner();
         return;
       }
       const button=event.target.closest?.('[data-planner-event]');if(!button)return;
@@ -8790,11 +8812,10 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     });
     document.addEventListener('change',(event)=>{
       const sort=event.target.closest?.('[data-planner-sort]');
-      if(sort&&['impact','ease'].includes(sort.value)){plannerSort=sort.value;localStorage.setItem('polytrack-0.6.2-planner-sort',plannerSort);const id=document.querySelector('#overallProfileContent')?.dataset.accountId;if(id)openRankedProfile(id);return;}
+      if(sort&&['impact','ease'].includes(sort.value)){plannerSort=sort.value;localStorage.setItem('polytrack-0.6.2-planner-sort',plannerSort);void refreshOpenProfilePlanner();return;}
       const select=event.target.closest?.('[data-planner-metric]');if(!select||!Object.hasOwn(PLANNER_METRICS,select.value))return;
       plannerMetric=select.value;localStorage.setItem('polytrack-0.6.2-planner-metric',plannerMetric);
-      const profile=document.querySelector('#overallProfileContent');const accountId=profile?.dataset.accountId;
-      if(accountId){openRankedProfile(accountId);const guide=document.querySelector('.profile-guide');if(guide){guide.open=true;guide.scrollIntoView({block:'nearest'});guide.querySelector('[data-planner-metric]')?.focus();}}
+      void refreshOpenProfilePlanner();
     });
     document.addEventListener('contextmenu',(event)=>{
       const racer=event.target.closest?.('.overall-entry[data-userid]');

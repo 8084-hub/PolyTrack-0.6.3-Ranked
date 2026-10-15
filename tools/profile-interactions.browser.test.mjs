@@ -92,3 +92,23 @@ test('planner filter buttons fit portrait, landscape and tablet widths',{skip:!c
  }
  }finally{await browser.close();}
 });
+
+
+test('planner recalculation keeps its controls and scroll anchor in place',{skip:!chromium},async()=>{
+ const browser=await chromium.launch({headless:true});try{
+ const page=await browser.newPage({viewport:{width:1366,height:900}});const pageErrors=[];page.on('pageerror',error=>pageErrors.push(error.message));await page.route('**/*',route=>route.abort());
+ await page.setContent('<div id="overallProfilePopup" data-profile-user="self" style="display:block"><article class="overall-profile-card" style="height:600px;overflow:auto"><div id="overallProfileContent"><div style="height:700px"></div><details class="profile-guide" open><summary>Plan</summary><div class="profile-guide-body"><header><div><div class="profile-guide-controls"><label class="profile-guide-metric">Improve <select data-planner-metric><option>Overall RP</option></select></label><label class="profile-guide-metric">Sort by <select data-planner-sort><option>Biggest benefit</option></select></label><span id="controls"></span></div></div></header><div style="height:800px"></div></div></details></div></article></div>');
+ await page.addStyleTag({content:fontCss+css});
+ await page.addScriptTag({content:'let plannerCurrentTracksOnly=false,plannerOfficialOnly=false,plannerMetric="overall",plannerSort="impact";const cleanUserId=x=>x,isElementVisible=()=>true;let finish;const cachedProfileGuideMarkup=()=>new Promise(resolve=>finish=resolve);'+extract('plannerFilterMarkup')+';'+extract('refreshProfilePlanner')+';document.getElementById("controls").outerHTML=plannerFilterMarkup();window.refresh=()=>{const content=document.getElementById("overallProfileContent"),popup=document.getElementById("overallProfilePopup"),profileCard=content.closest("article");window.originalGuide=content.querySelector(".profile-guide");return refreshProfilePlanner(content,{entry:{userId:"self"},popup,profileCard});};window.complete=()=>{const clone=originalGuide.cloneNode(true);clone.removeAttribute("aria-busy");finish(clone.outerHTML);};'});
+ await page.evaluate(()=>document.fonts.ready);
+ assert.deepEqual(pageErrors,[]);
+ await page.locator('[data-planner-filter="official"]').scrollIntoViewIfNeeded();await page.locator('[data-planner-filter="official"]').focus();
+ const before=await page.locator('.overall-profile-card').evaluate(el=>({scroll:el.scrollTop,height:el.scrollHeight}));const top=await page.locator('[data-planner-filter="official"]').evaluate(el=>el.getBoundingClientRect().top);
+ await page.evaluate(()=>{window.pending=refresh();});
+ assert.equal(await page.evaluate(()=>originalGuide.isConnected),true,'keep the visible plan while computing');
+ assert.equal(await page.locator('.overall-profile-card').evaluate(el=>el.scrollHeight),before.height);
+ await page.evaluate(async()=>{complete();await pending;});
+ const afterTop=await page.locator('[data-planner-filter="official"]').evaluate(el=>el.getBoundingClientRect().top);assert.ok(Math.abs(afterTop-top)<=1);assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('data-planner-filter')),'official');
+ for(const width of [320,390,768,1366]){await page.setViewportSize({width,height:900});const bounds=await page.locator('.profile-guide-controls').evaluate(el=>({client:el.clientWidth,scroll:el.scrollWidth,items:[...el.querySelectorAll('label,button')].map(n=>({x:n.getBoundingClientRect().left,right:n.getBoundingClientRect().right,y:n.getBoundingClientRect().top}))}));assert.ok(bounds.scroll<=bounds.client+1);for(const item of bounds.items)assert.ok(item.x>=0&&item.right<=width+1);if(width===1366)assert.ok(Math.max(...bounds.items.map(n=>n.y))-Math.min(...bounds.items.map(n=>n.y))<12,'desktop controls share a row');}
+ }finally{await browser.close();}
+});
