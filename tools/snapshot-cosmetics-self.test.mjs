@@ -26,7 +26,7 @@ test('explicit local customization still wins over snapshot design',()=>{
 
 test('track identity retains saved achievement proofs and cosmetic statistics',()=>{
   const overall={userId:'me',rank:8,cosmeticUnlocks:['nameColor:gold'],extraCount:3,totalPlaytimeMs:10000,trackWins:2};
-  const context=vm.createContext({rankedIdentityIndex:null,rankedIdentityIndexSource:null,cleanUserId:x=>x,rankedIdentityRows:()=>[overall]});
+  const context=vm.createContext({rankedIdentityIndex:null,rankedIdentityIndexSource:null,cleanUserId:x=>x,rankedIdentityRows:()=>[overall],snapshotRacerDirectoryIdentity:()=>null,rowIdentityFreshness:()=>0});
   vm.runInContext(section('rankedIdentityForRacer','  function decorateNativeLeaderboardIdentity('),context);
   const identity=context.rankedIdentityForRacer({accountId:'me',rank:1,timeMs:100});
   assert.equal(identity.rank,8);assert.deepEqual(identity.cosmeticUnlocks,overall.cosmeticUnlocks);

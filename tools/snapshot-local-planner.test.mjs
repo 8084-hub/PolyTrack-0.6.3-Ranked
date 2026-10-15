@@ -18,7 +18,7 @@ function functionSource(name){
 function makeHarness({snapshots,localRows,active='self',savedResults=new Map(),backupBoards={},overallAt=0}){
   const cleanUserId=value=>String(value||'').trim();
   const canonicalRaceTimeMs=row=>Number(row?.timeMs||0);
-  const functions='const profileSnapshotResults=deps.savedResults,profilePlacementRequests=new Map();const readTrackSnapshotCache=id=>deps.trackSnapshotStore()[id],readPublicSnapshotBackup=async(kind,id)=>deps.backupBoards[id]||null;\n'+['localTrackDisplayEntries','visibleTrackEntries','localPlannerProfileEntry','cachedProfileFinishes','warmProfileLocalPlacements'].map(functionSource).join('\n');
+  const functions='let profileSnapshotEpoch=0;const profileSnapshotResults=deps.savedResults,profilePlacementRequests=new Map();const readTrackSnapshotCache=id=>deps.trackSnapshotStore()[id],readPublicSnapshotBackup=async(kind,id)=>deps.backupBoards[id]||null;\n'+['localTrackDisplayEntries','visibleTrackEntries','localPlannerProfileEntry','cachedProfileFinishes','warmProfileLocalPlacements'].map(functionSource).join('\n');
   const init=new Function('deps',`const {cleanUserId,canonicalRaceTimeMs,trackSnapshotStore,readLocalRaceRows,safeRecordingId,buildRecordingId,entryTimeMs,pbTimestamp,knownFinishWeight,overallLoadState,readOverallSnapshotCache,activeRankedAccountId,sortProfileFinishes,getLastKnownName}=deps;${functions};return {localPlannerProfileEntry,cachedProfileFinishes,warmProfileLocalPlacements};`);
   return init({backupBoards,savedResults,cleanUserId,canonicalRaceTimeMs,trackSnapshotStore:()=>snapshots,readLocalRaceRows:()=>localRows,safeRecordingId:value=>value||'',buildRecordingId:()=> 'local-id',entryTimeMs:canonicalRaceTimeMs,pbTimestamp:row=>row.createdAt||0,knownFinishWeight:({rank,fieldSize})=>rank?fieldSize/rank:0,overallLoadState:{serverUpdatedAt:overallAt},readOverallSnapshotCache:()=>null,activeRankedAccountId:()=>active,sortProfileFinishes:rows=>rows,getLastKnownName:()=>''});
 }
@@ -76,4 +76,17 @@ test('creates a synthetic profile only for the active account and labels it loca
   const h=makeHarness({snapshots:{},localRows:[]});
   assert.equal(h.localPlannerProfileEntry('rival'),null);
   assert.deepEqual(h.localPlannerProfileEntry('self'),{userId:'self',accountId:'self',name:'You',localOnly:true,resultSamples:[],raceCount:0});
+});
+
+
+test('a newer overall rebuild cannot overwrite an exact loaded track placement with older summary data',()=>{
+ const h=makeHarness({snapshots:{track:{complete:true,serverUpdatedAt:100,entries:[{accountId:'rival',timeMs:18000,rank:1},{accountId:'self',timeMs:19000,rank:2},{accountId:'slow',timeMs:20000,rank:3}]}},localRows:[],overallAt:500});
+ const [finish]=h.cachedProfileFinishes('self',{resultSamples:[{trackId:'track',timeMs:19000,rank:1,fieldSize:2}]});
+ assert.equal(finish.rank,2);assert.equal(finish.fieldSize,3);assert.equal(finish.cachedAt,100);
+});
+
+test('an explicitly newer per-track summary can update the same PB placement',()=>{
+ const h=makeHarness({snapshots:{track:{complete:true,serverUpdatedAt:100,entries:[{accountId:'self',timeMs:19000,rank:1},{accountId:'slow',timeMs:20000,rank:2}]}},localRows:[],overallAt:500});
+ const [finish]=h.cachedProfileFinishes('self',{resultSamples:[{trackId:'track',timeMs:19000,rank:2,fieldSize:4,cachedAt:200}]});
+ assert.equal(finish.rank,2);assert.equal(finish.fieldSize,4);assert.equal(finish.cachedAt,200);
 });

@@ -1315,7 +1315,17 @@ export async function reconcileCanonicalChanges(env, {scanResults = true, now = 
       queued.delete(trackId);queued.add(trackId);
     }
   }
-  if(document&&!changed.length&&!legacy.length&&!queued.size&&!rebuilt&&job.backfillComplete)return {scanned:0,rebuilt:0,targeted:0,pending:0,unchanged:true};
+  const normalizedJobState = Array.isArray(job.pendingTrackIds)
+    &&JSON.stringify([...queued])===JSON.stringify(job.pendingTrackIds)
+    &&JSON.stringify(pendingResultIds)===JSON.stringify(job.pendingResultIds||{})
+    &&Array.isArray(job.pendingFullRebuildTrackIds)
+    &&JSON.stringify([...pendingFullRebuildTrackIds])===JSON.stringify(job.pendingFullRebuildTrackIds)
+    &&Boolean(forceFullRebuildAll&&queued.size)===Boolean(job.forceFullRebuildAll)
+    &&Number(job.schemaVersion||0)===2
+    &&JSON.stringify(failedFullRebuilds)===JSON.stringify(job.failedFullRebuilds||{});
+  if(document&&!changed.length&&!legacy.length&&!rebuilt&&job.backfillComplete
+    &&(!queued.size||selected.length===0&&normalizedJobState))
+    return {scanned:0,rebuilt:0,targeted:0,pending:queued.size,unchanged:true};
   await commitDocuments(env,[{collection:COLLECTIONS.jobs,id:jobId,prior:document,data:{
     cursorIngestedAt:changed.length?changed.at(-1).ingestedAt:timestamp,
     cursorDocumentId:changed.length?changed.at(-1).id:safeText(job.cursorDocumentId,256),

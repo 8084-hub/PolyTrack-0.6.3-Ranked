@@ -282,3 +282,43 @@ test('actual replay bridge serves archived recordings from static files without 
   vm.runInContext(section('  async function readEventReplay(', '  async function ensureEventUi('),context);
   assert.equal(await context.readEventReplay('d_old','a'.repeat(64)),payload);assert.equal(cloud,0);
 });
+
+
+test('a newer package waits for its correct board instead of painting stale players first',async()=>{
+ const old={entries:[{accountId:'old',runVerified:false}],fetchedAt:100000};let resolve,loads=0,painted;
+ const context=vm.createContext({Date:{now:()=>100000},unrankedExtraTrackIds:new Set(),readTrackSnapshotCache:()=>old,
+ readPublicSnapshotBackup:async()=>({tracks:{}}),trackSnapshotMetadataIsNewer:()=>true,trackEntryRequests:new Map(),
+ loadTrackEntries:()=>{loads++;return new Promise(done=>resolve=done);}});
+ vm.runInContext(section('  async function getTrackEntries(', '  const nativeTrackSnapshotRefreshes='),context);
+ const pending=context.getTrackEntries('track',10).then(rows=>painted=rows);await new Promise(r=>setImmediate(r));
+ assert.equal(loads,1);assert.equal(painted,undefined);resolve([{accountId:'new',runVerified:true}]);await pending;
+ assert.equal(painted[0].accountId,'new');assert.equal(painted[0].runVerified,true);
+});
+
+test('background replacement schedules the visible native rows to refresh exactly once',async()=>{
+ let cached={entries:[{accountId:'old',runVerified:false}],fetchedAt:0},resolve;const refreshes=[];
+ const context=vm.createContext({Date:{now:()=>100000},TRACK_REFRESH_MS:100,unrankedExtraTrackIds:new Set(),readTrackSnapshotCache:()=>cached,
+ trackSnapshotMetadataIsNewer:()=>false,selectCachedTrackState:()=>{},trackEntryRequests:new Map(),trackCacheBackgroundRefreshAt:new Map(),
+ loadTrackEntries:()=>new Promise(done=>resolve=done),scheduleNativeTrackSnapshotRefresh:id=>refreshes.push(id)});
+ vm.runInContext(section('  async function getTrackEntries(', '  const nativeTrackSnapshotRefreshes='),context);
+ assert.equal((await context.getTrackEntries('track',10))[0].accountId,'old');
+ await context.getTrackEntries('track',10);cached={entries:[{accountId:'new',runVerified:true}],fetchedAt:100000};resolve(cached.entries);
+ await new Promise(r=>setImmediate(r));assert.deepEqual(refreshes,['track']);
+});
+
+test('cache repaint preserves filter mode and cannot repaint a different selected track',()=>{
+ let timer,clicks=0,profile=0;const policy={disabled:false,click:()=>clicks++};
+ const context=vm.createContext({Map,setTimeout:fn=>{timer=fn;return 1;},currentTrackLoadState:{trackId:'track'},
+ document:{getElementById:()=>null,querySelector:()=>({querySelector:()=>policy})},isElementVisible:()=>true,openRankedProfile:()=>profile++});
+ vm.runInContext(section('  const nativeTrackSnapshotRefreshes=', '  function trackSnapshotMetadataIsNewer('),context);
+ context.scheduleNativeTrackSnapshotRefresh('track');context.scheduleNativeTrackSnapshotRefresh('track');timer();assert.equal(clicks,2);
+ context.scheduleNativeTrackSnapshotRefresh('track');context.currentTrackLoadState={trackId:'other'};timer();assert.equal(clicks,2);assert.equal(profile,0);
+});
+
+
+test('package revision detects a newer board even with a tied timestamp, without replacing a newer live revision',()=>{
+ const context=vm.createContext({snapshotTrackStatistics:{track:{updatedAt:500,revision:3}}});
+ vm.runInContext(section('  function trackSnapshotMetadataIsNewer(', '  async function loadTrackEntries('),context);
+ assert.equal(context.trackSnapshotMetadataIsNewer('track',{serverUpdatedAt:500,revision:2}),true);
+ assert.equal(context.trackSnapshotMetadataIsNewer('track',{serverUpdatedAt:400,revision:4}),false);
+});

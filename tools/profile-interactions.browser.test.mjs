@@ -75,3 +75,20 @@ test('profile sorting keeps existing controls and previews; dialog focus respect
     assert.equal(await page.evaluate(()=>document.activeElement.id),'draft','a deliberate focus choice wins over the scheduled default');
   }finally{await browser.close();}
 });
+
+
+test('planner filter buttons fit portrait, landscape and tablet widths',{skip:!chromium},async()=>{
+ const browser=await chromium.launch({headless:true});
+ try{const page=await browser.newPage();await page.route('**/*',route=>route.abort());
+ await page.setContent('<main style="width:calc(100% - 24px);margin:12px"><div class="profile-guide"><div id="filters"></div></div></main>');
+ await page.addStyleTag({content:css+'\n'+fontCss});
+ await page.addScriptTag({content:'let plannerCurrentTracksOnly=true,plannerOfficialOnly=false;'+extract('plannerFilterMarkup')+';document.getElementById("filters").innerHTML=plannerFilterMarkup();'});
+ await page.evaluate(()=>document.fonts.ready);
+ for(const width of [320,390,768,844,1280]){await page.setViewportSize({width,height:800});
+ const result=await page.locator('.profile-guide-filters').evaluate(el=>({width:el.clientWidth,scroll:el.scrollWidth,buttons:[...el.querySelectorAll('button')].map(b=>({left:b.getBoundingClientRect().left,right:b.getBoundingClientRect().right,height:b.getBoundingClientRect().height,pressed:b.getAttribute('aria-pressed')}))}));
+ assert.ok(result.scroll<=result.width+1);assert.equal(result.buttons.length,2);
+ for(const button of result.buttons){assert.ok(button.left>=0&&button.right<=width);assert.ok(button.height>=32);}
+ assert.equal(result.buttons[0].pressed,'true');assert.equal(result.buttons[1].pressed,'false');
+ }
+ }finally{await browser.close();}
+});

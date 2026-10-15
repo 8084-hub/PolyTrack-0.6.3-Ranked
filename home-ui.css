@@ -460,3 +460,5 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
   #overallProfilePopup .profile-track-result {grid-area:result!important;display:flex!important;flex-direction:column;min-width:0!important;gap:4px!important;}
   #overallProfilePopup .profile-track-row>time {grid-area:time!important;display:block!important;min-width:0!important;white-space:normal!important;color:#fff;}
 }
+
+.profile-guide-filters{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.profile-guide-filter{font:inherit;font-size:.85em;line-height:1.3;min-height:32px;padding:6px 10px;color:#eef6ff;background:#263d76;border:1px solid #6988bd;cursor:pointer}.profile-guide-filter:hover{background:#36518c}.profile-guide-filter.selected{color:#102746;background:#8ce5f5;border-color:#b7f2ff}.profile-guide-filter:focus-visible{outline:2px solid #fff;outline-offset:2px}

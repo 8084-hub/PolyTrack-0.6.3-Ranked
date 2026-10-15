@@ -26,6 +26,7 @@ const decode = value => {
 function reconcileFixture({tracks, failingTracks = new Set(), initialFailures = {}, fullRebuildTracks = tracks, pendingResultIds = {}}) {
   let job = {
     backfillComplete: true,
+    schemaVersion: 2,
     cursorIngestedAt: '2026-09-09T00:00:00Z',
     pendingTrackIds: [...tracks],
     pendingFullRebuildTrackIds: [...fullRebuildTracks],
@@ -34,7 +35,7 @@ function reconcileFixture({tracks, failingTracks = new Set(), initialFailures = 
   };
   const canonicalQueries = new Map();
   const writtenBoards = new Set();
-  let batchGets = 0;
+  let batchGets = 0, commits = 0, documentReads = 0;
   const env = {__TEST_FIRESTORE: async (path, init = {}) => {
     if (path === ':runQuery') {
       const query = JSON.parse(init.body).structuredQuery;
@@ -56,6 +57,7 @@ function reconcileFixture({tracks, failingTracks = new Set(), initialFailures = 
       }}];
     }
     if (path === ':commit') {
+      commits++;
       const writes = JSON.parse(init.body).writes;
       const stateWrite = writes.find(write => write.update.name.endsWith('/canonical_reconcile_v2'));
       if (stateWrite) job = decode({mapValue: {fields: stateWrite.update.fields}});
@@ -66,14 +68,22 @@ function reconcileFixture({tracks, failingTracks = new Set(), initialFailures = 
       }
       return {};
     }
-    if (path.includes('/canonical_reconcile_v2')) return {fields: encode(job).mapValue.fields, updateTime: 'job-v1'};
-    if (path.includes('/0.6.2_s1_leaderboards_track/targeted-track')) return {fields: encode({
+    if (path.includes('/canonical_reconcile_v2')) {
+      documentReads++;
+      return {fields: encode(job).mapValue.fields, updateTime: 'job-v1'};
+    }
+    if (path.includes('/0.6.2_s1_leaderboards_track/targeted-track')) {
+      documentReads++;
+      return {fields: encode({
       trackId: 'targeted-track', entries: [], complete: true, totalEntries: 0, revision: 1,
       schemaVersion: 6, algorithmVersion: 'participation-v8-s1', signature: 'current-empty-track'
-    }).mapValue.fields, updateTime: 'targeted-board-v1'};
+      }).mapValue.fields, updateTime: 'targeted-board-v1'};
+    }
     return null;
   }};
   return {env, canonicalQueries, writtenBoards, getJob: () => job, getBatchGets: () => batchGets,
+    getCommits: () => commits,
+    getDocumentReads: () => documentReads,
     setFailing: (trackId, value) => value ? failingTracks.add(trackId) : failingTracks.delete(trackId)};
 }
 
@@ -142,6 +152,23 @@ test('cooling fallback-only tracks without explicit markers do not consume the f
   assert.equal(fixture.canonicalQueries.get(healthy), 1);
   assert.equal(fixture.writtenBoards.has(healthy), true);
   assert.deepEqual(fixture.getJob().pendingTrackIds, coolingTracks);
+});
+
+test('idle reconciliation during full-rebuild cooldown does not rewrite its job heartbeat', async () => {
+  const trackId = 'cooling-track';
+  const now = 1_800_000_000_000;
+  const fixture = reconcileFixture({tracks: [trackId], initialFailures: {
+    [trackId]: {attempts: 1, retryAt: now + 60_000}
+  }});
+
+  const before = fixture.getCommits();
+  const result = await reconcileCanonicalChanges(fixture.env, {scanResults: false, now});
+
+  assert.equal(result.unchanged, true);
+  assert.equal(result.pending, 1);
+  assert.equal(fixture.getDocumentReads(), 1, 'cooldown retry check requires only the reconciliation job read');
+  assert.equal(fixture.getCommits() - before, 0, 'cooldown-only pass has no Firestore write');
+  assert.equal(fixture.canonicalQueries.has(trackId), false, 'cooldown-only pass has no full canonical query');
 });
 
 test('non-finite persisted retry times and supplied clocks cannot create an unbounded cooldown', async () => {

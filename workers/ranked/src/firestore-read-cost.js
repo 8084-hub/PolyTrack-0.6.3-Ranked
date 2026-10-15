@@ -1,5 +1,6 @@
 // Diagnostic estimates, not a billing meter: excludes index entries and Rules reads.
 export function recordFirestoreReads(audit, path, init, payload) {
+  recordFirestoreWrites(audit, path, init);
   let collection = '', reads = 0;
   if (path === ':runQuery') {
     const query = JSON.parse(init.body).structuredQuery;
@@ -20,4 +21,51 @@ export function recordFirestoreReads(audit, path, init, payload) {
     audit.collections[collection] = (audit.collections[collection] || 0) + reads;
     audit.documentReadEstimate += reads;
   }
+}
+
+function recordFirestoreWrites(audit, path, init) {
+  const method = String(init.method || 'GET').toUpperCase();
+  let writeNames = [], deletes = [];
+  if (path === ':commit') {
+    let entries;
+    try { entries = JSON.parse(init.body || '{}').writes || []; }
+    catch { return; }
+    if (!Array.isArray(entries)) return;
+    for (const write of entries) {
+      if (typeof write?.delete === 'string') deletes.push(write.delete);
+      else {
+        const name = write?.update?.name || write?.transform?.document;
+        if (typeof name === 'string') writeNames.push(name);
+      }
+    }
+  } else if (method === 'PATCH') writeNames = [path];
+  else if (method === 'DELETE') deletes = [path];
+  else return;
+
+  if (!writeNames.length && !deletes.length) return;
+  audit.writeCollections ||= {};
+  audit.writeEstimate ||= 0;
+  audit.deleteEstimate ||= 0;
+  for (const name of writeNames) {
+    const collection = collectionForDocument(name);
+    if (!collection) continue;
+    audit.writeCollections[collection] ||= {writes: 0, deletes: 0};
+    audit.writeCollections[collection].writes++;
+    audit.writeEstimate++;
+  }
+  for (const name of deletes) {
+    const collection = collectionForDocument(name);
+    if (!collection) continue;
+    audit.writeCollections[collection] ||= {writes: 0, deletes: 0};
+    audit.writeCollections[collection].deletes++;
+    audit.deleteEstimate++;
+  }
+}
+
+function collectionForDocument(name) {
+  const relative = String(name).split('/documents/')[1] || String(name).replace(/^\//, '');
+  const parts = relative.split('/').filter(Boolean);
+  if (parts.length < 2) return '';
+  try { return decodeURIComponent(parts.at(-2)); }
+  catch { return parts.at(-2); }
 }

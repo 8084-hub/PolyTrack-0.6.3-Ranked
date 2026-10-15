@@ -392,7 +392,7 @@ test('large planner sidecar is used only with exact snapshot binding',async()=>{
 
 test('weekly reset is next Monday UTC even when local weekday differs',()=>{
  let instant;const ctx={Date,escapeHtml:x=>x,Intl:{DateTimeFormat:class{constructor(locale,options){assert.equal(options.timeZoneName,undefined)}format(value){instant=value;return 'Sunday 5:00 PM'}}}};
- const html=run('resetTimeMarkup',ctx)(true,Date.UTC(2026,8,13,12));assert.equal(instant,Date.UTC(2026,8,14));assert.match(html,/Monday 00:00 UTC/);assert.match(html,/<strong[^>]*>Sunday 5:00 PM Local/);
+ const html=run('resetTimeMarkup',ctx)(true,Date.UTC(2026,8,13,12));assert.equal(instant,Date.UTC(2026,8,14));assert.match(html,/Resets/);assert.match(html,/<strong[^>]*>Sunday 5:00 PM<\/strong>/);assert.doesNotMatch(html,/UTC/);
 });
 test('daily reset advances at midnight and does not use a fixed local offset',()=>{
  let instant;const ctx={Date,escapeHtml:x=>x,Intl:{DateTimeFormat:class{format(value){instant=value;return 'local'}}}};
