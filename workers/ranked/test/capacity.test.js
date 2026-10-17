@@ -37,7 +37,9 @@ function fixture(count) {
        return [...source].filter(([key,r])=>key.startsWith(results+'/')&&r.trackId===track&&base+key>after)
          .sort(([a],[b])=>a.localeCompare(b)).slice(0,q.limit).map(([key,r])=>({document:wire(key,r),readTime:new Date().toISOString()}));
      }
-     return [...data].filter(([key])=>key.startsWith(boards+'/')).map(([key,r])=>({document:wire(key,r)}));
+     const after=q.startAt?.values?.[0]?.referenceValue||'';
+     return [...data].filter(([key])=>key.startsWith(boards+'/')&&base+key>after)
+       .sort(([a],[b])=>a.localeCompare(b)).slice(0,q.limit).map(([key,r])=>({document:wire(key,r)}));
    }
    if(route===':commit'){
      const writes=JSON.parse(init.body).writes;assert.ok(writes.length<=500);commits.push(writes);
@@ -120,4 +122,40 @@ test('identity changes outside the preview update the full track generation and 
  const response=await handleRequest(new Request('https://fixture.test/v1/snapshot/track/page?trackId='+track+'&generation='+board.pagination.generation+'&page=5',{headers:{Origin:'https://example.test','CF-Connecting-IP':'192.0.2.1'}}),f.env);
  assert.equal(response.status,200);const page=await response.json();assert.equal(page.sourceRevision,board.revision);assert.equal(page.entries.at(-1).name,'Updated Racer');
  assert.equal(page.entries.at(-1).rank,531);assert.equal(page.sourceComplete,true);
+});
+
+
+test('Overall trackCatalog discovers all 229 source boards without extra reads, private fields, or scoring changes',async()=>{
+ const f=fixture(2);await build(f);
+ const beforeBaseline=f.calls.length;await rebuildOverall(f.env,true);
+ const baseline=f.data.get(overall+'/main'),baselineCalls=f.calls.slice(beforeBaseline);
+ const expected=new Map([[track,baseline.trackCatalog[0].updatedAt]]);
+ for(let i=0;i<228;i++){
+   const id=createHash('sha256').update('catalog-source-'+i).digest('hex');
+   const entries=i%3===0?[]:i%3===1?[{...row(0),trackId:id,integrityVerified:true,runVerified:true}]
+     :[0,1].map(j=>({...row(j),trackId:id,integrityVerified:true,runVerified:false}));
+   const board={...(i===0?{}:{trackId:id,complete:true}),entries,totalEntries:entries.length,
+     updatedAt:1000+i,ownerUid:'private-owner-canary',proof:{private:'proof-canary'},replay:'private-replay-canary'};
+   if(i===0){board.updatedAt=-1;board.builtAt=25;}
+   if(i===1)delete board.updatedAt;
+   if(i===2){board.updatedAt=1.5;board.builtAt=30;}
+   f.data.set(boards+'/'+id,board);expected.set(id,i===0?25:i===1?0:i===2?30:1000+i);
+ }
+ const start=f.calls.length,queryStart=f.queries.length;
+ await rebuildOverall(f.env,true);const published=f.data.get(overall+'/main'),calls=f.calls.slice(start);
+ assert.deepEqual(published.trackCatalog,[...expected].sort(([a],[b])=>a.localeCompare(b)).map(([trackId,updatedAt])=>({trackId,updatedAt})));
+ assert.equal(published.trackCatalog.length,229);assert.equal(published.trackSummaries.length,1);
+ assert.deepEqual(published.entries.map(({userId,score,raceCount,rank})=>({userId,score,raceCount,rank})),
+   baseline.entries.map(({userId,score,raceCount,rank})=>({userId,score,raceCount,rank})));
+ assert.equal(published.sourceComplete,false,'legacy missing completeness must not be promoted');
+ assert.equal(published.complete,false);assert.equal(published.totalEntriesExact,false);
+ assert.equal(f.queries.length-queryStart,3,'only the existing 100-board source pages are queried');
+ assert.ok(f.queries.slice(queryStart).every(q=>q.structuredQuery.from[0].collectionId===boards&&q.structuredQuery.limit===100));
+ const nonQueryReads=routes=>routes.filter(route=>route!==':runQuery'&&route!==':commit');
+ assert.deepEqual(nonQueryReads(calls),nonQueryReads(baselineCalls),'catalog adds no keyed reads or per-track requests');
+ const response=await handleRequest(new Request('https://catalog.test/v1/snapshot/overall',{headers:{Origin:'https://example.test','CF-Connecting-IP':'192.0.2.3'}}),f.env);
+ assert.equal(response.status,200);const publicBoard=await response.json();
+ assert.deepEqual(publicBoard.trackCatalog,published.trackCatalog);
+ for(const entry of publicBoard.trackCatalog)assert.deepEqual(Object.keys(entry).sort(),['trackId','updatedAt']);
+ assert.ok(!JSON.stringify(publicBoard.trackCatalog).includes('canary'));
 });

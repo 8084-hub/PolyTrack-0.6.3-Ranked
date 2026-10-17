@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=143',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=147',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='143';
+  const extraCatalogRevision='147';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -63,7 +63,7 @@
     return kodubHistoryLoad;
   }
   async function nativeWeeklyFeed(){
-    kodubAdapter=await import(new URL('./kodub-weekly.mjs?v=143',eventsModuleUrl).href);
+    kodubAdapter=await import(new URL('./kodub-weekly.mjs?v=147',eventsModuleUrl).href);
     await ensureEventUi();
     const response=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
     nativeWeeklySelection=response.current;
@@ -85,7 +85,33 @@
     try{invokeNative();}catch(error){if(pendingEventLaunch===pending)pendingEventLaunch=null;throw error;}
   }
   const eventCloudRequests=new Map(),eventCloudCache=new Map(),eventCloudRetryAt=new Map();
-  let localEventSchedulePromise=null;
+  let localEventSchedulePromise=null,localWeeklyCatalogRequest=null,localWeeklyCatalogUntil=0,localWeeklyCatalogIdentity='';
+  function warmLocalWeeklyCatalog(){
+    if(localWeeklyCatalogRequest||Date.now()<localWeeklyCatalogUntil)return localWeeklyCatalogRequest;
+    localWeeklyCatalogUntil=Date.now()+60000;
+    const request=(async()=>{
+      kodubAdapter ||= await import(new URL('./kodub-weekly.mjs?v=147',eventsModuleUrl).href);
+      const feed=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
+      const current=feed.current,end=Date.parse(current?.endTime||'');
+      localWeeklyCatalogUntil=current&&end>Date.now()?end:Date.now()+60000;
+      if(!current)return;
+      nativeWeeklySelection=current;
+      const identity=current.trackId+'@'+current.endTime;
+      if(identity===localWeeklyCatalogIdentity||!localEventSchedulePromise)return;
+      await localEventSchedulePromise;
+      localWeeklyCatalogIdentity=identity;
+      // Let the first catalog settle before forcing enrichment; never join our own read.
+      await Promise.resolve(eventCloudRequests.get('/v1/events/catalog')).catch(()=>{});
+      setTimeout(()=>{
+        if(nativeWeeklySelection?.trackId+'@'+nativeWeeklySelection?.endTime!==identity)return;
+        eventCloudCache.delete('/v1/events/catalog');eventCloudRetryAt.delete('/v1/events/catalog');
+        if(eventUi?.refreshCatalog)void Promise.resolve().then(()=>eventUi.refreshCatalog(true)).catch(()=>{});
+      },0);
+    })().catch(()=>{localWeeklyCatalogUntil=Date.now()+60000;});
+    localWeeklyCatalogRequest=request;
+    request.finally(()=>{if(localWeeklyCatalogRequest===request)localWeeklyCatalogRequest=null;}).catch(()=>{});
+    return request;
+  }
   async function localEventCatalog(){
     if(!localEventSchedulePromise)localEventSchedulePromise=(async()=>{
       const [schedule,registryResponse,catalogResponse]=await Promise.all([
@@ -100,11 +126,8 @@
     })().catch(error=>{localEventSchedulePromise=null;throw error;});
     const {schedule,registry,published}=await localEventSchedulePromise;
     const at=Date.now(),catalog=schedule.scheduledCatalog(registry,published,at);
-    kodubAdapter ||= await import(new URL('./kodub-weekly.mjs?v=143',eventsModuleUrl).href);
-    const feed=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
-    const current=feed.current;
-    if(current)nativeWeeklySelection=current;
-    return kodubAdapter.withKodubWeekly(catalog,current,at);
+    void warmLocalWeeklyCatalog();
+    return kodubAdapter?kodubAdapter.withKodubWeekly(catalog,nativeWeeklySelection,at):catalog;
   }
   async function eventCloudRead(path,collection,id){
     const cached=eventCloudCache.get(path);
@@ -295,6 +318,10 @@
     const selection=[...document.querySelectorAll('.track-selection-ui')].find(isElementVisible)||null;
     const trackMenus=selection||document.querySelector('.track-info-ui');
     const nav=selection?.querySelector('.community-track-versions');
+    const tab=nav?.querySelector('button.selected')||null,wrapper=selection?.querySelector('.tracks-container > .wrapper')||null;
+    const menuChanged=Boolean(selection&&(ensureEventEntryContents.menu!==selection||ensureEventEntryContents.tab!==tab||ensureEventEntryContents.wrapper!==wrapper));
+    ensureEventEntryContents.menu=selection;ensureEventEntryContents.tab=tab;ensureEventEntryContents.wrapper=wrapper;
+    if(menuChanged)void warmLocalWeeklyCatalog();
     const group=eventUi?.featuredSection?.(selection);
     if(group)kodubAdapter?.combineKodubCard(document,group,nativeWeeklySelection);
     const ranked=document.getElementById('overallLeaderboardPanel');
@@ -302,7 +329,7 @@
     const eventUiVisible=(nav&&isElementVisible(nav))||(ranked&&isElementVisible(ranked))||
       document.querySelector('.sq-events-overlay')||document.body.classList.contains('sq-event-active');
     const eventTickGap=document.body.classList.contains('sq-event-active')?1000:10000;
-    if(eventUi&&eventUiVisible&&Date.now()-lastEventUiTickAt>eventTickGap){lastEventUiTickAt=Date.now();eventUi.tick();}
+    if(eventUi&&eventUiVisible&&(menuChanged||Date.now()-lastEventUiTickAt>eventTickGap)){lastEventUiTickAt=Date.now();if(menuChanged)eventUi.tick({cachedOnly:true});else eventUi.tick();}
   }
 
   function extraTrackIds(){
@@ -461,7 +488,7 @@
     (await extraTracksUiPromise).open();
   }
   function ensureExtraTracksEntryContents(){
-    const selection=document.querySelector('.track-selection-ui');const wrapper=selection?.querySelector('.tracks-container.no-group-containers > .wrapper');
+    const selection=[...document.querySelectorAll('.track-selection-ui')].find(isElementVisible);const wrapper=selection?.querySelector('.tracks-container.no-group-containers > .wrapper');
     if(!wrapper||wrapper.querySelector('.sq-extra-tracks-entry'))return;
     const card=document.createElement('div');card.className='track sq-extra-tracks-entry';
     const button=document.createElement('button');button.type='button';button.className='button';
@@ -2820,7 +2847,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=143',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=147',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -5134,7 +5161,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=143',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=147',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -5154,8 +5181,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=143',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=143',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=143',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=147',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=147',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=147',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -6854,8 +6881,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   let snapshotTrackStatistics = {};
   let metadataRecovery=null;
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=143').then(async module=>{
-      const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=143');
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=147').then(async module=>{
+      const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=147');
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]')),bootstrap:true,onGenerationChange:()=>{
         metadataRecovery.reset();
         snapshotTrackStatistics={};snapshotCosmeticEntries={};snapshotRacerDirectoryEntries={};publicSnapshotCapturedAt=0;
@@ -8903,7 +8930,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=143',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:143,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=147',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:147,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);

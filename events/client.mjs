@@ -121,12 +121,20 @@ export function ensureFeaturedSection(document,selection=null){
     nav.before(section);
     requestAnimationFrame(()=>wrapper.classList.remove('sq-events-layout-pending'));
   }
-  const rolling=selection.querySelector('img[src*="rolling_hills_racer"]')?.closest('.track');
-  if(rolling&&rolling.parentElement!==section){
-    rolling.classList.add('sq-permanent-track');section.append(rolling);
+  const rolling=[...selection.querySelectorAll('img[src*="rolling_hills_racer"]')]
+    .map(image=>image.closest('.track')).find(track=>track&&!track.closest('.sq-featured-events'));
+  let featured=section.querySelector(':scope > .sq-permanent-track');
+  if(!featured&&rolling){
+    // Preserve the native community entry; the featured copy forwards activation to it.
+    featured=rolling.cloneNode(true);featured.classList.add('sq-permanent-track');featured.dataset.sqPermanentFeatured='true';
+    for(const node of [featured,...featured.querySelectorAll('[id]')])node.removeAttribute('id');
+    const featuredButton=featured.querySelector(':scope > button');
+    featuredButton?.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();const source=featured.__sqPermanentSourceButton;if(source?.isConnected)source.click();});
+    section.append(featured);
     const note=document.createElement('small');note.className='sq-permanent-note';
-    note.textContent='Normal RP + up to 1001 Event RP / No reset';rolling.querySelector(':scope > button')?.append(note);
+    note.textContent='Normal RP + up to 1001 Event RP / No reset';featuredButton?.append(note);
   }
+  if(featured&&rolling)featured.__sqPermanentSourceButton=rolling.querySelector(':scope > button');
   return section;
 }
 // The native formatter consumes Time.numberOfFrames, not a millisecond scalar.
@@ -1044,6 +1052,11 @@ export function installEvents(bridge){
     if(!next)return null;
     return {newPosition:next.rank,previousPosition:prior?.rank||next.fieldSize||next.rank};
   }
-  async function prepareCapture(){await loadCatalog();ensureCapture();}
+  async function prepareCapture(){
+    const catalogPromise=loadCatalog();
+    ensureCapture();
+    tick({cachedOnly:true});
+    await catalogPromise;
+  }
   return {prepareCapture,captureReady:()=>!!capture,finishPositions,isEntered:trackId=>sessions.current()?.trackId===trackId,featuredSection:selection=>{if(selection?.matches?.('.track-selection-ui'))featuredSelection=selection;return ensureFeaturedSection(document,selection);},open,openEvent,totals,tick,flush,getOwnReplay,resumeRace,refreshCatalog:loadCatalog,leave(){entryRequest++;sessions.leave();eventIntent=null;archiveIntent=null;tick();}};
 }

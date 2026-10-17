@@ -25,6 +25,7 @@ test('archived standings and validated replays survive catalog rollover without 
   let listed=true,replayRequests=0;
   const fetchImpl=async input=>{
     const url=new URL(input);
+    if(url.pathname==='/v1/snapshot/track')return new Response('',{status:404});
     if(url.pathname.endsWith('/overall'))return Response.json({...overall,trackSummaries:[]});
     if(url.pathname.endsWith('/catalog'))return Response.json({periods:[period],archives:listed?[archived]:[]});
     if(url.pathname.includes('/replays/')){replayRequests++;return Response.json({periodId:archived.id,trackId,accountId,runId:'d'.repeat(64),timeMs:23,frames:23,replay,replayHash,carStyle:'public',verificationStatus:'verified',verified:true,eventRpEligible:true});}
@@ -371,7 +372,8 @@ test('finalized archive backups are reused, while live events and weekly correct
   const archived = {...period, id: 'daily_old'};
   const calls = [];
   const fetchImpl = async input => {
-    const url = new URL(input); calls.push(url.pathname);
+    const url = new URL(input);
+    if(url.pathname==='/v1/snapshot/track')return new Response('',{status:404}); calls.push(url.pathname);
     if (url.pathname.endsWith('/v1/snapshot/overall')) return Response.json({...overall, trackSummaries: []});
     if (url.pathname.endsWith('/v1/events/catalog')) return Response.json({periods: [period], archives: [archived]});
     const id = url.pathname.split('/').at(-2);
@@ -424,6 +426,7 @@ test('same-time replay replacements cannot reuse or publish a conflicting run bi
   let boardVersion = 0, replayVersion = 0, replayRequests = 0;
   const fetchImpl = async input => {
     const url = new URL(input);
+    if(url.pathname==='/v1/snapshot/track')return new Response('',{status:404});
     if (url.pathname.endsWith('/overall')) return Response.json({...overall, trackSummaries: []});
     if (url.pathname.endsWith('/catalog')) return Response.json({periods: [period], archives: []});
     if (url.pathname.includes('/replays/')) {
@@ -544,4 +547,44 @@ test('capture saves every paginated racer beyond preview limits and preserves fi
  corrupt=true;
  await assert.rejects(runPublicSnapshotBackup({directory,trackIds:[trackId],fetchImpl,log:()=>{}}),/Invalid or incomplete/);
  assert.equal(await fs.readFile(path.join(directory,'overall.json'),'utf8'),savedOverall);
+});
+
+
+test('event tracks absent from fixed registries and Overall are captured as normal boards', async t => {
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'polytrack-weekly-discovery-'));
+  t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+  const weeklyId='b'.repeat(64),oldId='c'.repeat(64),calls=[];
+  const weekly={...period,id:'kodub_current',trackId:weeklyId,kind:'kodub'};
+  const old={...weekly,id:'kodub_old',trackId:oldId};
+  const result=await runPublicSnapshotBackup({directory,trackIds:[],log:()=>{},fetchImpl:async input=>{
+    const url=new URL(input);calls.push(url.href);
+    if(url.pathname.endsWith('/overall'))return Response.json({...overall,trackSummaries:[]});
+    if(url.pathname.endsWith('/catalog'))return Response.json({periods:[weekly],archives:[old]});
+    if(url.pathname==='/v1/snapshot/track')return Response.json({trackId:url.searchParams.get('trackId'),complete:true,totalEntries:1,updatedAt:300,entries:[{accountId:'racer',name:'Racer',timeMs:1234,rank:1}]});
+    return Response.json({id:url.pathname.split('/').at(-2),updatedAt:300,entries:[]});
+  }});
+  assert.equal(result.deferred,undefined);
+  for(const id of [weeklyId,oldId]){
+    assert.ok(result.tracks[id]?.path);
+    const board=JSON.parse(await fs.readFile(path.join(directory,'tracks',id+'.json'),'utf8'));
+    assert.equal(board.trackId,id);assert.equal(board.entries.length,1);
+    assert.equal(calls.filter(value=>value.includes('/v1/snapshot/track?trackId='+id)).length,1);
+  }
+});
+
+
+test('compact track catalog discovers low-participation boards and avoids unchanged reads',async t=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'polytrack-catalog-coverage-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const id='d'.repeat(64);let trackReads=0;
+ const capture=()=>runPublicSnapshotBackup({directory,trackIds:[],log:()=>{},fetchImpl:async input=>{
+  const url=new URL(input);
+  if(url.pathname.endsWith('/overall'))return Response.json({...overall,trackSummaries:[],trackCatalog:[{trackId:id,updatedAt:300,ownerUid:'private'}]});
+  if(url.pathname.endsWith('/catalog'))return Response.json({periods:[],archives:[]});
+  if(url.pathname==='/v1/snapshot/track'){trackReads++;return Response.json({trackId:id,updatedAt:300,entries:[],complete:true,totalEntries:0});}
+  return Response.json({updatedAt:300,entries:[]});
+ }});
+ await capture();await capture();assert.equal(trackReads,1);
+ const saved=JSON.parse(await fs.readFile(path.join(directory,'overall.json'),'utf8'));
+ assert.deepEqual(saved.trackCatalog,[{trackId:id,updatedAt:300}]);
+ for(const trackCatalog of [[{trackId:'bad',updatedAt:300}],[{trackId:id,updatedAt:-1}],[{trackId:id,updatedAt:300},{trackId:id,updatedAt:300}],{}])assert.throws(()=>publicOverallBackup({...overall,trackCatalog}),/track catalog/);
 });

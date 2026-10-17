@@ -656,22 +656,27 @@ async function runOverallBoardPage(env, afterName = '', limit = OVERALL_BOARD_PA
 }
 
 async function readOverallBoards(env) {
-  const boards = [];
+  const boards = [], trackCatalog = [];
   let afterName = '';
   while (boards.length < OVERALL_BOARD_LIMIT) {
     const page = await runOverallBoardPage(env, afterName);
     for (const document of page) {
       const data = document.data;
+      // Discover non-scoring/legacy boards by document identity, without changing scoring inputs.
+      const trackId = document.name?.split('/').at(-1) || safeText(data.trackId, 80);
+      if (/^[a-f0-9]{64}$/.test(trackId)) trackCatalog.push({trackId,
+        updatedAt: Number.isSafeInteger(data.updatedAt) && data.updatedAt >= 0 ? data.updatedAt
+          : Number.isSafeInteger(data.builtAt) && data.builtAt >= 0 ? data.builtAt : 0});
       if (data.pagination) data.entries = await loadPublicationEntries(data,'track',data.trackId,(c,id)=>readDocument(env,c,id));
       boards.push(data);
     }
-    if (page.length < OVERALL_BOARD_PAGE_SIZE) return {boards, limitReached: false};
+    if (page.length < OVERALL_BOARD_PAGE_SIZE) return {boards, trackCatalog, limitReached: false};
     const lastName = page.at(-1)?.name;
     if (!lastName || lastName === afterName) throw Error('OVERALL_BOARD_CURSOR_INVALID');
     afterName = lastName;
   }
   const overflow = await runOverallBoardPage(env, afterName, 1);
-  return {boards, limitReached: overflow.length > 0};
+  return {boards, trackCatalog, limitReached: overflow.length > 0};
 }
 
 function placementCost(rank, fieldSize) {
@@ -1518,7 +1523,7 @@ async function recordOverallRebuildFailure(env, initialMeta) {
 }
 
 async function buildOverallSnapshot(env, metaDoc, meta, now) {
-  const {boards, limitReached: boardLimitReached} = await readOverallBoards(env);
+  const {boards, trackCatalog, limitReached: boardLimitReached} = await readOverallBoards(env);
   const priorDoc = await readOverallSnapshot(env);
   const prior = priorDoc?.data || {};
   const revision = Number(meta.revision || 0);
@@ -1600,7 +1605,7 @@ async function buildOverallSnapshot(env, metaDoc, meta, now) {
     : sourceIncomplete ? 'source-track-incomplete'
       : totalEntries > OVERALL_LIMIT ? 'publication-limit' : '';
   const compacted = await compactOverallEntries(entries.slice(0,OVERALL_LIMIT));
-  const snapshot = { entries: compacted.entries, trackSummaries, complete: sourceTracksComplete && totalEntries <= OVERALL_LIMIT,
+  const snapshot = { entries: compacted.entries, trackSummaries, trackCatalog, complete: sourceTracksComplete && totalEntries <= OVERALL_LIMIT,
     totalEntries, totalEntriesExact: sourceTracksComplete, publishedEntries: Math.min(entries.length,OVERALL_LIMIT),sourceComplete:sourceTracksComplete,
     authorityAudit: aggregated.audit, betaPolicy: {version: 1, open: openBetaEnabled(env), config: 'OPEN_BETA_ENABLED'},
     updatedAt: now, builtAt: now, seededBy: 'polytrack-ranked-worker',

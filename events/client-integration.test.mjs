@@ -51,8 +51,8 @@ before(async()=>{
  browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE}:{})});
 });
 after(async()=>{await browser?.close();await new Promise(resolve=>server?server.close(resolve):resolve());});
-const setup=async ({focus,nativeRow,nativeTimeFormatter,queue,deferReady,receipt,noIntersectionObserver,controlledIntersectionObserver})=>{
-  localStorage.clear(); if(queue) localStorage.setItem("polytrack-062-events-v1-queue",JSON.stringify(queue)); const id='a'.repeat(64); window.id=id;window.submits=[];window.reads=0;window.catalogReads=0;
+const setup=async ({focus,nativeRow,nativeTimeFormatter,queue,deferReady,receipt,noIntersectionObserver,controlledIntersectionObserver,deferCatalog=false,cachedPeriods=null})=>{
+  localStorage.clear(); if(queue) localStorage.setItem("polytrack-062-events-v1-queue",JSON.stringify(queue));if(cachedPeriods)localStorage.setItem('polytrack-062-events-v1',JSON.stringify({periods:cachedPeriods,archives:[]})); const id='a'.repeat(64); window.id=id;window.submits=[];window.reads=0;window.catalogReads=0;
   if(noIntersectionObserver)window.IntersectionObserver=undefined;
   if(controlledIntersectionObserver)window.IntersectionObserver=class{constructor(callback){this.callback=callback;this.targets=new Set();window.eventCarObserver=this;}observe(target){this.targets.add(target);}unobserve(target){this.targets.delete(target);}disconnect(){this.targets.clear();}trigger(entries){this.callback(entries);}};
   const period={id:'daily-fixture',trackId:id,kind:'daily',startsAt:Date.now()-1000,endsAt:Date.now()+3600000,maxRp:100};
@@ -74,7 +74,7 @@ const setup=async ({focus,nativeRow,nativeTimeFormatter,queue,deferReady,receipt
   const render=eval('('+nativeRow+')');
   document.querySelector('.leaderboard-ui').__pt062EventRows={version:1,render:(container,row)=>{Oo.set(owner,container);return render.call(owner,row.rank,row.name,row.countryCode||null,row.timeMs,new Date(row.runAt),null,row.pending?0:1,row.isSelf,row.accountId,new Date(),{isCancelled:false},{event:true});}};
   let eventUi; const nativeFocus=eval('('+focus.trim()+')');
-  window.ui=eventUi=(await import('/events/client.mjs')).installEvents(window.bridgeFixture={accountId:()=>id,trackInfo,thumbnail:()=>'',formatTime:ms=>String(ms),readCatalog:async()=>{window.catalogReads++;return {periods:[period]};},readSnapshot:async requested=>{window.reads++;const archived=requested==='old-event';return {period:archived?{...period,id:requested,startsAt:Date.now()-172800000,endsAt:Date.now()-86400000,racerCount:1}:period,updatedAt:period.startsAt,entries:archived?[{accountId:'b'.repeat(64),name:'Archived racer',rank:1,timeMs:21000,rp:100}]:[]};},readOwnStatus:async()=>receipt||null,readArchiveMonth:async()=>({periods:[{...period,id:'old-event',racerCount:1,startsAt:Date.now()-172800000,endsAt:Date.now()-86400000}]}),readTotals:async()=>({entries:[]}),submit:async run=>{window.submits.push(run);return {runId:'fixture',status:'waiting'};},ready:()=>deferReady?new Promise(resolve=>window.resolveReady=resolve):Promise.resolve(),require:()=>n=>({A:modules[n]}),openTrack:id=>nativeFocus(id,{event:true})});
+  window.ui=eventUi=(await import('/events/client.mjs')).installEvents(window.bridgeFixture={accountId:()=>id,trackInfo,thumbnail:()=>'',formatTime:ms=>String(ms),readCatalog:async()=>{window.catalogReads++;if(deferCatalog)return new Promise(resolve=>window.resolveCatalog=()=>resolve({periods:cachedPeriods||[period]}));return {periods:[period]};},readSnapshot:async requested=>{window.reads++;const archived=requested==='old-event';return {period:archived?{...period,id:requested,startsAt:Date.now()-172800000,endsAt:Date.now()-86400000,racerCount:1}:period,updatedAt:period.startsAt,entries:archived?[{accountId:'b'.repeat(64),name:'Archived racer',rank:1,timeMs:21000,rp:100}]:[]};},readOwnStatus:async()=>receipt||null,readArchiveMonth:async()=>({periods:[{...period,id:'old-event',racerCount:1,startsAt:Date.now()-172800000,endsAt:Date.now()-86400000}]}),readTotals:async()=>({entries:[]}),submit:async run=>{window.submits.push(run);return {runId:'fixture',status:'waiting'};},ready:()=>deferReady?new Promise(resolve=>window.resolveReady=resolve):Promise.resolve(),require:()=>n=>({A:modules[n]}),openTrack:id=>nativeFocus(id,{event:true})});
   document.querySelector('#native').onclick=()=>{window.car=makeCar();};
   document.querySelector('#ranked').onclick=()=>nativeFocus(id);
   document.querySelector('#open').onclick=()=>ui.open();
@@ -156,6 +156,42 @@ test('Enter and Space activate focused native controls instead of the event Play
 test('visible Static group loads catalog once, hidden group does not load',async t=>{
  const p=await fixture(t);await p.evaluate(()=>{const host=document.createElement('div');host.className='track-selection-ui';host.style.display='none';host.innerHTML='<div class="community-track-versions"><button>Static</button><button>0.6.3</button></div><div class="community-track-group"><img src="tracks/community/thumbnails/rolling_hills_racer.png"></div>';document.body.append(host);ui.tick();});assert.equal(await p.evaluate(()=>catalogReads),0);
  await p.evaluate(()=>{document.querySelector('.track-selection-ui').style.display='block';ui.tick();});await p.waitForFunction(()=>catalogReads===1);await p.evaluate(()=>{for(let i=0;i<100;i++)ui.tick();});assert.equal(await p.evaluate(()=>catalogReads),1);assert.equal(await p.locator('.sq-event-track-group').count(),1);
+});
+test('featured permanent card preserves the selected Static community tab and forwards launch to its native track',async t=>{
+ const p=await fixture(t);await p.evaluate(()=>{
+  const host=document.createElement('div');host.className='track-selection-ui';host.innerHTML='<div class="tracks-container"><div class="wrapper"><div class="community-track-versions"><button id="static-tab" class="selected">StaticQuasar931</button><button id="version-tab">0.6.3</button></div><div class="community-track-group" id="static-community"><div class="track" id="rolling-source"><button id="rolling-source-button"><span class="track-title"><p>Rolling Hills Racer</p></span><img class="thumbnail" src="tracks/community/thumbnails/rolling_hills_racer.png"><div class="record">00:19.993</div></button></div></div></div></div>';
+  document.body.append(host);window.nativeTrackClicks=0;document.querySelector('#rolling-source-button').addEventListener('click',()=>nativeTrackClicks++);window.tabClicks=0;document.querySelector('#static-tab').addEventListener('click',()=>tabClicks++);document.querySelector('#version-tab').addEventListener('click',()=>tabClicks++);ui.tick();
+ });
+ assert.equal(await p.locator('#rolling-source').count(),1,'the native community track remains in its selected group');
+ assert.equal(await p.locator('#static-community #rolling-source').count(),1);
+ assert.equal(await p.locator('.sq-featured-events > .sq-permanent-track').count(),1,'the event feature is a separate presentation');
+ assert.equal(await p.locator('#static-tab.selected').count(),1,'setup must not switch native version tabs');
+ await p.locator('.sq-featured-events > .sq-permanent-track > button').click();
+ assert.equal(await p.evaluate(()=>nativeTrackClicks),1,'featured activation forwards to the native track button');
+ await p.evaluate(()=>{for(let i=0;i<20;i++)ui.tick();});
+ assert.equal(await p.locator('.sq-featured-events > .sq-permanent-track').count(),1,'reconciliation does not accumulate feature clones');
+ assert.equal(await p.evaluate(()=>tabClicks),0);
+});
+test('cached daily and weekly cards render before the live catalog resolves',async t=>{
+ const daily={id:'daily-fixture',trackId:'a'.repeat(64),kind:'daily',trackName:'Cached Daily',startsAt:Date.now()-1000,endsAt:Date.now()+3600000,maxRp:100};
+ const weekly={...daily,id:'weekly-fixture',trackId:'b'.repeat(64),kind:'weekly',trackName:'Cached Weekly',maxRp:500};
+ const p=await fixture(t,{deferCatalog:true,cachedPeriods:[daily,weekly]});
+ await p.evaluate(()=>{
+  const host=document.createElement('div');host.className='track-selection-ui';host.innerHTML='<div class="tracks-container"><div class="wrapper"><div class="community-track-versions"><button class="selected">StaticQuasar931</button><button>0.6.3</button></div><div class="community-track-group"><div class="track"><button><span class="track-title"><p>Rolling Hills Racer</p></span><img src="tracks/community/thumbnails/rolling_hills_racer.png"></button></div></div></div></div>';document.body.append(host);
+  const panel=document.createElement('div');panel.id='overallLeaderboardPanel';panel.style.display='flex';panel.innerHTML=['weekly-cup','daily-card'].map(kind=>`<section class="${kind}"><button class="competition-feature-button"><span class="competition-feature-image"></span><span class="competition-kicker"></span><strong class="competition-track-name"></strong><span class="competition-result"></span></button><small></small></section>`).join('');document.body.append(panel);
+  window.prepareCaptureSettled=false;window.prepareCapturePromise=ui.prepareCapture().then(()=>window.prepareCaptureSettled=true);
+ });
+ for(const id of ['daily-fixture','weekly-fixture'])await p.locator(`.competition-feature-button[data-event-id="${id}"]`).waitFor({state:'attached'});
+ assert.equal(await p.evaluate(()=>prepareCaptureSettled),false,'live catalog latency must not block cached rendering');
+ assert.equal(await p.evaluate(()=>catalogReads),1,'one live catalog read is in flight');
+ assert.equal(await p.locator('.daily-card .competition-track-name').innerText(),'Cached Daily');
+ assert.equal(await p.locator('.weekly-cup .competition-track-name').innerText(),'Cached Weekly');
+ await p.evaluate(()=>{for(let i=0;i<20;i++)ui.tick({cachedOnly:true});});
+ assert.equal(await p.evaluate(()=>catalogReads),1,'cached rerenders do not poll or start additional reads');
+ await p.evaluate(()=>resolveCatalog());await p.waitForFunction(()=>prepareCaptureSettled===true);
+ assert.equal(await p.evaluate(()=>catalogReads),1);
+ assert.equal(await p.locator('.daily-card .competition-track-name').innerText(),'Cached Daily');
+ assert.equal(await p.locator('.weekly-cup .competition-track-name').innerText(),'Cached Weekly');
 });
 test('pageshow and visible-state restore Daily and Weekly event cards from cache without another catalog read',async t=>{
  const p=await fixture(t);await p.locator('#open').click();await p.locator('[data-event-id="daily-fixture"]').waitFor();

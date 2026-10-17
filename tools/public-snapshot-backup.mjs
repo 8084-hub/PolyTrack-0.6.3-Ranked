@@ -118,6 +118,15 @@ export function publicOverallBackup(value) {
   snapshot.entries = value.entries.map(projectOverallEntry);
   snapshot.trackSummaries = value.trackSummaries.map(row => ({...project(row, summaryFields),
     ...(row?.leader && typeof row.leader === 'object' ? {leader: project(row.leader, leaderFields)} : {})}));
+  if (value.trackCatalog !== undefined) {
+    if (!Array.isArray(value.trackCatalog) || value.trackCatalog.length > 500) throw Error('Invalid public track catalog');
+    const seen = new Set();
+    snapshot.trackCatalog = value.trackCatalog.map(row => {
+      if (!TRACK_ID.test(row?.trackId || '') || seen.has(row.trackId) || !Number.isSafeInteger(row.updatedAt) || row.updatedAt < 0) throw Error('Invalid public track catalog entry');
+      seen.add(row.trackId);
+      return {trackId: row.trackId, updatedAt: row.updatedAt};
+    });
+  }
   let planner = {available: false, reason: 'not-present'};
   if (typeof value.resultBundle === 'string' && value.resultBundle && value.resultBundleComplete === true &&
       Number.isSafeInteger(value.resultBundleVersion) && typeof value.algorithmVersion === 'string' &&
@@ -371,7 +380,9 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
     ]);
     registry = publicTrackRegistry(indexSource, extraSource);
   }
-  const allTrackIds = [...new Set([...registry, ...overall.trackSummaries.map(row => row.trackId), ...Object.keys(previous.tracks)])]
+  // Weekly tracks may have a public board before they enter Overall summaries.
+  const eventTrackIds = [...catalog.periods, ...catalog.archives].map(row => projectPeriod(row).trackId);
+  const allTrackIds = [...new Set([...registry, ...eventTrackIds, ...(overall.trackCatalog || []).map(row => row.trackId), ...overall.trackSummaries.map(row => row.trackId), ...Object.keys(previous.tracks)])]
     .filter(id => TRACK_ID.test(id)).sort();
   const cachedTracks = {...previous.tracks};
   for (const id of allTrackIds) {
@@ -387,7 +398,7 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
       delete cachedTracks[id].checkedAt;
     }
   }
-  const selectedTracks = chooseTrackFetches(allTrackIds, overall.trackSummaries, cachedTracks,
+  const selectedTracks = chooseTrackFetches(allTrackIds, [...(overall.trackCatalog || []), ...overall.trackSummaries], cachedTracks,
     PUBLIC_SNAPSHOT_LIMITS.trackFetches, now);
   const trackRows = await mapLimit(selectedTracks, PUBLIC_SNAPSHOT_LIMITS.concurrency, async id => {
     const value = await fetchJson(fetchImpl, `${WORKER}/v1/snapshot/track?trackId=${encodeURIComponent(id)}`, {optional: true});
