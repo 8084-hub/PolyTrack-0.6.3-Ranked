@@ -125,16 +125,13 @@ export function ensureFeaturedSection(document,selection=null){
     .map(image=>image.closest('.track')).find(track=>track&&!track.closest('.sq-featured-events'));
   let featured=section.querySelector(':scope > .sq-permanent-track');
   if(!featured&&rolling){
-    // Preserve the native community entry; the featured copy forwards activation to it.
-    featured=rolling.cloneNode(true);featured.classList.add('sq-permanent-track');featured.dataset.sqPermanentFeatured='true';
-    for(const node of [featured,...featured.querySelectorAll('[id]')])node.removeAttribute('id');
+    featured=rolling;
+    featured.classList.add('sq-permanent-track');featured.dataset.sqPermanentFeatured='true';
     const featuredButton=featured.querySelector(':scope > button');
-    featuredButton?.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();const source=featured.__sqPermanentSourceButton;if(source?.isConnected)source.click();});
     section.append(featured);
     const note=document.createElement('small');note.className='sq-permanent-note';
     note.textContent='Normal RP + up to 1001 Event RP / No reset';featuredButton?.append(note);
   }
-  if(featured&&rolling)featured.__sqPermanentSourceButton=rolling.querySelector(':scope > button');
   return section;
 }
 // The native formatter consumes Time.numberOfFrames, not a millisecond scalar.
@@ -759,7 +756,7 @@ export function installEvents(bridge){
       board.style.setProperty('display','flex','important');
       board.append(nativeMarkup.cloneNode(true));
       board.querySelector('.total-players').classList.remove('fade-in');
-      if(archiveMode)board.querySelector('h2').textContent='Archived event leaderboard';
+      board.querySelector('h2').textContent=archiveMode?'Archived event leaderboard':'Event leaderboard';
       const buttonWrapper=board.querySelector('.button-wrapper');
       if(archiveMode)buttonWrapper.querySelectorAll('button:not(.back)').forEach(button=>button.remove());
       else{
@@ -905,8 +902,8 @@ export function installEvents(bridge){
       const infoNode=kodubCard.querySelector('.track-of-the-week-info');
       if(infoNode){
         let reward=infoNode.querySelector('.sq-kodub-reward');if(!reward){reward=document.createElement('small');reward.className='sq-kodub-reward';infoNode.append(reward);}
-        const text=p?'Up to 700 Event RP':'Normal play available · event scoring unavailable';if(reward.textContent!==text)reward.textContent=text;
-        const pb=infoNode.querySelector('.personal-best');if(pb&&p){const html=recordMarkup(p);if(pb.dataset.eventRecord!==html){pb.dataset.eventRecord=html;pb.innerHTML=html;}}
+        const text=p?'Normal leaderboard · up to 700 Event RP':'Normal leaderboard · event scoring unavailable';if(reward.textContent!==text)reward.textContent=text;
+        // Leave the native normal PB intact; an event PB is a different record.
       }
     }
     if(!cachedOnly&&group?.getClientRects().length){void loadCatalog().catch(()=>{});void loadPermanent();}
@@ -997,10 +994,9 @@ export function installEvents(bridge){
   document.addEventListener('click',e=>{
     const button=e.target.closest?.('button');if(!button)return;
     if(button.closest('.sq-kodub-weekly')&&!nativeOpenPermit){
-      const card=button.closest('.sq-kodub-weekly');
-      const period=activePeriods().find(p=>p.id===card.dataset.eventId&&p.kind==='kodub');
-      if(period){e.preventDefault();e.stopImmediatePropagation();void race(period,{direct:true});}
-      else{entryRequest++;sessions.leave();eventIntent=null;tick();}
+      // The spotlight is the normal track entry. Explicit Events navigation alone
+      // selects event-only standings/ghosts; eligible normal finishes still submit.
+      entryRequest++;sessions.leave();eventIntent=null;archiveIntent=null;tick({cachedOnly:true});
       return;
     }
     if(button.matches('#overallLeaderboardPanel .weekly-cup .competition-feature-button,#overallLeaderboardPanel .daily-card .competition-feature-button')){

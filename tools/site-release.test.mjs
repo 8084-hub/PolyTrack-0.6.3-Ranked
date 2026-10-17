@@ -50,3 +50,10 @@ test('weekly menu adapter and metadata recovery use the current client release k
  const result=stampClientRelease(input,index,143);
  assert.match(result.patch,/kodub-weekly\.mjs\?v=143/);assert.match(result.patch,/snapshot-metadata-recovery\.mjs\?v=143/);
 });
+
+
+test('native bundle catalog updates receive the same versioned client cache key',()=>{
+ const result=stampClientRelease(patch,index+'<script src="./main.bundle.js"></script>',148);
+ assert.match(result.index,/main\.bundle\.js\?v=148/);
+ assert.match(stampClientRelease(result.patch,result.index,149).index,/main\.bundle\.js\?v=149/);
+});

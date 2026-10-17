@@ -21,6 +21,7 @@ const FIREBASE_AUDIT_BOOTSTRAP = `(() => {
   const firestore = {
     settings() {}, collection() { return query(''); },
     async runTransaction(callback) {
+      if (window.__ptNativeRankedAuditRejectWrites) throw Object.assign(new Error('Offline audit writes disabled'), {code: 'unavailable'});
       const transaction = { get: async ref => ref.get(), set() {}, update() {}, delete() {} };
       return callback(transaction);
     }
@@ -51,7 +52,7 @@ const FIREBASE_AUDIT_BOOTSTRAP = `(() => {
   window.firebase = firebase;
 })();`;
 
-export async function installNativeRankedAuditFixture(page) {
+export async function installNativeRankedAuditFixture(page, {rejectWrites = false} = {}) {
   if (!page || typeof page.route !== 'function' || typeof page.addInitScript !== 'function') {
     throw new TypeError('A Playwright page is required.');
   }
@@ -60,7 +61,7 @@ export async function installNativeRankedAuditFixture(page) {
     contentType: 'application/javascript',
     body: '/* Firebase compat is supplied by native-ranked-audit-fixture.mjs. */'
   }));
-  await page.addInitScript({ content: FIREBASE_AUDIT_BOOTSTRAP });
+  await page.addInitScript({ content: `window.__ptNativeRankedAuditRejectWrites = ${Boolean(rejectWrites)};\n` + FIREBASE_AUDIT_BOOTSTRAP });
 }
 
 async function clickNativeMenuButton(page, label, timeout) {

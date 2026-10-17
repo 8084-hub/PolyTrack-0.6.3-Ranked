@@ -157,21 +157,22 @@ test('visible Static group loads catalog once, hidden group does not load',async
  const p=await fixture(t);await p.evaluate(()=>{const host=document.createElement('div');host.className='track-selection-ui';host.style.display='none';host.innerHTML='<div class="community-track-versions"><button>Static</button><button>0.6.3</button></div><div class="community-track-group"><img src="tracks/community/thumbnails/rolling_hills_racer.png"></div>';document.body.append(host);ui.tick();});assert.equal(await p.evaluate(()=>catalogReads),0);
  await p.evaluate(()=>{document.querySelector('.track-selection-ui').style.display='block';ui.tick();});await p.waitForFunction(()=>catalogReads===1);await p.evaluate(()=>{for(let i=0;i<100;i++)ui.tick();});assert.equal(await p.evaluate(()=>catalogReads),1);assert.equal(await p.locator('.sq-event-track-group').count(),1);
 });
-test('featured permanent card preserves the selected Static community tab and forwards launch to its native track',async t=>{
+test('featured permanent card moves its native node without disturbing version tracks or launch handlers',async t=>{
  const p=await fixture(t);await p.evaluate(()=>{
-  const host=document.createElement('div');host.className='track-selection-ui';host.innerHTML='<div class="tracks-container"><div class="wrapper"><div class="community-track-versions"><button id="static-tab" class="selected">StaticQuasar931</button><button id="version-tab">0.6.3</button></div><div class="community-track-group" id="static-community"><div class="track" id="rolling-source"><button id="rolling-source-button"><span class="track-title"><p>Rolling Hills Racer</p></span><img class="thumbnail" src="tracks/community/thumbnails/rolling_hills_racer.png"><div class="record">00:19.993</div></button></div></div></div></div>';
-  document.body.append(host);window.nativeTrackClicks=0;document.querySelector('#rolling-source-button').addEventListener('click',()=>nativeTrackClicks++);window.tabClicks=0;document.querySelector('#static-tab').addEventListener('click',()=>tabClicks++);document.querySelector('#version-tab').addEventListener('click',()=>tabClicks++);ui.tick();
+  const host=document.createElement('div');host.className='track-selection-ui';host.innerHTML='<div class="tracks-container"><div class="wrapper"><div class="community-track-versions"><button id="version-tab" class="selected">0.6.3</button><button>0.6.1</button></div><div class="community-track-group" id="version-community"><div class="track" id="rolling-source"><button id="rolling-source-button"><span class="track-title"><p>Rolling Hills Racer</p></span><img class="thumbnail" src="tracks/community/thumbnails/rolling_hills_racer.png"><div class="record">00:19.993</div></button></div><div class="track" id="other-version-track"><button>Other track</button></div></div></div></div>';
+  document.body.append(host);window.nativeTrackClicks=0;window.originalPermanent=document.querySelector('#rolling-source');document.querySelector('#rolling-source-button').addEventListener('click',()=>nativeTrackClicks++);window.tabClicks=0;document.querySelector('#version-tab').addEventListener('click',()=>tabClicks++);ui.tick();
  });
- assert.equal(await p.locator('#rolling-source').count(),1,'the native community track remains in its selected group');
- assert.equal(await p.locator('#static-community #rolling-source').count(),1);
- assert.equal(await p.locator('.sq-featured-events > .sq-permanent-track').count(),1,'the event feature is a separate presentation');
- assert.equal(await p.locator('#static-tab.selected').count(),1,'setup must not switch native version tabs');
+ assert.equal(await p.locator('#rolling-source').count(),1,'there is only one native permanent card');
+ assert.equal(await p.evaluate(()=>document.querySelector('.sq-featured-events > .sq-permanent-track')===originalPermanent),true);
+ assert.equal(await p.locator('#version-community #other-version-track').count(),1);
+ assert.equal(await p.locator('#version-tab.selected').count(),1,'setup must not switch native version tabs');
  await p.locator('.sq-featured-events > .sq-permanent-track > button').click();
- assert.equal(await p.evaluate(()=>nativeTrackClicks),1,'featured activation forwards to the native track button');
+ assert.equal(await p.evaluate(()=>nativeTrackClicks),1,'native track click listener is preserved');
  await p.evaluate(()=>{for(let i=0;i<20;i++)ui.tick();});
- assert.equal(await p.locator('.sq-featured-events > .sq-permanent-track').count(),1,'reconciliation does not accumulate feature clones');
+ assert.equal(await p.locator('.sq-featured-events > .sq-permanent-track').count(),1,'reconciliation cannot duplicate the card');
  assert.equal(await p.evaluate(()=>tabClicks),0);
 });
+
 test('cached daily and weekly cards render before the live catalog resolves',async t=>{
  const daily={id:'daily-fixture',trackId:'a'.repeat(64),kind:'daily',trackName:'Cached Daily',startsAt:Date.now()-1000,endsAt:Date.now()+3600000,maxRp:100};
  const weekly={...daily,id:'weekly-fixture',trackId:'b'.repeat(64),kind:'weekly',trackName:'Cached Weekly',maxRp:500};
@@ -687,4 +688,40 @@ test('late snapshot identity redraws event cars without a refresh or another boa
  await p.locator('.sq-event-board img[alt="Cached profile car"]').waitFor();
  assert.deepEqual(await p.evaluate(()=>renderCalls),['late-style']);
  assert.equal(await p.evaluate(()=>window.reads),reads);
+});
+
+
+test('Kodub spotlight keeps the normal leaderboard and local PB while normal finishes still submit',async t=>{
+ const p=await fixture(t);
+ await p.evaluate(async()=>{
+  window.weeklyPeriod={id:'kodub_fixture',kind:'kodub',trackId:id,startsAt:Date.now()-1000,endsAt:Date.now()+3600000,maxRp:700};
+  bridgeFixture.readCatalog=async()=>({periods:[weeklyPeriod],archives:[]});
+  await ui.prepareCapture();
+  const menu=document.createElement('div');menu.className='track-selection-ui';
+  menu.innerHTML='<div class="community-track-versions"></div><div class="sq-kodub-weekly" data-event-id="kodub_fixture"><button id="weekly-normal"><div class="track-of-the-week-info"><div class="personal-best">Native local PB 9999</div></div></button></div>';
+  document.body.append(menu);
+  document.querySelector('#weekly-normal').onclick=()=>{window.weeklyNativeClicks=(window.weeklyNativeClicks||0)+1;window.car=makeCar();};
+  ui.tick();
+ });
+ await p.locator('#weekly-normal').click();
+ assert.equal(await p.evaluate(()=>weeklyNativeClicks),1);
+ assert.equal(await p.evaluate(()=>ui.isEntered(id)),false);
+ assert.equal(await p.locator('.sq-event-board').count(),0);
+ assert.match(await p.locator('.leaderboard-ui .container').innerText(),/Normal leaderboard 9999/);
+ assert.equal(await p.locator('#weekly-normal .personal-best').innerText(),'Native local PB 9999');
+ assert.equal(await p.locator('.side-panel .personal-best').innerText(),'9999');
+ await p.evaluate(()=>{for(let i=0;i<10;i++)ui.tick({cachedOnly:true});car.finish(19000);});
+ await p.waitForFunction(()=>submits.length===1);
+ assert.equal(await p.evaluate(()=>submits[0].periodId),'kodub_fixture');
+ assert.equal(await p.evaluate(()=>submits[0].timeMs),19000);
+ assert.equal(await p.locator('.sq-event-board').count(),0);
+});
+
+test('Kodub can still open explicit event standings without changing normal entry behavior',async t=>{
+ const p=await fixture(t);
+ await p.evaluate(()=>{bridgeFixture.readCatalog=async()=>({periods:[{id:'kodub_fixture',kind:'kodub',trackId:id,startsAt:Date.now()-1000,endsAt:Date.now()+3600000,maxRp:700}],archives:[]});});
+ await p.locator('#open').click();await p.locator('[data-event-id="kodub_fixture"]').click();await p.locator('.sq-event-board').waitFor();
+ assert.match(await p.locator('.sq-event-board h2').innerText(),/Event leaderboard/);
+ assert.equal(await p.evaluate(()=>ui.isEntered(id)),true);
+ assert.equal(await p.locator('.sq-event-personal').count(),1);
 });

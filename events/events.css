@@ -158,6 +158,8 @@ body.sq-event-active .track-info-ui{background:#1b2854}
 #ui .track-selection-ui .sq-featured-events{grid-template-columns:minmax(420px,2fr) repeat(3,minmax(190px,1fr));gap:16px!important;overflow-x:auto;scrollbar-width:thin;padding-bottom:18px;--event-card-height:280px}
 #ui .track-selection-ui .sq-featured-events>.sq-kodub-weekly,#ui .track-selection-ui .sq-featured-events>.sq-kodub-unavailable{grid-column:1;grid-row:2}
 #ui .track-selection-ui .sq-featured-events>.sq-permanent-track{grid-column:2;grid-row:2;width:100%!important;max-width:none!important;margin:0!important}
+/* Native search may hide its source track; the permanent event stays visible. */
+#ui .track-selection-ui .sq-featured-events>.sq-permanent-track:not([hidden]){display:block!important}
 #ui .track-selection-ui .sq-featured-events>.sq-event-track-buttons>.sq-event-card{grid-row:2}
 #ui .track-selection-ui .sq-featured-events .sq-event-card,#ui .track-selection-ui .sq-featured-events>.track>.button{height:var(--event-card-height)!important;min-height:var(--event-card-height)!important;box-sizing:border-box;border:0!important;box-shadow:none!important;background:#142252!important;margin:0!important;width:100%!important;max-width:none!important;overflow:hidden}
 #ui .track-selection-ui .sq-featured-events .sq-event-card:hover,#ui .track-selection-ui .sq-featured-events>.track>.button:hover{background:#203465!important}
