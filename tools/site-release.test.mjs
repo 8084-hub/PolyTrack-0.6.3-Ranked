@@ -44,3 +44,9 @@ test('shared name-policy changes receive the same cache key as the client',()=>{
   assert.match(result.index,/public-name-policy\.js\?v=122/);
   assert.deepEqual(stampClientRelease(result.patch,result.index,122),result);
 });
+
+test('weekly menu adapter and metadata recovery use the current client release key',()=>{
+ const input=patch+"import('./kodub-weekly.mjs');import('./tools/snapshot-metadata-recovery.mjs?v=142');";
+ const result=stampClientRelease(input,index,143);
+ assert.match(result.patch,/kodub-weekly\.mjs\?v=143/);assert.match(result.patch,/snapshot-metadata-recovery\.mjs\?v=143/);
+});

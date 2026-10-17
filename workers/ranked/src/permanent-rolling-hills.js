@@ -1,3 +1,4 @@
+import {loadPublicationEntries} from './paged-publication.js';
 import { eventDecode } from './events-store.js';
 
 export const PERMANENT_ROLLING_HILLS = Object.freeze({
@@ -29,7 +30,9 @@ function snapshotIdentityValid(snapshot) {
 }
 
 function normalizeCompleteSnapshot(snapshot) {
-  if (!snapshotIdentityValid(snapshot) || snapshot.entries.length >= PERMANENT_ROLLING_HILLS.entryLimit) return null;
+  if(!snapshotIdentityValid(snapshot))return null;
+  if(snapshot.pagination&&snapshot.sourceComplete===true&&snapshot.pagination.totalEntries===snapshot.entries.length&&snapshot.totalEntries===snapshot.entries.length)return {...snapshot,complete:true,completenessSource:'paged-source-manifest'};
+  if(snapshot.entries.length >= PERMANENT_ROLLING_HILLS.entryLimit)return null;
   if (snapshot.complete === true && snapshot.totalEntries === snapshot.entries.length) {
     return { ...snapshot, completenessSource: 'explicit-snapshot-metadata' };
   }
@@ -96,7 +99,9 @@ export async function readPermanentRollingHills(request) {
   if (typeof request !== 'function') fail('permanent_rolling_hills_dependency');
   const raw = await request(`/${PERMANENT_ROLLING_HILLS.collection}/${PERMANENT_ROLLING_HILLS.trackId}`);
   if (!raw?.fields) fail('permanent_rolling_hills_snapshot_missing');
-  return derivePermanentRollingHills(eventDecode({ mapValue: { fields: raw.fields } }));
+  const snapshot=eventDecode({mapValue:{fields:raw.fields}});
+  if(snapshot.pagination)snapshot.entries=await loadPublicationEntries(snapshot,'track',PERMANENT_ROLLING_HILLS.trackId,async(c,id)=>{const doc=await request('/'+c+'/'+id);return doc?{data:eventDecode({mapValue:{fields:doc.fields||{}}})}:null;});
+  return derivePermanentRollingHills(snapshot);
 }
 
 export function mergePermanentRollingIntoTotals(finite, rolling) {
@@ -118,13 +123,13 @@ export function mergePermanentRollingIntoTotals(finite, rolling) {
   const sorted = [...merged.values()].map(row => ({ ...row,
     rp: row.finiteEventRp + row.permanentRollingHillsRp,
     dynamicEventRp: row.permanentRollingHillsRp
-  })).sort((a, b) => b.rp - a.rp || a.accountId.localeCompare(b.accountId)).slice(0, 200);
+  })).sort((a, b) => b.rp - a.rp || a.accountId.localeCompare(b.accountId));
   let rank = 0;
   const entries = sorted.map((row, index) => {
     if (!index || row.rp !== sorted[index - 1].rp) rank = index + 1;
     return { ...row, rank };
   });
-  return { ...finite, entries, complete: merged.size <= 200, totalEntries: merged.size, updatedAt: Math.max(Number(finite.updatedAt || 0), rolling.updatedAt), eventRpComplete: true,
+  return { ...finite, entries, complete: true, totalEntries: merged.size, updatedAt: Math.max(Number(finite.updatedAt || 0), rolling.updatedAt), eventRpComplete: true,
     dynamicComponents: { permanentRollingHills: { status: 'complete', id: rolling.id, trackId: rolling.trackId,
       scoreVersion: rolling.scoreVersion, targetPolicy: rolling.targetPolicy, targetMs: rolling.targetMs,
       maxRp: rolling.maxRp, sourceRevision: rolling.sourceRevision, updatedAt: rolling.updatedAt } } };

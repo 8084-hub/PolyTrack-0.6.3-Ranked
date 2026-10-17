@@ -59,8 +59,9 @@ async function fetchKodubWeekly({baseUrl,brokerUrl,fetcher=fetch,now=Date.now()}
 }
 
 export function combineKodubCard(document, group, selection, now=Date.now()) {
-  const card = document.querySelector('.track-selection-ui .track.track-of-the-week:not(.sq-kodub-weekly)') || document.querySelector('.track-selection-ui .sq-kodub-weekly');
   if(!group)return;
+  const menu=group.closest('.track-selection-ui');
+  const card=menu?.querySelector('.track.track-of-the-week:not(.sq-kodub-weekly)')||menu?.querySelector('.sq-kodub-weekly');
   const unavailable=group.querySelector('.sq-kodub-unavailable');
   if(unavailable){
     const valid=selection&&now<Date.parse(selection.endTime);

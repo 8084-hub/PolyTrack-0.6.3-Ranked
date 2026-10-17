@@ -634,3 +634,21 @@ test('live and archived event browser fits phone, tablet and desktop without hor
  }
  if(process.env.EVENT_ARCHIVE_SCREENSHOT)await p.screenshot({path:process.env.EVENT_ARCHIVE_SCREENSHOT,fullPage:true});
 });
+
+test('late snapshot identity redraws event cars without a refresh or another board read',async t=>{
+ const p=await fixture(t);await p.evaluate(()=>{
+  const prior=bridgeFixture.require();
+  bridgeFixture.require=()=>n=>n===8724?{A:{deserializeSafe:s=>s==='late-style'?{serialize:()=>s}:null}}:prior(n);
+  window.identityVersion=0;window.identityStyle='';window.renderCalls=[];
+  bridgeFixture.identityRevision=()=>identityVersion;
+  bridgeFixture.racerIdentity=()=>({carStyle:identityStyle});
+  window.BT=async style=>{renderCalls.push(style);return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII=';};
+  const read=bridgeFixture.readSnapshot;bridgeFixture.readSnapshot=async key=>({...await read(key),entries:[{accountId:id,name:'Racer',timeMs:20000,rank:1,rp:100}]});
+ });await enter(p);
+ await p.locator('.sq-event-board img[alt="Car unavailable"]').waitFor({state:'attached'});
+ const reads=await p.evaluate(()=>window.reads);
+ await p.evaluate(()=>{identityStyle='late-style';identityVersion++;ui.tick();});
+ await p.locator('.sq-event-board img[alt="Cached profile car"]').waitFor();
+ assert.deepEqual(await p.evaluate(()=>renderCalls),['late-style']);
+ assert.equal(await p.evaluate(()=>window.reads),reads);
+});

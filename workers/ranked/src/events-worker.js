@@ -1,8 +1,14 @@
+import {publicationPageId} from './paged-publication.js';
+import {publishEventCapacity} from './event-publication.js';
 import { provisionKodubEvent } from './kodub-event.js';
 import { createEventHandler, EventError } from './events.js';
 import { eventRuntime, consumeEventInbox, provisionEvent, cleanupEvents } from './events-runtime.js';
 import { readPermanentRollingHills, mergePermanentRollingIntoTotals } from './permanent-rolling-hills.js';
 
+function eventPageCacheName(kind,id,generation,page){
+  try{publicationPageId(kind,id,generation,page);}catch{throw new EventError('invalid_page');}
+  return 'page/'+kind+'/'+id+'/'+generation+'/'+page;
+}
 const EVENT_CACHE_FILL_LIMIT = 64;
 const eventCacheFills = new Map();
 
@@ -15,7 +21,10 @@ export function eventWorkerHandler(env, { request, authenticate, origins, contex
     const url = new URL(incoming.url);
     if (incoming.method !== 'GET') return null;
     let name = null;
-    if (url.pathname === '/v1/events/catalog' || url.pathname === '/v1/events/current') name = 'catalog';
+    const pageMatch=/^\/v1\/events\/(totals|[A-Za-z0-9_-]{1,64}\/snapshot)\/page$/.exec(url.pathname);
+    if(pageMatch){try{if(!/^\d+$/.test(url.searchParams.get('page')||''))return null;name=eventPageCacheName(pageMatch[1]==='totals'?'event_totals':'event',pageMatch[1]==='totals'?'main':pageMatch[1].split('/')[0],url.searchParams.get('generation'),Number(url.searchParams.get('page')));}catch{return null;}}
+    if(name){}
+    else if (url.pathname === '/v1/events/catalog' || url.pathname === '/v1/events/current') name = 'catalog';
     else if (url.pathname === '/v1/events/totals') name = 'totals';
     else if (url.pathname === '/v1/events/permanent-rolling-hills/snapshot') name = 'permanent-rolling-hills';
     else {
@@ -93,6 +102,7 @@ export function eventWorkerHandler(env, { request, authenticate, origins, contex
       }
     };
     const service = { ...runtime.service,
+      publicPage:(kind,id,generation,page)=>cachedPublic(eventPageCacheName(kind,id,generation,page),86400,()=>runtime.service.publicPage(kind,id,generation,page)),
       catalog: () => cachedPublic('catalog', 120, () => runtime.service.catalog()),
       totals: () => cachedPublic('totals', 20, () => runtime.service.totals()),
       archiveMonth: month => cachedPublic('archive/' + month, 300, () => runtime.service.archiveMonth(month)),
@@ -120,6 +130,7 @@ export function eventWorkerHandler(env, { request, authenticate, origins, contex
     const response = await events(incoming);
     if (incoming.method !== 'GET' || url.pathname !== '/v1/events/totals' || response.status !== 200) return response;
     const finite = await response.json();
+    if(finite.dynamicComponents)return new Response(JSON.stringify(finite),{status:200,headers:response.headers});
     try {
       const rolling = await cachedPublic('permanent-rolling-hills', 20, () => readPermanentRollingHills(request));
       return new Response(JSON.stringify(mergePermanentRollingIntoTotals(finite, rolling)), { status: 200, headers: response.headers });
@@ -149,6 +160,9 @@ export async function eventWorkerMaintenance(env, { request, officialIds, allIds
   if (Math.floor(at / 60000) % 5 === 1) {
     const cleanup = await cleanupEvents(runtime);
     if (!cleanup.idle) return cleanup;
+  }
+  if([2,4].includes(Math.floor(at/60000)%5)){
+    const publication=await publishEventCapacity(runtime);if(!publication.idle)return publication;
   }
   return consumeEventInbox(runtime, { preferRetry: Math.floor(at / 60000) % 2 === 0 });
 }

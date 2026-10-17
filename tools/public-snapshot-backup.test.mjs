@@ -516,3 +516,32 @@ test('public capture workflows remain serialized and avoid full profile scans', 
     if (name === 'sync-event-catalog.yml') assert.match(workflow, /node tools\/update-public-snapshot\.mjs --refresh-replays/);
   }
 });
+
+test('capture saves every paginated racer beyond preview limits and preserves files on a mixed generation',async t=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'polytrack-paged-capture-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const generation='f'.repeat(64),sourceRevision=7;
+ const rows=count=>Array.from({length:count},(_,i)=>({accountId:(i+1).toString(16).padStart(64,'0'),userId:(i+1).toString(16).padStart(64,'0'),name:'Racer',rank:i+1,timeMs:1000+i,ownerUid:'private'}));
+ const boards={overall:rows(531),track:rows(650)};
+ const metadata=kind=>({version:1,generation,pageSize:100,pageCount:Math.ceil(boards[kind].length/100),totalEntries:boards[kind].length,complete:true});
+ let corrupt=false,pageRequests=0;
+ const fetchImpl=async input=>{
+  const url=new URL(input),kind=url.pathname.includes('/overall')?'overall':'track';
+  if(url.pathname.endsWith('/page')){
+   pageRequests++;const page=Number(url.searchParams.get('page'));
+   assert.equal(url.searchParams.get('generation'),generation);
+   return Response.json({...metadata(kind),generation:corrupt?'e'.repeat(64):generation,sourceRevision,page,entries:boards[kind].slice(page*100,(page+1)*100)});
+  }
+  if(url.pathname.endsWith('/overall'))return Response.json({updatedAt:300,sourceRevision,complete:false,totalEntries:531,entries:boards.overall.slice(0,200),pagination:metadata('overall'),trackSummaries:[{trackId,updatedAt:250,fieldSize:650}]});
+  if(url.pathname.endsWith('/track'))return Response.json({trackId,updatedAt:250,sourceRevision,complete:false,totalEntries:650,entries:boards.track.slice(0,500),pagination:metadata('track')});
+  if(url.pathname.endsWith('/catalog'))return Response.json({periods:[],archives:[]});
+  return new Response('',{status:404});
+ };
+ await runPublicSnapshotBackup({directory,trackIds:[trackId],fetchImpl,log:()=>{}});
+ const savedOverall=await fs.readFile(path.join(directory,'overall.json'),'utf8');
+ const savedTrack=JSON.parse(await fs.readFile(path.join(directory,'tracks',trackId+'.json')));
+ assert.equal(pageRequests,13);assert.equal(JSON.parse(savedOverall).entries.length,531);assert.equal(savedTrack.entries.length,650);
+ assert.equal(savedTrack.complete,true);assert.equal(savedTrack.entries.at(-1).ownerUid,undefined);
+ corrupt=true;
+ await assert.rejects(runPublicSnapshotBackup({directory,trackIds:[trackId],fetchImpl,log:()=>{}}),/Invalid or incomplete/);
+ assert.equal(await fs.readFile(path.join(directory,'overall.json'),'utf8'),savedOverall);
+});

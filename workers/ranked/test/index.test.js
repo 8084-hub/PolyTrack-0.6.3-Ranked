@@ -233,7 +233,7 @@ test('rank titles require breadth even when three finishes are strong', () => {
   assert.match(specialist.rankTier, /^Bronze/);
 });
 
-test('maximum snapshots stay below a conservative Firestore document budget', () => {
+test('full Overall scoring is independent from the bounded legacy document preview', () => {
   const boards = Array.from({ length: 78 }, (_, trackIndex) => ({
     trackId: `track-${trackIndex}`,
     entries: Array.from({ length: 500 }, (_, racerIndex) => ({
@@ -247,8 +247,8 @@ test('maximum snapshots stay below a conservative Firestore document budget', ()
     }))
   }));
   const entries = computeOverall(boards);
-  assert.equal(entries.length, 200);
-  assert.ok(Buffer.byteLength(JSON.stringify({ entries })) < 850000);
+  assert.equal(entries.length,500);
+  assert.ok(Buffer.byteLength(JSON.stringify({entries:entries.slice(0,200)}))<850000);
 });
 
 test('rejects an untrusted origin before touching Firestore', async () => {
@@ -916,11 +916,11 @@ test('scheduled idle recovery scans canonical results every fifteen minutes with
   }
 });
 
-test('synthetic ranking sizes remain capped and deterministic', () => {
+test('synthetic ranking sizes preserve the full field deterministically', () => {
   for (const size of [1, 3, 15, 200, 500, 1000]) {
     const rows = Array.from({ length: size }, (_, index) => validRun({ accountId: `racer-${index}`, trackId: TRACK, timeMs: 20000 + index, createdAt: index + 1 }));
     const entries = computeTrackEntries(rows, TRACK);
-    assert.equal(entries.length, Math.min(size, 500));
+    assert.equal(entries.length,size);
     assert.deepEqual(entries.map((entry) => entry.rank), Array.from({ length: entries.length }, (_, index) => index + 1));
   }
 });
@@ -2149,7 +2149,7 @@ test('cold recovery cron fits the fifty-subrequest budget with four bootstrap an
   rankedWorker.scheduled({cron:'*/5 * * * *'}, env, {waitUntil: promise => {completion=promise;}});
   await completion;
   // One extra token request is needed with a cold service-token cache.
-  assert.equal(calls+1, 41);
+  assert.equal(calls+1,45);
   assert.ok(calls+1 < 50);
 });
 

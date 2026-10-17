@@ -45,3 +45,24 @@ test('accepting new published standings schedules menu placement without a new P
   f.context.writeTrackSnapshotCache('track',[],100,{revision:1,source:'public-backup'});
   assert.equal(f.renders(),2,'rejected older files do not trigger a redraw');
 });
+
+test('complete static boards keep racers beyond 500 and retain their completeness',()=>{
+ const f=fixture(),entries=Array.from({length:650},(_,i)=>({accountId:'racer-'+i,timeMs:1000+i}));
+ assert.equal(f.context.writeTrackSnapshotCache('track',entries,200,{complete:true,totalEntries:650}),true);
+ assert.equal(f.board().entries.length,650);assert.equal(f.board().complete,true);assert.equal(f.board().totalEntries,650);
+ assert.equal(f.board().entries.at(-1).accountId,'racer-649');
+});
+test('oversized board is rejected rather than silently presented as complete',()=>{
+ const f=fixture();f.context.writeTrackSnapshotCache('track',[{accountId:'saved'}],100,{complete:true,totalEntries:1});
+ assert.equal(f.context.writeTrackSnapshotCache('track',Array.from({length:10001},()=>({})),200,{complete:true,totalEntries:10001}),false);
+ assert.equal(f.board().entries[0].accountId,'saved');
+});
+
+test('failed PB upload keeps the authoritative full board and leaves the PB as a separate local overlay',()=>{
+ const f=fixture(),entries=Array.from({length:650},(_,i)=>({accountId:'racer-'+i,timeMs:1000+i}));
+ f.context.writeTrackSnapshotCache('track',entries,200,{complete:true,totalEntries:650,revision:7,source:'public-backup'});
+ f.context.readTrackSnapshotCache=()=>f.board();
+ f.context.computeTrackTopEntries=()=>{throw Error('Do not rebuild the saved field for a failed upload');};
+ f.context.retainTrackSnapshotAfterLocalPb('track',{accountId:'me',timeMs:900});
+ assert.equal(f.board().entries.length,650);assert.equal(f.board().revision,7);assert.equal(f.board().complete,true);
+});

@@ -1,3 +1,7 @@
+import {EVENT_COLLECTIONS} from './events.js';
+import {PUBLIC_MANIFEST_COLLECTION,publicationManifestId,decodePublicationPage,PUBLIC_PAGE_COLLECTION, publicationPageId, preparePublicationPages, loadPublicationEntries} from './paged-publication.js';
+import {prepareShardedVerification, migrateVerificationChunk, verificationShardId} from './verification-shards.js';
+import {advanceTrackBuild, trackBuildId, TRACK_BUILD_JOBS} from './track-build.js';
 import { safePublicName } from './public-name-policy.js';
 import {kodubWeekly} from './kodub-weekly.js';
 import { eventWorkerHandler, eventWorkerMaintenance } from './events-worker.js';
@@ -391,26 +395,38 @@ async function loadFirestoreRequest(env, path, init = {}) {
   return response.json();
 }
 
-async function readDocument(env, collection, id) {
-  const payload = await firestoreRequest(env, `/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`);
+async function readDocument(env, collection, id, readTime = '') {
+  const payload = await firestoreRequest(env, `/${encodeURIComponent(collection)}/${encodeURIComponent(id)}${readTime ? '?readTime='+encodeURIComponent(readTime) : ''}`);
   return payload ? { id, data: decodeFields(payload.fields || {}), updateTime: payload.updateTime || '' } : null;
 }
 
 async function readOverallSnapshot(env) {
   const document = await readDocument(env, COLLECTIONS.overall, 'main');
-  return document ? {...document, data: await unpackOverallDetails(document.data)} : null;
+  if(!document)return null;
+  const data=await unpackOverallDetails(document.data);
+  if(data.pagination)data.entries=await loadPublicationEntries(data,'overall','main',(c,id)=>readDocument(env,c,id));
+  return {...document,data};
 }
 
-async function writeOverallSnapshot(env, prior, data) {
-  const compacted = await compactOverallSnapshot(data);
+async function prepareOverallSnapshotDocuments(env, prior, data) {
+  const allEntries = data.entries || [];
+  const paged = allEntries.length > OVERALL_LIMIT ? await preparePublicationPages('overall','main',allEntries,{sourceRevision:data.sourceRevision||0,sourceComplete:data.sourceComplete??(data.complete===true)}) : null;
+  if (paged) await stagePublication(env,paged.documents);
+  const compacted = await compactOverallSnapshot({...data,entries:allEntries.slice(0,OVERALL_LIMIT).map(({resultSamples,...entry})=>entry),
+    ...(paged ? {pagination:paged.pagination,sourceComplete:data.sourceComplete===true||data.complete===true,complete:false} : {})});
   if (plannerDocumentBytes(compacted) >= PLANNER_DOCUMENT_BUDGET) throw Error('OVERALL_DOCUMENT_CAP');
-  return writeDocument(env, COLLECTIONS.overall, 'main', compacted, prior?.updateTime || '');
+  return [...(paged?[{collection:PUBLIC_MANIFEST_COLLECTION,id:publicationManifestId('overall','main',paged.pagination.generation),data:{...paged.pagination,sourceRevision:data.sourceRevision||0},unconditional:true}]:[]),{collection:COLLECTIONS.overall,id:'main',prior,data:compacted}];
+}
+async function writeOverallSnapshot(env,prior,data){
+  const documents=await prepareOverallSnapshotDocuments(env,prior,data);
+  if(documents.length===1&&!prior?.updateTime)return writeDocument(env,COLLECTIONS.overall,'main',documents[0].data);
+  return commitDocuments(env,documents);
 }
 
-async function readDocumentsForCollections(env, requests) {
+async function readDocumentsForCollections(env, requests, readTime = '') {
   const requested = requests.flatMap(([collection, ids]) => {
     if (!/^[A-Za-z0-9_.-]+$/.test(collection)) throw new Error('INVALID_DOCUMENT_COLLECTION');
-    const pattern = collection === COLLECTIONS.raceResults
+    const pattern = [VERIFICATION_COLLECTION,EXTRA_VERIFICATION_COLLECTION].includes(collection) ? /^[A-Za-z0-9_.:-]{1,209}$/ : collection === COLLECTIONS.raceResults
       ? /^[A-Za-z0-9_.:-]{1,128}_[A-Za-z0-9_-]{1,80}$/ : /^[A-Za-z0-9_.:-]{1,128}$/;
     return [...new Set(ids)].map(id => {
       if (typeof id !== 'string' || id.match(pattern)?.[0] !== id || id === '.' || id === '..') throw new Error('INVALID_DOCUMENT_ID');
@@ -422,7 +438,7 @@ async function readDocumentsForCollections(env, requests) {
   const base = documentBase(env).replace('https://firestore.googleapis.com/v1/', '');
   const payload = await firestoreRequest(env, ':batchGet', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({documents: requested.map(({collection, id}) => `${base}/${collection}/${id}`)})
+    body: JSON.stringify({documents: requested.map(({collection, id}) => `${base}/${collection}/${id}`),...(readTime?{readTime}:{})})
   });
   for (const item of Array.isArray(payload) ? payload : []) {
     const document = item?.found;
@@ -497,6 +513,17 @@ async function legacyExtraQueueWrites(env, trackId) {
   ];
 }
 
+export async function migrateCapacityVerificationQueues(env) {
+  for(const collection of [VERIFICATION_COLLECTION,EXTRA_VERIFICATION_COLLECTION]){
+    const roots=await runQuery(env,collection,{field:'migrationComplete',value:false},1);
+    if(!roots.length)continue;
+    const root=roots[0],trackId=root.data.trackId;
+    if(root.id!==trackId||root.data.storageVersion!==2)throw Error('INVALID_VERIFICATION_MIGRATION_ROOT');
+    const next=await migrateVerificationChunk({trackId,collection,root,read:(c,id)=>readDocument(env,c,id),readMany:async(c,ids)=>(await readDocumentsForCollections(env,[[c,ids]])).get(c),commit:w=>commitDocuments(env,w)});
+    return {moved:true,remaining:Object.keys(next?.data?.slots||{}).length};
+  }
+  return {moved:false};
+}
 async function requireExtraQueueMigration(env, trackId) {
   if (verificationCollectionForTrack(trackId) !== EXTRA_VERIFICATION_COLLECTION) return;
   const marker = await readDocument(env, COLLECTIONS.jobs, 'extra_verification_queue_migration_v1');
@@ -633,7 +660,11 @@ async function readOverallBoards(env) {
   let afterName = '';
   while (boards.length < OVERALL_BOARD_LIMIT) {
     const page = await runOverallBoardPage(env, afterName);
-    boards.push(...page.map(document => document.data));
+    for (const document of page) {
+      const data = document.data;
+      if (data.pagination) data.entries = await loadPublicationEntries(data,'track',data.trackId,(c,id)=>readDocument(env,c,id));
+      boards.push(data);
+    }
     if (page.length < OVERALL_BOARD_PAGE_SIZE) return {boards, limitReached: false};
     const lastName = page.at(-1)?.name;
     if (!lastName || lastName === afterName) throw Error('OVERALL_BOARD_CURSOR_INVALID');
@@ -795,7 +826,7 @@ export function computeTrackEntries(rows, trackId, env = {}, verdicts = {}) {
 }
 
 function rankTrustedTrackEntries(rows, trackId) {
-  const entries = [...rows].sort((a, b) => a.timeMs - b.timeMs || a.accountId.localeCompare(b.accountId)).slice(0, TRACK_LIMIT);
+  const entries = [...rows].sort((a, b) => a.timeMs - b.timeMs || a.accountId.localeCompare(b.accountId));
   const comp = competition(entries);
   const parts = trackWeightParts(trackId, entries.length, comp.boost);
   return entries.map((entry, index) => ({
@@ -832,7 +863,7 @@ function preservePublishedIdentity(entry, previous) {
   };
 }
 
-async function persistTrackSnapshot(env, trackId, entries, prior = null) {
+async function persistTrackSnapshot(env, trackId, entries, prior = null, build = {}) {
   const signatureInput = entries.map((entry) => [
     entry.accountId,
     entry.timeMs,
@@ -851,7 +882,7 @@ async function persistTrackSnapshot(env, trackId, entries, prior = null) {
     ...(Number(entry.groupCodeUpdatedAt) > 0 ? [entry.groupCode || '', entry.groupCodeUpdatedAt] : entry.groupCode ? [entry.groupCode] : [])
   ].join(':')).join('|');
   const signature = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signatureInput)).then((bytes) => base64Url(new Uint8Array(bytes)));
-  if (trackSnapshotIsCurrent(prior?.data, signature)) return { changed: false, entries, revision: Number(prior.data.revision || 0) };
+  if (!build.completionWrite && trackSnapshotIsCurrent(prior?.data, signature)) return { changed: false, entries, revision: Number(prior.data.revision || 0) };
   const revision = Math.max(0, Number(prior?.data?.revision || 0)) + 1;
   const now = Date.now();
   // Overall scoring re-ranks only verified entrants. Pending-only changes must
@@ -859,15 +890,30 @@ async function persistTrackSnapshot(env, trackId, entries, prior = null) {
   const overallChanged = !trackSnapshotIsCurrent(prior?.data, prior?.data?.signature)
     || prior.data.complete !== (entries.length < TRACK_LIMIT)
     || overallTrackInput(trackId, prior.data.entries) !== overallTrackInput(trackId, entries);
-  const trackWrite = {collection:COLLECTIONS.track,id:trackId,prior,data:{trackId,entries,complete:entries.length<TRACK_LIMIT,totalEntries:entries.length,updatedAt:now,builtAt:now,schemaVersion:TRACK_SCHEMA_VERSION,algorithmVersion:ALGORITHM_VERSION,revision,sourceRevision:revision,signature}};
+  const paged = entries.length > TRACK_LIMIT ? await preparePublicationPages('track',trackId,entries,{sourceRevision:revision,sourceComplete:true}) : null;
+  if (paged) await stagePublication(env,paged.documents);
+  const trackWrite = {collection:COLLECTIONS.track,id:trackId,prior,data:{trackId,entries:entries.slice(0,TRACK_LIMIT),complete:entries.length<=TRACK_LIMIT,
+    sourceComplete:true,totalEntriesExact:true,totalEntries:entries.length,publishedEntries:Math.min(entries.length,TRACK_LIMIT),
+    ...(paged ? {pagination:paged.pagination,complete:false} : {}),
+    ...(build.sourceReadTime ? {sourceReadTime:build.sourceReadTime,canonicalCount:build.sourceCount} : {}),
+    updatedAt:now,builtAt:now,schemaVersion:TRACK_SCHEMA_VERSION,algorithmVersion:ALGORITHM_VERSION,revision,sourceRevision:revision,signature}};
+  const completion = build.completionWrite ? [build.completionWrite] : [];
+  if(trackId===SPECIAL_ROLLING_HILLS_TRACK_ID){
+    // Couple permanent-RP invalidation to the accepted track generation, not a
+    // repeating source scan. Keep the last combined public generation intact.
+    const work=await readDocument(env,EVENT_COLLECTIONS.public,'totals');
+    completion.push({collection:EVENT_COLLECTIONS.public,id:'totals',prior:work,
+      data:{...(work?.data||{entries:[],totalEntries:0,complete:false,revision:0}),publicationPending:true}});
+  }
+  if(paged)completion.push({collection:PUBLIC_MANIFEST_COLLECTION,id:publicationManifestId('track',trackId,paged.pagination.generation),data:{...paged.pagination,sourceRevision:revision},unconditional:true});
   if (!overallChanged) {
-    await commitDocuments(env, [trackWrite]);
+    await commitDocuments(env, [...completion,trackWrite]);
     return {changed:true,overallChanged:false,entries,revision};
   }
   const metaDoc = await readDocument(env, COLLECTIONS.meta, 'current');
   const meta = metaDoc?.data || {};
   await commitDocuments(env, [
-    trackWrite,
+    ...completion,trackWrite,
     {collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data:{...meta,algorithmVersion:ALGORITHM_VERSION,schemaVersion:TRACK_SCHEMA_VERSION,dirty:true,revision:Math.max(Number(meta.revision||0)+1,revision),builtRevision:Number(meta.builtRevision||0),lastPbAt:now,updatedAt:now,rankedWritesEnabled:String(env.RANKED_WRITES_ENABLED)!=='false',multiplayerEnabled:String(env.MULTIPLAYER_ENABLED)!=='false'}}
   ]);
   return { changed: true, overallChanged:true, entries, revision };
@@ -879,8 +925,7 @@ export function overallTrackInput(trackId, entries) {
 }
 
 export function trackSnapshotIsCurrent(snapshot, signature) {
-  return Array.isArray(snapshot?.entries) && snapshot?.complete === (snapshot?.entries?.length < TRACK_LIMIT)
-    && snapshot.totalEntries === snapshot.entries.length
+  return Array.isArray(snapshot?.entries) && (snapshot?.pagination ? snapshot.sourceComplete === true && snapshot.pagination.complete === true && snapshot.totalEntries === snapshot.pagination.totalEntries : snapshot?.complete === true && snapshot.totalEntries === snapshot.entries.length)
     && snapshot?.signature === signature
     && snapshot.algorithmVersion === ALGORITHM_VERSION
     && Number(snapshot.schemaVersion || 0) >= TRACK_SCHEMA_VERSION;
@@ -1005,7 +1050,7 @@ export function computeOverall(trackDocuments, priorEntries = [], betaTesterIds 
       timingVersion: 2, badges: user.betaTester ? { betaTester: true } : null
     };
   }).sort((a, b) => Number(a.provisional) - Number(b.provisional) || a.score - b.score || b.raceCount - a.raceCount || a.userId.localeCompare(b.userId));
-  const rows = allRows.slice(0, OVERALL_LIMIT);
+  const rows = allRows;
   const now = Date.now();
   let ranked = 0;
   const output = rows.map((row) => {
@@ -1018,6 +1063,32 @@ export function computeOverall(trackDocuments, priorEntries = [], betaTesterIds 
   return output;
 }
 
+async function stagePublication(env, documents) {
+  for(let offset=0;offset<documents.length;offset+=32) await commitDocuments(env,documents.slice(offset,offset+32));
+}
+async function canonicalTrackPage(env,trackId,afterName='',readTime='',limit=100) {
+  const structuredQuery={from:[{collectionId:COLLECTIONS.raceResults}],limit,
+    where:{fieldFilter:{field:{fieldPath:'trackId'},op:'EQUAL',value:{stringValue:trackId}}},
+    orderBy:[{field:{fieldPath:'__name__'},direction:'ASCENDING'}],
+    ...(afterName?{startAt:{before:false,values:[{referenceValue:afterName}]}}:{})};
+  const payload=await firestoreRequest(env,':runQuery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({structuredQuery,...(readTime?{readTime}:{})})});
+  if(!Array.isArray(payload))throw Error('TRACK_QUERY_INVALID');
+  return {readTime:readTime||payload.at(-1)?.readTime||'',documents:payload.flatMap(item=>item.document?[{name:item.document.name,data:decodeFields(item.document.fields||{})}]:[])};
+}
+async function normalizeBuildRows(env,trackId,rows,readTime) {
+  rows=rows.filter(row=>structurallyValidResult(row,trackId));
+  const collection=verificationCollectionForTrack(trackId);
+  const root=await readDocument(env,collection,trackId,readTime), verdicts={...root?.data?.slots};
+  const missing=rows.filter(row=>!verdicts[row.accountId||row.userId]);
+  for(let offset=0;offset<missing.length;offset+=100){
+    const batch=missing.slice(offset,offset+100);
+    const documents=(await readDocumentsForCollections(env,[[collection,batch.map(row=>verificationShardId(trackId,row.accountId||row.userId))]],readTime)).get(collection);
+    for(const row of batch){const accountId=row.accountId||row.userId,shard=documents.get(verificationShardId(trackId,accountId));if(shard?.data?.slots?.[accountId])verdicts[accountId]=shard.data.slots[accountId];}
+  }
+  const integrity=await Promise.all(rows.map(row=>replayIntegrityValid(row)));
+  await prepareVerification(env,trackId,rows);
+  return computeTrackEntries(rows.map((row,i)=>({...row,integrityVerified:integrity[i]})),trackId,env,verdicts);
+}
 async function prepareVerification(env, trackId, rows, complete = false) {
   // One queue document per track avoids a verification read per racer on every PB.
   await requireExtraQueueMigration(env, trackId);
@@ -1035,15 +1106,38 @@ async function persistVerificationRows(env, trackId, rows, prior, complete = fal
     const id=safeText(row.accountId||row.userId,128);
     if(slots[id]?.reason==='canonical_missing'||slots[id]?.key!==verificationKey(row)&&!hasAcceptedVerifiedProof(row,slots[id])){slots[id]=pendingSlot(row);changed=true;}
   }
-  if(Object.keys(slots).length>TRACK_LIMIT)throw new Error('VERIFICATION_TRACK_CAP');
+  if (prior?.data?.storageVersion === 2 || Object.keys(slots).length > TRACK_LIMIT) {
+    const root = await migrateVerificationChunk({trackId,collection:queueCollection,root:prior,
+      read:(c,id)=>readDocument(env,c,id),readMany:async(c,ids)=>(await readDocumentsForCollections(env,[[c,ids]])).get(c),commit:w=>commitDocuments(env,w)});
+    return prepareShardedVerification({trackId,collection:queueCollection,rows:rows.filter(row=>structurallyValidResult(row,trackId)),root,
+      read:(c,id)=>readDocument(env,c,id),readMany:async(c,ids)=>(await readDocumentsForCollections(env,[[c,ids]])).get(c),commit:w=>commitDocuments(env,w)});
+  }
   if(changed)await commitDocuments(env,[{collection:queueCollection,id:trackId,prior,data:{...prior?.data,trackId,slots,...verificationSchedule(slots),updatedAt:Date.now()}}]);
   return slots;
 }
 
 export async function rebuildTrack(env, trackId, identityOverride = null) {
   const prior = await readDocument(env, COLLECTIONS.track, trackId);
-  const candidates = (await runQuery(env, COLLECTIONS.raceResults, { field: 'trackId', value: trackId }, TRACK_LIMIT + 1)).map((document) => document.data);
-  if(candidates.length > TRACK_LIMIT) throw new Error('TRACK_CAP_REQUIRES_PAGINATION');
+  const job = await readDocument(env,TRACK_BUILD_JOBS,trackBuildId(trackId));
+  let initial = null;
+  if (job?.data?.complete !== false || job.data.baseVersion !== (prior?.updateTime||'') || Date.now()-Date.parse(job.data.readTime)>50*60000) initial = await canonicalTrackPage(env,trackId,'','',TRACK_LIMIT+1);
+  if (!initial || initial.documents.length > TRACK_LIMIT) {
+    const build = await advanceTrackBuild({trackId,prior,job,initial,
+      readPage:(cursor,readTime,limit)=>canonicalTrackPage(env,trackId,cursor,readTime,limit),
+      normalize:(rows,readTime)=>normalizeBuildRows(env,trackId,rows,readTime),
+      read:(c,id)=>readDocument(env,c,id),commit:w=>commitDocuments(env,w)});
+    if(build.pending){
+      const queue=await readDocument(env,COLLECTIONS.jobs,'canonical_reconcile_v2'),state=queue?.data||{};
+      if(!(state.pendingFullRebuildTrackIds||[]).includes(trackId))await commitDocuments(env,[{collection:COLLECTIONS.jobs,id:'canonical_reconcile_v2',prior:queue,data:{...state,pendingTrackIds:[...new Set([...(state.pendingTrackIds||[]),trackId])],pendingFullRebuildTrackIds:[...new Set([...(state.pendingFullRebuildTrackIds||[]),trackId])]}}]);
+      return build;
+    }
+    if (build.restart) throw Error('TRACK_BUILD_RESTART_REQUIRED');
+    const previous = prior?.data?.pagination ? await loadPublicationEntries(prior.data,'track',trackId,(c,id)=>readDocument(env,c,id)) : prior?.data?.entries||[];
+    const byId = new Map(previous.map(row=>[row.accountId||row.userId,row]));
+    const entries = rankTrustedTrackEntries(build.entries.map(row=>preservePublishedIdentity(row,byId.get(row.accountId))),trackId);
+    return persistTrackSnapshot(env,trackId,entries,prior,build);
+  }
+  const candidates = initial.documents.map(document=>document.data);
   const integrity = await Promise.all(candidates.map((row) => replayIntegrityValid(row)));
   const rows = candidates.map((row, index) => ({ ...row, integrityVerified: integrity[index], validationState: integrity[index] ? 'integrity' : 'pending' }));
   if (identityOverride?.accountId) {
@@ -1079,6 +1173,7 @@ export async function mergeCanonicalResultIntoTrack(env, trackId, canonicalResul
   if (!prior || prior.data?.algorithmVersion !== ALGORITHM_VERSION || !Array.isArray(prior.data?.entries)) return rebuildTrack(env, trackId);
   let normalized = computeTrackEntries([{ ...canonicalResult, integrityVerified, validationState: integrityVerified ? 'integrity' : 'pending' }], trackId, env)[0];
   if (!normalized) throw new Error('Canonical PB failed structural validation');
+  if (prior.data.pagination) prior.data.entries = await loadPublicationEntries(prior.data,'track',trackId,(c,id)=>readDocument(env,c,id));
   const existing=prior.data.entries.find(row=>safeText(row.accountId||row.userId,128)===normalized.accountId);
   // Equal PB repair must use current canonical data, not a delayed notification payload.
   if(existing && Number(existing.timeMs)===normalized.timeMs && Number(existing.uploadId||0)===Number(normalized.uploadId||0) &&
@@ -1102,7 +1197,8 @@ export async function mergeCanonicalResultIntoTrack(env, trackId, canonicalResul
 export async function mergeCanonicalResultsIntoTrack(env, trackId, resultIds, canonicalById) {
   const prior = await readDocument(env, COLLECTIONS.track, trackId);
   const snapshot = prior?.data;
-  if (!trackSnapshotIsCurrent(snapshot, snapshot?.signature) || snapshot.complete !== true) return {fallback: true};
+  if (!trackSnapshotIsCurrent(snapshot, snapshot?.signature) || (snapshot.complete !== true && snapshot.sourceComplete !== true)) return {fallback: true};
+  if (snapshot.pagination) snapshot.entries = await loadPublicationEntries(snapshot,'track',trackId,(c,id)=>readDocument(env,c,id));
   const rows = resultIds.map(id => canonicalById.get(id)?.data);
   if (rows.some(row => !row || !structurallyValidResult(row, trackId))) return {fallback: true};
   for (let index = 0; index < rows.length; index++) {
@@ -1161,6 +1257,7 @@ export async function bootstrapSnapshotVerification(env) {
   });
   const boards = (response || []).filter(item => item.document).map(item => item.document);
   const writes = [];
+  let completedCursor=job.cursor||'';
   for (const board of boards) {
     const trackId = decodeURIComponent(board.name.split('/').pop());
     if (!/^[A-Za-z0-9_-]{8,80}$/.test(trackId)) throw Error('INVALID_BOOTSTRAP_TRACK');
@@ -1169,7 +1266,20 @@ export async function bootstrapSnapshotVerification(env) {
     await requireExtraQueueMigration(env, trackId);
     const queueCollection = verificationCollectionForTrack(trackId);
     const queue = await readDocument(env, queueCollection, trackId);
+    if(data.pagination||queue?.data?.storageVersion===2){
+      const page=job.pendingTrackId===trackId?Number(job.pendingPage||0):0;
+      const count=data.pagination?.pageCount||Math.ceil(data.entries.length/100);
+      const pageDocument=data.pagination?await readDocument(env,PUBLIC_PAGE_COLLECTION,publicationPageId('track',trackId,data.pagination.generation,page)):null;
+      const rows=pageDocument?(await decodePublicationPage(pageDocument.data)).entries:data.entries.slice(page*100,(page+1)*100);
+      if(!Array.isArray(rows)||rows.length>100)throw Error('INVALID_BOOTSTRAP_PAGE');
+      const root=await migrateVerificationChunk({trackId,collection:queueCollection,root:queue,read:(c,id)=>readDocument(env,c,id),readMany:async(c,ids)=>(await readDocumentsForCollections(env,[[c,ids]])).get(c),commit:w=>commitDocuments(env,w)});
+      await prepareShardedVerification({trackId,collection:queueCollection,rows,root,read:(c,id)=>readDocument(env,c,id),readMany:async(c,ids)=>(await readDocumentsForCollections(env,[[c,ids]])).get(c),commit:w=>commitDocuments(env,w)});
+      const done=page+1>=count;
+      writes.push({collection:COLLECTIONS.jobs,id:VERIFICATION_BOOTSTRAP_ID,prior,data:{...job,cursor:done?board.name:completedCursor,pendingTrackId:done?'':trackId,pendingPage:done?0:page+1,complete:false,processed:Number(job.processed||0)+(done?1:0),updatedAt:Date.now()}});
+      await commitDocuments(env,writes);return {scanned:1,complete:false,paged:true};
+    }
     const slots = bootstrapSlots(trackId, data.entries, queue?.data?.slots);
+    completedCursor=board.name;
     writes.push({ collection: queueCollection, id: trackId, prior: queue,
       data: { ...queue?.data, trackId, slots, ...verificationSchedule(slots), updatedAt: Date.now() } });
   }
@@ -1296,7 +1406,8 @@ export async function reconcileCanonicalChanges(env, {scanResults = true, now = 
         if (rebuildCoolingDown(trackId)
           || !failedFullRebuilds[trackId] && Object.keys(failedFullRebuilds).length >= RECONCILE_REBUILD_FAILURE_LIMIT) continue;
         attemptedFullRebuild = true;
-        await rebuildTrack(env,trackId);
+        const full = await rebuildTrack(env,trackId);
+        if(full.pending)break;
       }
       rebuilt++;
       delete failedFullRebuilds[trackId];
@@ -1479,7 +1590,7 @@ async function buildOverallSnapshot(env, metaDoc, meta, now) {
     if(Number(meta.cosmeticEntitlementVersion||0)<COSMETIC_ENTITLEMENT_VERSION||!old||stableJson(allowance)!==stableJson(old))entitlementWrites.push({collection:'0.6.2_s1_cosmetic_entitlements',id:row.userId,data:allowance,unconditional:true});
   }
   const totalEntries = Number(computedBase.totalEntries || entries.length);
-  const sourceTracksComplete = !boardLimitReached && boards.every(board => board?.complete === true);
+  const sourceTracksComplete = !boardLimitReached && boards.every(board => board?.sourceComplete === true || board?.complete === true);
   const sourceIncomplete = !sourceTracksComplete;
   const sameIncompleteRevision = Number(meta.overallIncompleteRevision ?? -1) === revision;
   const priorIncompleteObservations = sameIncompleteRevision ? Math.max(0, Number(meta.overallIncompleteObservations || 0)) : 0;
@@ -1488,9 +1599,9 @@ async function buildOverallSnapshot(env, metaDoc, meta, now) {
   const overallIncompleteReason = boardLimitReached ? 'board-query-limit'
     : sourceIncomplete ? 'source-track-incomplete'
       : totalEntries > OVERALL_LIMIT ? 'publication-limit' : '';
-  const compacted = await compactOverallEntries(entries);
+  const compacted = await compactOverallEntries(entries.slice(0,OVERALL_LIMIT));
   const snapshot = { entries: compacted.entries, trackSummaries, complete: sourceTracksComplete && totalEntries <= OVERALL_LIMIT,
-    totalEntries, totalEntriesExact: sourceTracksComplete, publishedEntries: entries.length,
+    totalEntries, totalEntriesExact: sourceTracksComplete, publishedEntries: Math.min(entries.length,OVERALL_LIMIT),sourceComplete:sourceTracksComplete,
     authorityAudit: aggregated.audit, betaPolicy: {version: 1, open: openBetaEnabled(env), config: 'OPEN_BETA_ENABLED'},
     updatedAt: now, builtAt: now, seededBy: 'polytrack-ranked-worker',
     revision, builtRevision: revision, sourceRevision: revision, algorithmVersion: ALGORITHM_VERSION,
@@ -1501,10 +1612,12 @@ async function buildOverallSnapshot(env, metaDoc, meta, now) {
     snapshot.entryDetailsBundle = compacted.entryDetailsBundle;
     snapshot.entryDetailsVersion = compacted.entryDetailsVersion;
   }
-  const packed = await packPlannerResults(computedEntries, snapshot, {
+  const paged = entries.length > OVERALL_LIMIT ? await preparePublicationPages('overall','main',computedEntries,{sourceRevision:revision,sourceComplete:sourceTracksComplete}) : null;
+  if (paged) {await stagePublication(env,paged.documents);snapshot.pagination=paged.pagination;}
+  const packed = await packPlannerResults(computedEntries.slice(0,OVERALL_LIMIT), snapshot, {
     boardCount: boards.length, boardLimit: OVERALL_BOARD_LIMIT, boardLimitReached
   });
-  const resultWrites = [];
+  const resultWrites = paged?[{collection:PUBLIC_MANIFEST_COLLECTION,id:publicationManifestId('overall','main',paged.pagination.generation),data:{...paged.pagination,sourceRevision:revision},unconditional:true}]:[];
   if (packed.resultBundleStatus === 'sidecar') {
     const {resultBundle, ...metadata} = packed;
     Object.assign(snapshot, metadata, {resultBundleLocation: 'main_results'});
@@ -1519,6 +1632,13 @@ async function buildOverallSnapshot(env, metaDoc, meta, now) {
   const successMeta = {...meta};
   delete successMeta.overallRebuildFailureAttempts;
   delete successMeta.overallRebuildRetryAt;
+  while(entitlementWrites.length>450){
+    const batch=entitlementWrites.splice(0,450);
+    const committed=await commitDocuments(env,[...batch,{collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data:meta}]);
+    const updateTime=committed?.writeResults?.at(-1)?.updateTime;
+    metaDoc=updateTime?{data:meta,updateTime}:await readDocument(env,COLLECTIONS.meta,'current');
+    if(JSON.stringify(metaDoc?.data)!==JSON.stringify(meta))throw Error('OVERALL_SOURCE_CHANGED');
+  }
   await commitDocuments(env,[...entitlementWrites,...resultWrites,{collection:COLLECTIONS.overall,id:'main',prior:priorDoc,data: snapshot},{collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data: { ...successMeta, plannerPublicationVersion:PLANNER_PUBLICATION_VERSION, plannerBundleVersion:PLANNER_BUNDLE_VERSION, cosmeticEntitlementVersion:COSMETIC_ENTITLEMENT_VERSION, serverAchievementVersion:SERVER_ACHIEVEMENT_VERSION,
     dirty: incompleteRetryPending, overallComplete: snapshot.complete, overallSourceComplete: sourceTracksComplete,
     overallIncompleteReason, overallIncompleteRevision: sourceIncomplete ? revision : 0,
@@ -1610,9 +1730,7 @@ async function saveGroupCode(env, accountId, groupCode) {
         return updated;
       });
       if (found) {
-        const data = await compactOverallSnapshot({...overall.data, entries, identityUpdatedAt: updatedAt});
-        if (plannerDocumentBytes(data) >= PLANNER_DOCUMENT_BUDGET) throw Error('OVERALL_DOCUMENT_CAP');
-        writes.push({collection: COLLECTIONS.overall, id: 'main', prior: overall, data});
+        writes.push(...await prepareOverallSnapshotDocuments(env,overall,{...overall.data,entries,identityUpdatedAt:updatedAt}));
       }
     }
     try {
@@ -1693,9 +1811,10 @@ async function processProfileJob(env, jobId, job, updateTime='') {
 export async function updateTrackIdentity(env, trackId, identity) {
   const prior = await readDocument(env, COLLECTIONS.track, trackId);
   const snapshot = prior?.data;
-  if (!trackSnapshotIsCurrent(snapshot, snapshot?.signature) || snapshot.complete !== true) {
+  if (!trackSnapshotIsCurrent(snapshot, snapshot?.signature) || (snapshot.complete !== true&&snapshot.sourceComplete!==true)) {
     return rebuildTrack(env, trackId, identity);
   }
+  if(snapshot.pagination)snapshot.entries=await loadPublicationEntries(snapshot,'track',trackId,(c,id)=>readDocument(env,c,id));
   const accountId = safeText(identity?.accountId, 128);
   if (!accountId) return { changed: false, entries: snapshot.entries, revision: Number(snapshot.revision || 0) };
   const index = snapshot.entries.findIndex((entry) => safeText(entry.accountId || entry.userId, 128) === accountId);
@@ -1877,6 +1996,7 @@ async function publicSnapshot(request, env, context, origin, collection, id) {
         if (publicSnapshotLoads.get(key) === load) publicSnapshotLoads.delete(key);
       };
       try {
+        if(collection===PUBLIC_PAGE_COLLECTION){const manifest=await readDocument(env,PUBLIC_MANIFEST_COLLECTION,id.replace(/_[0-9]+$/,'_0'));if(!manifest||Number(id.split('_').at(-1))>=manifest.data.pageCount){release();return json(origin,env,404,{error:'snapshot_not_ready'});}}
         const snapshot = await readDocument(env, collection, id);
         if (!snapshot) {
           const response = json(origin, env, 404, { error: 'snapshot_not_ready' }, 'public, max-age=10');
@@ -1890,6 +2010,7 @@ async function publicSnapshot(request, env, context, origin, collection, id) {
           }
           return response;
         }
+        if(collection===PUBLIC_PAGE_COLLECTION)snapshot.data=await decodePublicationPage(snapshot.data);
         const overallData = collection === COLLECTIONS.overall && id === 'main'
           ? await unpackOverallDetails(snapshot.data) : snapshot.data;
         const data = collection === COLLECTIONS.track && Array.isArray(overallData.entries)
@@ -2056,6 +2177,14 @@ async function handleRequestInternal(request, env, context = {}) {
     if (env.PB_NOTIFY_RATE_LIMITER && !(await env.PB_NOTIFY_RATE_LIMITER.limit({key: uid})).success) return json(origin, env, 429, {error: 'rate_limited', retryAfterSeconds: 60});
     return profileGroupCode(request, env, context, uid, null, true);
   }
+  if (request.method === 'GET' && ['/v1/snapshot/overall/page','/v1/snapshot/track/page'].includes(path)) {
+    const url = new URL(request.url), kind = path.includes('/track/')?'track':'overall';
+    const id = kind==='track' ? url.searchParams.get('trackId') : 'main';
+    const generation = url.searchParams.get('generation'), page = Number(url.searchParams.get('page'));
+    let pageId;
+    try {if(url.searchParams.get('page')===null)throw Error();pageId=publicationPageId(kind,id,generation,page);} catch {return json(origin,env,400,{error:'invalid_page'});}
+    return publicSnapshot(request,env,context,origin,PUBLIC_PAGE_COLLECTION,pageId);
+  }
   if (request.method === 'GET' && path === '/v1/snapshot/overall') {
     return publicSnapshot(request, env, context, origin, COLLECTIONS.overall, 'main');
   }
@@ -2159,6 +2288,7 @@ export default {
           try { if ((await migrateExtraVerificationQueues(env)).complete) break; }
           catch (error) { console.error('Extra queue recovery failed', String(error?.message || error)); break; }
         }
+        try{await migrateCapacityVerificationQueues(env);}catch(error){console.error('Capacity queue migration deferred',String(error?.message||error));}
         return;
       }
       if (_event.cron === '* * * * *') {
@@ -2173,11 +2303,18 @@ export default {
             if (!snapshot?.data?.entries?.length) return null;
             // Cached public labels can outlive a repin; require the exact current private proof.
             const queue = await readDocument(env, VERIFICATION_COLLECTION, trackId);
-            return verifiedTargetMs(snapshot.data.entries, queue?.data?.slots || {});
+            const slots={...queue?.data?.slots};
+            if(queue?.data?.storageVersion===2){
+              const candidates=snapshot.data.entries.filter(row=>row.runVerified===true&&row.integrityVerified===true).slice(0,8);
+              const ids=candidates.map(row=>verificationShardId(trackId,row.accountId||row.userId));
+              const shards=(await readDocumentsForCollections(env,[[VERIFICATION_COLLECTION,ids]])).get(VERIFICATION_COLLECTION);
+              for(const document of shards.values())Object.assign(slots,document.data.slots);
+            }
+            return verifiedTargetMs(snapshot.data.entries, slots);
           }
         });
       }
-      // Recovery worst case: bootstrap 7 + reconciliation 28 + overall 5 + cold auth 1 = 41 subrequests.
+      // Legacy recovery: bootstrap 7 + reconciliation 32 + overall 5 + cold auth 1 = 45 subrequests.
       // Optional maintenance stays in a separate cron invocation.
       const maintenance=_event.cron==='2-59/5 * * * *';
       const tasks=maintenance?[[processCosmeticJobs,processProfileJobs,resumeOrCreateMigration][Math.floor(Number(_event.scheduledTime||Date.now())/300000)%3]]:[bootstrapSnapshotVerification,reconcileCanonicalChanges];
@@ -2188,7 +2325,7 @@ export default {
             const scanResults = Number.isSafeInteger(scheduledAt) && scheduledAt >= 0
               && scheduledAt % RECONCILE_SCAN_INTERVAL_MS === 0;
             await task(env, {scanResults});
-          } else await task(env);
+          }else{const result=await task(env);if(result?.paged)return;}
         }
         catch (error) { console.error('Scheduled task failed', task.name, String(error?.message || error)); }
       }

@@ -158,6 +158,7 @@ function laneFixture({fullTracks = ['old-full-a', 'old-full-b'], targetedCount =
         verifierVersion: VERIFIER_VERSION, engineDigest: VERIFIER_ENGINE_DIGEST}}});
     }
     if (path.endsWith('/0.6.2_s1_release_meta/current')) return document({revision: 1, builtRevision: 1});
+    if(path.includes('/0.6.2_s1_worker_jobs/capacity_track_'))return null;
     assert.fail('Unexpected Firestore request: ' + path);
   }};
   return {env, now, fullQueries, targetBatches, published, get job() {return job;},

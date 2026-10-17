@@ -20,3 +20,10 @@ test('event totals uses one masked public fallback and preserves prior files on 
   const result=await capturePublicEventTotals({directory,fetchImpl:async()=>new Response('',{status:429})});
   assert.equal(result.deferred,true);assert.equal(await fs.readFile(path.join(directory,'event-totals.json'),'utf8'),before);
 });
+
+test('event totals retain sanitized public appearance without leaking private profile fields',()=>{
+ const row=publicEventTotals({updatedAt:1,entries:[{accountId:'a'.repeat(64),name:'Racer',rank:7,rp:50,events:2,carStyle:'public-style',profileCosmetics:{theme:'cyan',ownerUid:'private'},badges:{betaTester:true,secret:true},ownerUid:'private',replay:'private'}]}).entries[0];
+ assert.equal(row.carStyle,'public-style');assert.deepEqual(row.profileCosmetics,{theme:'cyan'});
+ assert.deepEqual(row.badges,{betaTester:true});assert.equal(row.ownerUid,undefined);assert.equal(row.replay,undefined);
+ assert.deepEqual([row.rank,row.rp,row.events],[7,50,2]);
+});

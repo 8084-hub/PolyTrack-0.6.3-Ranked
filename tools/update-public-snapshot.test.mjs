@@ -146,3 +146,165 @@ test('deferred capture skips event totals and preserves the current pointer', as
   assert.equal(totalsCalls, 0);
   assert.equal(await readFile(path.join(root, 'snapshot-current.json')).then(() => true, () => false), false);
 });
+
+async function publishFixture(root, staging, overall) {
+  await mkdir(staging, { recursive: true });
+  await writeFile(path.join(staging, 'overall.json'), JSON.stringify(overall));
+  const { publishSnapshot } = await import('./snapshot-package.mjs');
+  return publishSnapshot({ root, stagingDirectory: staging });
+}
+
+test('rebases a retained A stage onto externally published B before bounded capture', async t => {
+  const root = await fixture(t);
+  const stage = path.join(root, 'local-reports', 'snapshot-staging');
+  const publishedA = await publishFixture(root, stage, { generationData: 'A', entries: [] });
+  await writeFile(path.join(root, 'local-reports', 'snapshot-staging-base.json'), JSON.stringify({ schemaVersion: 1, generation: publishedA.generation }));
+  await writeFile(path.join(stage, 'user-result.json'), JSON.stringify({ retained: true }));
+  await writeFile(path.join(stage, 'export-progress.json'), JSON.stringify({ fullSnapshotPending: true, raceExport: { pending: ['same-replay'] } }));
+
+  const newer = path.join(root, 'external-stage');
+  const publishedB = await publishFixture(root, newer, { generationData: 'B', entries: [] });
+  assert.equal(publishedB.generation, publishedA.generation + 1);
+
+  let observed;
+  let exportedProgress;
+  let exportOptions;
+  const result = await updatePublicSnapshot({ root,
+    capture: async ({ directory }) => {
+      observed = JSON.parse(await readFile(path.join(directory, 'overall.json'), 'utf8'));
+      assert.equal(JSON.parse(await readFile(path.join(directory, 'user-result.json'), 'utf8')).retained, true);
+      return {};
+    },
+    exportPublic: async options => {
+      exportOptions = options;
+      const { directory } = options;
+      exportedProgress = JSON.parse(await readFile(path.join(directory, 'export-progress.json'), 'utf8'));
+      return { complete: false, coverage: { complete: false }, counts: {} };
+    },
+    refreshReplays: true, log: () => {},
+  });
+
+  assert.equal(observed.generationData, 'B');
+  assert.equal(exportedProgress.fullSnapshotPending, true);
+  assert.equal(exportOptions.maxDocuments, 100);
+  const archiveNames = await readdir(path.join(root, 'local-reports', 'snapshot-history'));
+  const archivedStage = archiveNames.find(name => name.startsWith(`staging-public-snapshots${publishedA.generation}-before-public-snapshots${publishedB.generation}-`));
+  assert.ok(archivedStage);
+  const archived = path.join(root, 'local-reports', 'snapshot-history', archivedStage);
+  assert.equal(JSON.parse(await readFile(path.join(archived, 'overall.json'), 'utf8')).generationData, 'A');
+  assert.equal(JSON.parse(await readFile(path.join(archived, 'export-progress.json'), 'utf8')).fullSnapshotPending, true);
+  assert.ok(await readFile(path.join(archived, 'snapshot-rebase.json'), 'utf8'));
+
+  const index = JSON.parse(await readFile(path.join(root, result.directory, 'index.json'), 'utf8'));
+  const overall = await readFile(path.join(root, result.directory, index.files['overall.json'].path));
+  assert.equal(JSON.parse(Buffer.from(await decodeSnapshot(overall)).toString('utf8')).generationData, 'B');
+  const userResult = await readFile(path.join(root, result.directory, index.files['user-result.json'].path));
+  assert.deepEqual(JSON.parse(Buffer.from(await decodeSnapshot(userResult)).toString('utf8')), { retained: true });
+});
+
+test('current generation base keeps the stage and its resumable export checkpoint', async t => {
+  const root = await fixture(t);
+  const stage = path.join(root, 'local-reports', 'snapshot-staging');
+  const published = await publishFixture(root, stage, { generationData: 'same', entries: [] });
+  await writeFile(path.join(stage, 'export-progress.json'), JSON.stringify({ fullSnapshotPending: true }));
+  await writeFile(path.join(root, 'local-reports', 'snapshot-staging-base.json'), JSON.stringify({ schemaVersion: 1, generation: published.generation }));
+  let fullSnapshot;
+  await updatePublicSnapshot({ root, fullPublic: true, capture: async () => ({}),
+    exportPublic: async options => { fullSnapshot = options.fullSnapshot; return { complete: false, coverage: { complete: false }, counts: {} }; }, log: () => {} });
+  assert.equal(fullSnapshot, false);
+  const history = await readdir(path.join(root, 'local-reports', 'snapshot-history')).catch(() => []);
+  assert.equal(history.some(name => name.startsWith('staging-')), false);
+});
+
+test('invalid current baseline leaves the retained stage untouched and skips capture', async t => {
+  const root = await fixture(t);
+  const stage = path.join(root, 'local-reports', 'snapshot-staging');
+  await writeFile(path.join(stage, 'overall.json'), '{"generationData":"A"}');
+  await writeFile(path.join(root, 'snapshot-current.json'), JSON.stringify({ currentdir: 'public-snapshots2' }));
+  await mkdir(path.join(root, 'public-snapshots2'));
+  await writeFile(path.join(root, 'public-snapshots2', 'index.json'), JSON.stringify({ schemaVersion: 1, generation: 1, encoding: 'gzip-xor-a7-v1', files: {} }));
+  let captureCalls = 0;
+  await assert.rejects(updatePublicSnapshot({ root, capture: async () => { captureCalls++; return {}; }, log: () => {} }), /Current snapshot index is invalid/);
+  assert.equal(captureCalls, 0);
+  assert.equal(JSON.parse(await readFile(path.join(stage, 'overall.json'), 'utf8')).generationData, 'A');
+  assert.deepEqual(JSON.parse(await readFile(path.join(root, 'snapshot-current.json'), 'utf8')), { currentdir: 'public-snapshots2' });
+});
+
+test('deferred capture after rebase keeps the new baseline, old stage, and checkpoint', async t => {
+  const root = await fixture(t);
+  const stage = path.join(root, 'local-reports', 'snapshot-staging');
+  const publishedA = await publishFixture(root, stage, { generationData: 'A', entries: [] });
+  await writeFile(path.join(root, 'local-reports', 'snapshot-staging-base.json'), JSON.stringify({ schemaVersion: 1, generation: publishedA.generation }));
+  await writeFile(path.join(stage, 'export-progress.json'), JSON.stringify({ checkpoint: 'keep' }));
+  const publishedB = await publishFixture(root, path.join(root, 'external-stage'), { generationData: 'B', entries: [] });
+
+  await assert.rejects(updatePublicSnapshot({ root, capture: async () => ({ deferred: true, reason: 'test budget' }), log: () => {} }), /Snapshot capture deferred/);
+  assert.deepEqual(JSON.parse(await readFile(path.join(root, 'snapshot-current.json'), 'utf8')), { currentdir: publishedB.directory });
+  assert.equal(JSON.parse(await readFile(path.join(stage, 'overall.json'), 'utf8')).generationData, 'B');
+  assert.equal(JSON.parse(await readFile(path.join(stage, 'export-progress.json'), 'utf8')).checkpoint, 'keep');
+  const archivedStages = (await readdir(path.join(root, 'local-reports', 'snapshot-history'))).filter(name => name.startsWith('staging-'));
+  assert.equal(archivedStages.length, 1);
+  assert.equal(JSON.parse(await readFile(path.join(root, 'local-reports', 'snapshot-history', archivedStages[0], 'overall.json'), 'utf8')).generationData, 'A');
+});
+
+test('fresh hydration reconstructs omitted track and overall monoliths from verified pages', async t => {
+  const root = await fixture(t);
+  const staging = path.join(root, 'local-reports', 'snapshot-staging');
+  const trackId = 'a'.repeat(64);
+  const accountId = number => number.toString(16).padStart(64, '0');
+  const track = { trackId, schemaVersion: 6, revision: 14, sourceRevision: 14, algorithmVersion: 'rank-v2',
+    complete: true, totalEntries: 260, entries: Array.from({ length: 260 }, (_, index) => ({ accountId: accountId(index + 1),
+      timeMs: 1000 + index, rank: index + 1, position: index + 1, name: 't'.repeat(9000) })) };
+  const overall = { schemaVersion: 6, revision: 24, sourceRevision: 24, updatedAt: 500, complete: true,
+    totalEntries: 260, trackSummaries: [{ trackId, fieldSize: 260 }], entries: Array.from({ length: 260 }, (_, index) =>
+      ({ userId: accountId(index + 1), rank: index + 1, score: 5000 - index, name: 'o'.repeat(9000) })) };
+  await mkdir(path.join(staging, 'tracks'), { recursive: true });
+  await writeFile(path.join(staging, 'tracks', `${trackId}.json`), JSON.stringify(track));
+  await writeFile(path.join(staging, 'overall.json'), JSON.stringify(overall));
+  await writeFile(path.join(staging, 'manifest.json'), JSON.stringify({ schemaVersion: 1, tracks: { [trackId]: { checkedAt: '2026-10-12T00:00:00.000Z' } } }));
+  await writeFile(path.join(staging, 'public-export-summary.json'), JSON.stringify({ capturedAt: '2026-10-13T00:00:00.000Z' }));
+  const { publishSnapshot } = await import('./snapshot-package.mjs');
+  const initial = await publishSnapshot({ root, stagingDirectory: staging });
+  const index = JSON.parse(await readFile(path.join(root, initial.directory, 'index.json'), 'utf8'));
+  assert.equal(index.files[`tracks/${trackId}.json`], undefined);
+  assert.equal(index.files['overall.json'], undefined);
+
+  await rm(staging, { recursive: true });
+  const result = await updatePublicSnapshot({ root, offline: true, log: () => {} });
+  const hydratedTrack = JSON.parse(await readFile(path.join(staging, 'tracks', `${trackId}.json`), 'utf8'));
+  const hydratedOverall = JSON.parse(await readFile(path.join(staging, 'overall.json'), 'utf8'));
+  assert.equal(hydratedTrack.entries.length, 260);
+  assert.equal(hydratedTrack.entries[259].rank, 260);
+  assert.equal(hydratedTrack.complete, true);
+  assert.equal(hydratedTrack._reconstructedFromPages, true);
+  assert.equal(hydratedOverall.entries.length, 260);
+  assert.equal(hydratedOverall.entries[259].rank, 260);
+  assert.equal(hydratedOverall.trackSummaries[0].fieldSize, 260);
+  assert.equal(hydratedOverall.capturedAt, '2026-10-13T00:00:00.000Z');
+  assert.equal(hydratedOverall._reconstructedFromPages, true);
+  assert.equal(result.generation, initial.generation + 1);
+});
+
+test('corrupt page payload safely aborts fresh hydration without creating a partial stage', async t => {
+  const root = await fixture(t);
+  const staging = path.join(root, 'local-reports', 'snapshot-staging');
+  const trackId = 'b'.repeat(64);
+  const entries = Array.from({ length: 260 }, (_, index) => ({ accountId: (index + 1).toString(16).padStart(64, '0'),
+    timeMs: 1000 + index, rank: index + 1, name: 'x'.repeat(9000) }));
+  await mkdir(path.join(staging, 'tracks'), { recursive: true });
+  await writeFile(path.join(staging, 'tracks', `${trackId}.json`), JSON.stringify({ trackId, entries, complete: true, totalEntries: entries.length }));
+  const { publishSnapshot } = await import('./snapshot-package.mjs');
+  const published = await publishSnapshot({ root, stagingDirectory: staging });
+  await rm(staging, { recursive: true });
+  const indexPath = path.join(root, published.directory, 'index.json');
+  const index = JSON.parse(await readFile(indexPath, 'utf8'));
+  const pageRecord = index.files[`track-pages/${trackId}/2.json`];
+  const pagePath = path.join(root, published.directory, pageRecord.path);
+  const bytes = await readFile(pagePath);
+  bytes[0] ^= 0xff;
+  await writeFile(pagePath, bytes);
+
+  await assert.rejects(updatePublicSnapshot({ root, offline: true, log: () => {} }), /Snapshot payload hash mismatch: track-pages/);
+  assert.equal(await readFile(staging).then(() => true, () => false), false);
+  assert.deepEqual(JSON.parse(await readFile(path.join(root, 'snapshot-current.json'), 'utf8')), { currentdir: published.directory });
+});

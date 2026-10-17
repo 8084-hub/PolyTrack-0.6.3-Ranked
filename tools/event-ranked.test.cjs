@@ -3,8 +3,8 @@ const source=fs.readFileSync(path.join(__dirname,'..','polytrack_062_patch.js'),
 function extract(name){const start=source.search(new RegExp('^  (?:async )?function '+name+'\\(','m'));assert(start>=0,name);const tail=source.slice(start),end=tail.indexOf('\n  }');assert(end>0,name);return tail.slice(0,end+4);}
 function setup(saved=null){
  const elements=new Map(),ctx={console,Date,Map,Set,Number,Promise,overallCategory:'events',overallPage:0,OVERALL_PAGE_SIZE:15,overallEntriesCache:[],rankedFilterResult:null,eventTotalsSnapshot:null,eventTotalsRequest:null,eventTotalsState:{status:'idle',checkedAt:0},EVENT_TOTALS_CACHE_KEY:'test',readJsonStorage:()=>saved,writeJsonStorage:(_k,v)=>{saved=v;},readPublicSnapshotBackup:async()=>null,snapshotOnlyForNewAccount:()=>false,profileSnapshotResults:new Map(),loadProfileSnapshotResults:async()=>false,warmProfileLocalPlacements:async()=>false,localPlannerProfileEntry:()=>null,cleanUserId:x=>String(x),withTimeout:p=>p,renderEntries:()=>{},updateRankedFreshness:()=>{},eventCloudRead:async()=>({entries:[],updatedAt:1}),document:{getElementById:id=>elements.get(id),querySelector:()=>null,querySelectorAll:()=>[]},window:{},syncCategorySelect:()=>{},hydrateOverallCarModels:()=>{},escapeHtml:s=>String(s).replaceAll('<','&lt;').replaceAll('"','&quot;'),safeDisplayName:x=>x,formatRp:String,formatRaceTime:value=>`${value}ms`,durationLabel:value=>`${value}ms`,activeRankedAccountId:()=>'',racerCosmeticClasses:()=>'',carModelPreview:()=>'',countryFlagMarkup:()=>'',profileBadgeMarkup:()=>'',ageLabel:String};
- ctx.syncRankedFilterRowsSafely=()=>null;ctx.applyPersonalFilters=rows=>({rows,active:false});ctx.personalFilterRuntime=null;ctx.rankedFilterSnapshotMeta={complete:false};
- vm.createContext(ctx);for(const name of ['normalizeEventTotals','savedEventTotals','fetchEventTotals','sortedEventEntries','renderEventEntryRow','renderEventEntries','updateEventFreshness','sortedOverallEntries','currentLeaderboardCount','updateOverallPager','changeOverallPage'])vm.runInContext(extract(name),ctx);
+ ctx.sanitizeProfileCosmetics=value=>({...value});ctx.rankedIdentityForRacer=event=>({...event,...ctx.overallEntriesCache.find(row=>(row.userId||row.accountId)===event.accountId)});ctx.syncRankedFilterRowsSafely=()=>null;ctx.applyPersonalFilters=rows=>({rows,active:false});ctx.personalFilterRuntime=null;ctx.rankedFilterSnapshotMeta={complete:false};
+ vm.createContext(ctx);for(const name of ['eventIdentityPresentation','normalizeEventTotals','savedEventTotals','fetchEventTotals','sortedEventEntries','renderEventEntryRow','renderEventEntries','updateEventFreshness','sortedOverallEntries','currentLeaderboardCount','updateOverallPager','changeOverallPage'])vm.runInContext(extract(name),ctx);
  return {ctx,elements,getSaved:()=>saved};
 }
 const row=(id='a',rp=20,rank=1)=>({accountId:id,name:'Event Racer',rp,rank,events:2});
@@ -118,4 +118,20 @@ test('shared live Event RP responses retain their actual check time',async()=>{
  await ctx.fetchEventTotals(true);assert.equal(ctx.eventTotalsSnapshot.lastLiveCheckedAt,200);assert.equal(ctx.eventTotalsState.status,'cloud');
  ctx.eventCloudRead=async()=>({updatedAt:5,entries:[row()],_eventLiveCheckedAt:200,_eventRefreshFailed:true});
  await ctx.fetchEventTotals(true);assert.equal(ctx.eventTotalsSnapshot.lastLiveCheckedAt,200);assert.equal(ctx.eventTotalsState.status,'stale');
+});
+
+test('Event RP preserves its score and rank while joining appearance outside the Overall prefix',()=>{
+ const {ctx}=setup({updatedAt:5,entries:[row('event-only',500,7)]});
+ ctx.rankedIdentityForRacer=()=>({userId:'event-only',name:'Directory name',carStyle:'safe-car',profileCosmetics:{theme:'ocean'},rank:501,rp:1,events:1,raceCount:12,cosmeticContext:{rank:501,raceCount:12}});
+ const [result]=ctx.sortedEventEntries();assert.equal(result.rank,7);assert.equal(result.rp,500);assert.equal(result.events,2);
+ assert.equal(result.carStyle,'safe-car');assert.equal(result.name,'Directory name');assert.equal(result.profileCosmetics.theme,'ocean');assert.equal(result.cosmeticContext.rank,501);
+});
+test('Event RP normalization retains public presentation and drops private fields',()=>{
+ const {ctx}=setup();const input={...row(),carStyle:'saved-car',carColors:'aabbcc',identityUpdatedAt:123,profileCosmetics:{theme:'ice'},ownerUid:'private',replay:'private'};
+ const result=ctx.normalizeEventTotals({updatedAt:3,entries:[input]}).entries[0];
+ assert.equal(result.carStyle,'saved-car');assert.equal(result.identityUpdatedAt,123);assert.equal(result.ownerUid,undefined);assert.equal(result.replay,undefined);
+});
+test('Event RP omits redundant summary and uses the middle for event information',()=>{
+ const {ctx}=setup({updatedAt:5,entries:[row('a',100,1)]});ctx.updateOverallPager=()=>{};
+ const list={innerHTML:'',scrollTop:0};ctx.renderEventEntries(list);assert.doesNotMatch(list.innerHTML,/event-rp-summary/);assert.match(list.innerHTML,/Average 50 ERP per event/);
 });

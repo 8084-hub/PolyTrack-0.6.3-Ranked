@@ -137,3 +137,8 @@ test('Racer Studio tab and Name choice labels allow responsive wrapping',()=>{
   assert.match(patchSource,/\.studio-panel\[data-studio-panel="name"\] \.profile-cosmetic-choice>b\{[^}]*overflow-wrap:break-word/s);
   assert.match(patchSource,/@media\(max-width:600px\)\{\.studio-panel\[data-studio-panel="name"\] \.profile-cosmetic-group>div\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)!important\}/);
 });
+
+test('Overall normalization retains every public racer beyond the former 200-row preview',()=>{
+ const entries=Array.from({length:531},(_,i)=>({userId:'racer-'+i,name:'Racer',rank:i+1,score:100+i,raceCount:8}));
+ const normalized=normalize(entries);assert.equal(normalized.length,531);assert.equal(normalized.at(-1).userId,'racer-530');
+});

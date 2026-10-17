@@ -1,3 +1,4 @@
+import {queueDocumentId} from '../../workers/ranked/src/verification-shards.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import {similarityEvidence,verifiedControlProof} from './similarity.mjs';
@@ -160,18 +161,18 @@ export async function selectJobs(db, docs, now = Date.now(), {jobLimit = NORMAL_
     const frames=legacyTimingFrames(canonical.data);
     const timeMs=frames??canonical.data.timeMs;
     const verifiedControlReferences=context.controlReferences.filter(reference=>reference.accountId!==slot.accountId&&reference.timeMs===timeMs);
-    jobs.push({...canonical.data,resultId:slot.resultId,queueKey:updated.key,queueCollection,timeMs,verifiedControlReferences,
+    jobs.push({...canonical.data,resultId:slot.resultId,queueKey:updated.key,queueCollection,queueId:queueDocumentId(doc),timeMs,verifiedControlReferences,
       correctionCandidate:frames===null?null:{frames,originalTimeMs:canonical.data.timeMs}});
   }
   for(const context of contexts){
     if(!context.attempts&&context.due.length||!context.changed&&jobs.some(job=>job.trackId===context.doc.data.trackId))continue;
     const {doc}=context,queueCollection=doc.queueCollection||verificationCollectionForTrack(doc.data.trackId);
-    try{await db.call(':commit',{writes:[db.write(queueCollection,doc.data.trackId,{...doc.data,...queueState(context.slots,now)},doc)]});}
+    try{await db.call(':commit',{writes:[db.write(queueCollection,queueDocumentId(doc),{...doc.data,...queueState(context.slots,now)},doc)]});}
     catch(error){if(!isConflict(error))throw error;selectionConflicts++;jobs=jobs.filter(job=>job.trackId!==doc.data.trackId);}
   }
   const selected=orderSelectedJobsFastestFirst(jobs);
   for(const job of selected){
-    const context=contexts.find(candidate=>candidate.doc.data.trackId===job.trackId&&
+    const context=contexts.find(candidate=>queueDocumentId(candidate.doc)===job.queueId&&candidate.doc.data.trackId===job.trackId&&
       (candidate.doc.queueCollection||verificationCollectionForTrack(candidate.doc.data.trackId))===job.queueCollection);
     if(!context?.changed&&typeof context?.doc.updateTime==='string'&&context.doc.updateTime){
       selectionQueuePreimages.set(job,context.doc);
@@ -206,7 +207,8 @@ export async function publishResults(db, jobs, results, {allowExtendedLocal = fa
     if (!job) throw Error('Verifier returned unknown job');
     const queueCollection = job.queueCollection || verificationCollectionForTrack(job.trackId);
     if (![VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION].includes(queueCollection)) throw Error('Invalid verification queue collection');
-    const queueCacheKey = queueCollection + '/' + job.trackId;
+    const queueId = job.queueId || job.trackId;
+    const queueCacheKey = queueCollection + '/' + queueId;
     const selectedPreimage=selectionQueuePreimages.get(job);
     selectionQueuePreimages.delete(job);
     const canUseSelectedPreimage=!acquiredQueueKeys.has(queueCacheKey)&&Boolean(selectedPreimage?.updateTime);
@@ -214,7 +216,7 @@ export async function publishResults(db, jobs, results, {allowExtendedLocal = fa
     for (let attempt = 0; attempt < 3; attempt++) {
       let queue=queueCache.get(queueCacheKey);
       if(!queueCache.has(queueCacheKey)||result.status==='unavailable'){
-        queue=result.status!=='unavailable'&&attempt===0&&canUseSelectedPreimage?selectedPreimage:await db.get(queueCollection,job.trackId);
+        queue=result.status!=='unavailable'&&attempt===0&&canUseSelectedPreimage?selectedPreimage:await db.get(queueCollection,queueId);
         queueCache.set(queueCacheKey, queue);
       }
       const current = await db.get('0.6.2_race_results', job.resultId);
@@ -299,7 +301,7 @@ export async function publishResults(db, jobs, results, {allowExtendedLocal = fa
       const nextQueueData = {...queue.data, ...queueState(slots)};
       const nextStateData = {...state?.data, pendingTrackIds, pendingResultIds, pendingFullRebuildTrackIds, forceFullRebuildAll};
       const writes = [
-        db.write(queueCollection, job.trackId, nextQueueData, queue),
+        db.write(queueCollection, queueId, nextQueueData, queue),
         db.write('0.6.2_s1_worker_jobs', 'canonical_reconcile_v2', nextStateData, state),
         db.write('0.6.2_s1_verification_audit', auditId, {resultId: job.resultId,
           accountId: job.accountId, trackId: job.trackId, key: publishedKey, ...slots[job.accountId],

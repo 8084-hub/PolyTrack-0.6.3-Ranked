@@ -31,6 +31,9 @@ jobs:
       - name: Check Extra catalog, registry, and pins
         # Local consistency check; fail before fetching or writing public captures.
         run: node tools/extra-verification-check.mjs
+      - name: Test snapshot integrity and resumable capture
+        # Offline safeguards run before any production reads.
+        run: node --test tools/public-snapshot-backup.test.mjs tools/published-snapshot-pages.test.mjs tools/snapshot-package.test.mjs tools/public-snapshot-client.test.mjs tools/track-snapshot-paging.test.mjs tools/update-public-snapshot.test.mjs
       - name: Capture public event assignments
         run: node tools/sync-event-catalog.mjs
       - name: Capture bounded public snapshots

@@ -397,6 +397,49 @@ test('packed snapshots reject bad checksums, traversal and dishonest decompresse
   }
 });
 
+function ordinalTrackPage(ranks,{offset=0,sourceComplete=true,totalEntries=offset+ranks.length,publishedEntries=totalEntries}={}){
+  const trackId='a'.repeat(64),pageNumber=offset/100+1;
+  return {kind:'track-page',trackId,pagingVersion:1,schemaVersion:6,updatedAt:4,pageSize:100,
+    sourceComplete,totalEntries,totalEntriesExact:true,publishedEntries,ranksExact:true,capturedAt:null,
+    complete:sourceComplete&&ranks.length===totalEntries,pageCount:Math.ceil(publishedEntries/100),pageNumber,offset,count:ranks.length,
+    bounds:{pageNumber,offset,count:ranks.length,startPosition:offset+1,endPosition:offset+ranks.length,
+      minTimeMs:1000,maxTimeMs:1000,firstRank:ranks[0],lastRank:ranks.at(-1)},
+    entries:ranks.map(rank=>({accountId:rank.toString(16).padStart(64,'0'),timeMs:1000,rank,globalRank:rank,position:rank}))};
+}
+
+test('normal-track reader accepts equal-time ordinal ranks without resetting a later page',async()=>{
+  for(const value of [ordinalTrackPage([1,2,3]),ordinalTrackPage([101,102,103],{offset:100})]){
+    const read=createPublicSnapshotReader({baseUrl:'https://example.test/',fetchImpl:async()=>Response.json(value)});
+    const result=await read('track-page',value.trackId,value.pageNumber);
+    assert.ok(result);
+    assert.deepEqual(result.entries.map(row=>row.rank),value.entries.map(row=>row.rank));
+    assert.deepEqual(result.entries.map(row=>row.globalRank),value.entries.map(row=>row.rank));
+  }
+  for(const ranks of [[101,101,103],[100,101,102]]){
+    const value=ordinalTrackPage(ranks,{offset:100});
+    const read=createPublicSnapshotReader({baseUrl:'https://example.test/',fetchImpl:async()=>Response.json(value)});
+    assert.equal(await read('track-page',value.trackId,2),null,'complete pages must use full-field ordinal ranks');
+  }
+});
+
+test('partial exact track ranks need monotonic ordinals, not equal-time competition ties',async()=>{
+  for(const ranks of [[77,78,79],[77,80,90],[77,77,79],[77,79,78]]){
+    const value=ordinalTrackPage(ranks,{sourceComplete:false,totalEntries:200,publishedEntries:3});
+    const read=createPublicSnapshotReader({baseUrl:'https://example.test/',fetchImpl:async()=>Response.json(value)});
+    const result=await read('track-page',value.trackId,1);
+    if(ranks[0]<ranks[1]&&ranks[1]<ranks[2]){
+      assert.ok(result);assert.equal(result.sourceComplete,false);
+      assert.deepEqual(result.entries.map(row=>row.rank),ranks);
+    }else assert.equal(result,null);
+  }
+});
+
+test('Event reader retains source competition ties independently of normal-track ordinal policy',async()=>{
+  const value={id:'d_test',updatedAt:4,entries:[1,1,3].map((rank,index)=>({accountId:String(index+1),timeMs:index<2?1000:2000,rank}))};
+  const read=createPublicSnapshotReader({baseUrl:'https://example.test/',fetchImpl:async()=>Response.json(value)});
+  assert.deepEqual((await read('event','d_test')).entries.map(row=>row.rank),[1,1,3]);
+});
+
 test('packed public profiles and recordings enforce identity and payload shape',async()=>{
   const id='a'.repeat(64),profile=await packedFixture({updatedAt:1,accountId:id,name:'Racer'},`profiles/${id}.json`);
   assert.equal((await profile.read('profile',id)).name,'Racer');
@@ -473,15 +516,80 @@ test('HTTP 429 and 5xx failures retry only after the short cooldown',async()=>{
   }
 });
 
-test('packed checksum corruption keeps the long cooldown',async()=>{
-  const value={updatedAt:4,entries:[]},entry=await packedEntry(value);entry.record.sha256='0'.repeat(64);
-  let now=0,calls=0;
-  const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/public-snapshots1/',now:()=>now,fetchImpl:async url=>{
-    calls++;return String(url).endsWith('index.json')?packedIndex(entry.record):new Response(entry.bytes);
+test('packed checksum failure retries once with reload and shares successful recovery',async()=>{
+  const entry=await packedEntry({updatedAt:4,entries:[]}),poison=Uint8Array.from(entry.bytes);
+  poison[0]^=1;
+  const requests=[];let payloadReads=0;
+  const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/public-snapshots1/',fetchImpl:async(url,options)=>{
+    const asset=new URL(url).pathname.split('/').at(-1);requests.push({asset,cache:options.cache,credentials:options.credentials});
+    if(asset==='index.json')return packedIndex(entry.record);
+    assert.equal(asset,entry.record.path);
+    return new Response(++payloadReads===1?poison:entry.bytes);
   }});
-  assert.equal(await read('overall'),null);assert.equal(calls,2);
-  now=30_000;assert.equal(await read('overall'),null);assert.equal(calls,2);
-  now=15*60_000;assert.equal(await read('overall'),null);assert.equal(calls,3);
+  const values=await Promise.all(Array.from({length:20},()=>read('overall')));
+  assert.ok(values.every(value=>value?.updatedAt===4));
+  assert.ok(values.every(value=>value===values[0]),'concurrent callers share the verified result');
+  assert.deepEqual(requests,[
+    {asset:'index.json',cache:'default',credentials:'omit'},
+    {asset:entry.record.path,cache:'force-cache',credentials:'omit'},
+    {asset:entry.record.path,cache:'reload',credentials:'omit'}
+  ]);
+  assert.equal((await read('overall'))._dataSource,'cached');assert.equal(requests.length,3);
+});
+
+test('repeated packed checksum poison has bounded reload attempts and a shared short cooldown',async()=>{
+  const entry=await packedEntry({updatedAt:4,entries:[]}),poison=Uint8Array.from(entry.bytes);
+  poison[0]^=1;
+  let now=0,poisoned=true;const requests=[];
+  const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/public-snapshots1/',now:()=>now,fetchImpl:async(url,options)=>{
+    const asset=new URL(url).pathname.split('/').at(-1);requests.push({asset,cache:options.cache});
+    if(asset==='index.json')return packedIndex(entry.record);
+    assert.equal(asset,entry.record.path);
+    return new Response(poisoned?poison:entry.bytes);
+  }});
+  const batch=()=>Promise.all(Array.from({length:20},()=>read('overall')));
+  assert.ok((await batch()).every(value=>value===null));
+  assert.deepEqual(requests.map(request=>request.cache),['default','force-cache','reload']);
+  assert.ok((await batch()).every(value=>value===null));assert.equal(requests.length,3);
+  now=29_999;assert.equal(await read('overall'),null);assert.equal(requests.length,3);
+  now=30_000;
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(requests.length,3,'no background polling');
+  assert.ok((await batch()).every(value=>value===null));
+  assert.equal(requests.length,4,'a known poisoned URL receives one explicit retry, not another immediate pair');
+  assert.equal(requests.at(-1).cache,'reload');
+  now=59_999;assert.equal(await read('overall'),null);assert.equal(requests.length,4);
+  poisoned=false;now=60_000;
+  assert.ok((await batch()).every(value=>value?.updatedAt===4));
+  assert.equal(requests.length,5);assert.equal(requests.at(-1).cache,'reload');
+  assert.equal(requests.filter(request=>request.asset==='index.json').length,1);
+  assert.equal((await read('overall'))._dataSource,'cached');assert.equal(requests.length,5);
+});
+
+test('checksummed structural invalidity is not retried or treated as cache poison',async()=>{
+  const id='a'.repeat(64),other='b'.repeat(64);
+  const fixtures=[
+    {kind:'overall',logical:'overall.json',value:{updatedAt:'invalid',entries:[]}},
+    {kind:'profile',id,logical:`profiles/${id}.json`,value:{updatedAt:4,accountId:other}},
+    {kind:'racer-directory',logical:'racer-directory.json',value:{updatedAt:4,entries:{[id]:{updatedAt:4,name:'Racer',ownerUid:'private'}}}}
+  ];
+  for(const fixture of fixtures){
+    const entry=await packedEntry(fixture.value);let now=0;const requests=[];
+    const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/public-snapshots1/',now:()=>now,fetchImpl:async(url,options)=>{
+      const asset=new URL(url).pathname.split('/').at(-1);requests.push({asset,cache:options.cache});
+      if(asset==='index.json')return Response.json({schemaVersion:1,encoding:'gzip-xor-a7-v1',files:{[fixture.logical]:entry.record}});
+      assert.equal(asset,entry.record.path);return new Response(entry.bytes);
+    }});
+    const batch=()=>Promise.all(Array.from({length:20},()=>read(fixture.kind,fixture.id)));
+    assert.ok((await batch()).every(value=>value===null));
+    assert.deepEqual(requests.map(request=>request.cache),['default','force-cache']);
+    assert.ok((await batch()).every(value=>value===null));assert.equal(requests.length,2);
+    for(const time of [30_000,15*60_000-1]){
+      now=time;assert.equal(await read(fixture.kind,fixture.id),null);assert.equal(requests.length,2);
+    }
+    now=15*60_000;assert.ok((await batch()).every(value=>value===null));
+    assert.equal(requests.length,3,'only a later explicit read retries structurally invalid data');
+    assert.equal(requests.at(-1).cache,'force-cache','structural rejection must not trigger integrity reloads');
+  }
 });
 test('mismatched track backup is rejected',async()=>{
   const read=createPublicSnapshotReader({baseUrl:'https://example.test/public-snapshots/',fetchImpl:async()=>new Response(JSON.stringify({trackId:'b'.repeat(64),updatedAt:1}),{headers:{'content-type':'application/json'}})});

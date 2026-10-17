@@ -325,3 +325,11 @@ test('package revision detects a newer board even with a tied timestamp, without
  assert.equal(context.trackSnapshotMetadataIsNewer('track',{serverUpdatedAt:500,revision:2}),true);
  assert.equal(context.trackSnapshotMetadataIsNewer('track',{serverUpdatedAt:400,revision:4}),false);
 });
+
+test('a complete package hydrates a same-revision truncated cache without a timestamp bump',()=>{
+ const context=vm.createContext({snapshotTrackStatistics:{track:{complete:true,totalEntries:650,updatedAt:500,revision:3}}});
+ vm.runInContext(section('  function trackSnapshotMetadataIsNewer(', '  async function loadTrackEntries('),context);
+ assert.equal(context.trackSnapshotMetadataIsNewer('track',{complete:false,entries:Array(500),serverUpdatedAt:500,revision:3}),true);
+ assert.equal(context.trackSnapshotMetadataIsNewer('track',{complete:true,entries:Array(650),serverUpdatedAt:500,revision:3}),false);
+ assert.equal(context.trackSnapshotMetadataIsNewer('track',{complete:false,entries:Array(500),serverUpdatedAt:600,revision:4}),false);
+});

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {publicDisplayName} from './public-display-name.mjs';
+import {fileURLToPath} from 'node:url';
 
 const ID=/^[a-f0-9]{64}$/;
 const fields=['trackId','rank','position','fieldSize','weight','competition','timeMs','frames','raceTimeFrames','timingVersion','pbAt','createdAt','updatedAt','runVerified','verified','verifiedState','integrityVerified','uploadId','replayHash'];
@@ -64,6 +65,17 @@ export async function buildProfileSnapshotResults(directory){
       results.set(trackId,finish);
     }
   }
+  // Event-only racers need their public identity too, without counting event PBs as normal finishes.
+  for(const file of await names(path.join(directory,'events'))){
+    if(!/^[A-Za-z0-9_-]{1,64}\.json$/.test(file))continue;
+    const board=await optional(path.join(directory,'events',file));
+    for(const row of board?.entries||[]){
+      const id=row.accountId||row.userId;if(!ID.test(id||''))continue;
+      rememberIdentity(id,row,Number(row.runAt)||Number(row.pbAt)||0);ensure(id);
+    }
+  }
+  const extraCatalog=await optional(fileURLToPath(new URL('../extra-tracks/catalog.json',import.meta.url)));
+  const extraIds=new Set((Array.isArray(extraCatalog)?extraCatalog:extraCatalog?.tracks||[]).filter(row=>row.unranked!==true).map(row=>row.trackId));
   const output=path.join(directory,'profile-results');await fs.mkdir(output,{recursive:true});
   let resultCount=0;const cosmeticEntries={};let cosmeticUpdatedAt=0;
   for(const [accountId,results]of racers){
@@ -81,6 +93,15 @@ export async function buildProfileSnapshotResults(directory){
       for(const key of identityFields)if(Object.hasOwn(identity,key))publicProfile[key]=identity[key];
       publicProfile.identityUpdatedAt=identity.updatedAt;
     }
+    const eligible=finishes.filter(row=>row.runVerified===true&&row.integrityVerified===true&&row.fieldSize>=2);
+    const metric=(key,fallback=0)=>{const value=Number(publicStatus?.[key]??publicProfile?.[key]??fallback);return Number.isSafeInteger(value)&&value>=0?value:0;};
+    const cosmeticContext={rank:metric('rank'),raceCount:metric('raceCount',eligible.length),
+      pbCount:metric('pbCount'),totalPlaytimeMs:metric('totalPlaytimeMs'),
+      extraCount:metric('extraCount',eligible.filter(row=>extraIds.has(row.trackId)).length),
+      trackWins:metric('trackWins',eligible.filter(row=>row.rank===1&&row.fieldSize>=5).length),
+      ...((publicStatus?.badges??publicProfile?.badges)?.betaTester===true?{badges:{betaTester:true}}:{}),
+      ...(Array.isArray(publicStatus?.cosmeticUnlocks??publicProfile?.cosmeticUnlocks)?{cosmeticUnlocks:(publicStatus?.cosmeticUnlocks??publicProfile?.cosmeticUnlocks).filter(id=>typeof id==='string'&&/^[A-Za-z][A-Za-z0-9_-]{0,63}:[A-Za-z0-9_-]{1,64}$/.test(id)).slice(0,32)}:{})};
+    if(identity)identities.set(accountId,{...identity,cosmeticContext});
     const value={accountId,updatedAt:Math.max(Number(overall?.updatedAt)||0,...finishes.map(row=>Number(row.cachedAt)||0)),
       capturedAt:summary?.capturedAt||null,results:finishes,expectedEligibleTracks:Number(published.get(accountId)?.raceCount)||0,
       coverage:{boardsPresent:boards,boardsKnown:Number(manifest?.trackIdsKnown)||boards,allTracksCaptured:boards>=Number(manifest?.trackIdsKnown||Infinity)},
@@ -92,6 +113,14 @@ export async function buildProfileSnapshotResults(directory){
   const cosmetics=JSON.stringify({updatedAt:cosmeticUpdatedAt,entries:cosmeticEntries})+'\n';
   if(Buffer.byteLength(cosmetics)>2*1024*1024)throw Error('Snapshot cosmetic directory exceeds client limit');
   await fs.writeFile(path.join(directory,'cosmetic-directory.json'),cosmetics);
+  const totalsPath=path.join(directory,'event-totals.json'),totals=await optional(totalsPath);
+  if(totals&&Array.isArray(totals.entries)){
+    const enriched={...totals,entries:totals.entries.map(row=>{
+      const identity=identities.get(row.accountId||row.userId);if(!identity)return row;
+      return {...row,...Object.fromEntries(identityFields.filter(key=>Object.hasOwn(identity,key)).map(key=>[key,identity[key]])),identityUpdatedAt:identity.updatedAt};
+    })};
+    await fs.writeFile(totalsPath,JSON.stringify(enriched)+'\n');
+  }
   const racerDirectory=JSON.stringify({updatedAt:Math.max(0,...[...identities.values()].map(row=>row.updatedAt)),entries:Object.fromEntries(identities)})+'\n';
   if(Buffer.byteLength(racerDirectory)>2*1024*1024)throw Error('Snapshot racer directory exceeds client limit');
   await fs.writeFile(path.join(directory,'racer-directory.json'),racerDirectory);

@@ -1,3 +1,6 @@
+import {publicEventPage} from './event-public-projection.js';
+import {eventCapacityStorage,prepareEventRetention,eventRetentionPaths,EVENT_RETENTION_COLLECTION,EVENT_REVIEWED_MAX_ENTRANTS,EVENT_REVIEWED_MAX_SUBMISSIONS} from './event-capacity.js';
+import {PUBLIC_MANIFEST_COLLECTION,publicationManifestId,decodePublicationPage,PUBLIC_PAGE_COLLECTION,publicationPageId} from './paged-publication.js';
 import { compatibleEventEngine } from './event-engine-compatibility.js';
 import { canonicalPromotion } from './event-canonical.js';
 import { matchesClockRejection } from './event-clock-recovery.js';
@@ -66,14 +69,14 @@ async function sha256(value) {
 export function eventPeriod(input) {
   demand(input && typeof input === 'object', 'invalid_period');
   const c = input.capacity;
-  demand(c && ID.test(c.policyVersion) && int(c.entrants, 1, L.entrants) && int(c.admissionsPerPeriod, c.entrants, L.submissions) &&
+  demand(c && ID.test(c.policyVersion) && int(c.entrants, 1, eventCapacityStorage(input)===2?EVENT_REVIEWED_MAX_ENTRANTS:L.entrants) && int(c.admissionsPerPeriod, c.entrants, eventCapacityStorage(input)===2?EVENT_REVIEWED_MAX_SUBMISSIONS:L.submissions) &&
     int(c.replayBytesPerPeriod, 65536, L.replayBytesPerPeriod) && int(c.minIntervalMs, 1000, 60000) &&
     int(c.verificationsPerDay, 1, L.verificationsPerDay), 'reviewed_capacity_required');
   const kind = input.kind || 'custom';
   const scoringVersion = input.scoringVersion || (input.scoreVersion === EVENT_VERSION ? EVENT_SCORING_V1 :
     ['daily', 'weekly', 'kodub'].includes(kind) ? EVENT_SCORING_V2 : EVENT_SCORING_V1);
   demand([EVENT_SCORING_V1, EVENT_SCORING_V2].includes(scoringVersion), 'invalid_scoring_version');
-  const p = { id: id(input.id), enabled: input.enabled === true, trackId: hex(input.trackId), startsAt: input.startsAt,
+  const p = { ...(eventCapacityStorage(input)===2?{storageVersion:2}:{}),id: id(input.id), enabled: input.enabled === true, trackId: hex(input.trackId), startsAt: input.startsAt,
     endsAt: input.endsAt, graceMs: input.graceMs, targetMs: input.targetMs,
     maxRp: input.maxRp, kind, scoringVersion, engineDigest: VERIFIER_ENGINE_DIGEST, verifierVersion: VERIFIER_VERSION,
     scoreVersion: EVENT_VERSION, eligibility: input.eligibility, capacity: Object.freeze({ policyVersion: c.policyVersion, entrants: c.entrants,
@@ -105,6 +108,8 @@ function periodBinding(p) {
   // Scoring is a presentation/award policy; changing it must not invalidate
   // replay proofs or runs already bound to the immutable race parameters.
   delete normalized.scoringVersion;
+  delete normalized.storageVersion;
+  if(p.proofCapacity) normalized.capacity=p.proofCapacity;
   demand(p.scoreVersion === EVENT_VERSION && compatibleEventEngine(p.engineDigest) &&
     p.verifierVersion === VERIFIER_VERSION, 'event_version_unavailable', 503);
   return JSON.stringify(normalized);
@@ -220,6 +225,31 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
     demand(run && run.periodId === periodId && run.eventKey === binding(run), 'event_run_not_found', 404); return run;
   }
   const service = {
+    async upgradeCapacity(periodId, capacity) {
+      demand(capacity?.storageVersion===2,'reviewed_capacity_required');
+      return store.transaction(async tx=>{
+        const p=await readPeriod(tx,periodId);
+        demand(!p.archived&&stamp()<p.endsAt,'event_capacity_upgrade_closed',409);
+        const upgraded=eventPeriod({...p,storageVersion:2,capacity});
+        demand(upgraded.capacity.entrants>=p.capacity.entrants&&upgraded.capacity.admissionsPerPeriod>=p.capacity.admissionsPerPeriod,'event_capacity_cannot_shrink',409);
+        if(p.storageVersion===2&&JSON.stringify(p.capacity)===JSON.stringify(upgraded.capacity))return {upgraded:false,storageVersion:2,entrants:capacity.entrants};
+        const queuePath=path(C.queues,periodId),queue=await tx.get(queuePath);
+        const catalogPath=path(C.catalog,'main'),catalog=await tx.get(catalogPath);
+        const publicPath=path(C.public,'catalog');await tx.get(publicPath);
+        demand(queue&&catalog,'event_queue_unavailable',503);
+        const data={...p,...upgraded,proofCapacity:p.proofCapacity||p.capacity};
+        await tx.set(periodPath(periodId),data);
+        await tx.set(queuePath,{...queue,storageVersion:2,retentionCount:queue.retentionCount||0,retentionPages:queue.retentionPages||0});
+        const rows=catalog.periods.map(row=>row.id===periodId?{...row,entrantLimit:capacity.entrants}:row);
+        await tx.set(catalogPath,{...catalog,periods:rows});await tx.set(publicPath,publicEventCatalog(rows,stamp()));
+        return {upgraded:true,storageVersion:2,entrants:capacity.entrants};
+      });
+    },
+    async publicPage(kind,periodId,generation,page) {
+      demand(['event','event_totals'].includes(kind),'invalid_page');
+      let target;try{target=publicationPageId(kind,periodId,generation,page);}catch{throw new EventError('invalid_page');}
+      return store.transaction(async tx=>{const manifest=await tx.get(PUBLIC_MANIFEST_COLLECTION+'/'+publicationManifestId(kind,periodId,generation));demand(manifest&&page<manifest.pageCount,'snapshot_not_ready',404);const data=await tx.get(PUBLIC_PAGE_COLLECTION+'/'+target);demand(data,'snapshot_not_ready',404);return publicEventPage(await decodePublicationPage(data),kind);});
+    },
     // Server-only provisioning from an existing owner-protected profile. No public route.
     async bindOwner(ownerUid, accountId) {
       uid(ownerUid); hex(accountId);
@@ -244,7 +274,7 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
         demand(catalog.periods.length < L.catalogPeriods, 'event_retention_capacity', 429);
         demand(!catalog.periods.some(row => (row.kind || 'custom') === p.kind && p.startsAt < row.endsAt && p.endsAt > row.startsAt), 'period_overlap', 409);
         await tx.create(periodPath(p.id), p);
-        await tx.create(path(C.queues, p.id), { slots: [], runIds: [], subjects: [], admitted: 0, entrants: 0, replayBytes: 0 });
+        await tx.create(path(C.queues, p.id), { slots: [], runIds: [], subjects: [], admitted: 0, entrants: 0, replayBytes: 0,...(p.storageVersion===2?{storageVersion:2,retentionCount:0,retentionPages:0}:{}) });
         const rows = [...catalog.periods, { ...publicEventPeriod(p), enabled: p.enabled, archived: false }];
         await tx.set(catalogPath, { periods: rows });
         await tx.set(publicPath, publicEventCatalog(rows, stamp()));
@@ -359,6 +389,7 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
         demand(queue.replayBytes + replay.length <= p.capacity.replayBytesPerPeriod, 'event_replay_capacity', 429);
         demand(quota || queue.entrants < p.capacity.entrants, 'event_entrant_capacity', 429);
         const livePath = path(C.live, periodId), board = await tx.get(livePath);
+        const retention = p.storageVersion===2 ? await prepareEventRetention(tx,periodId,queue,runId,accountId,ownerHash,!quota) : null;
         const run = { runId, periodId, periodBinding: periodBinding(p), ownerUid, accountId, trackId, attemptId, sessionId,
           timeMs, frames: timeMs, replay, replayHash, carStyle, name: text(profile.name || profile.nickname, 24) || 'Racer',
           receivedAt, status: 'waiting', attempts: 0 };
@@ -370,10 +401,12 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
           timeMs, replayHash, replay, carStyle, periodBinding: run.periodBinding, submittedAt: receivedAt,
           verificationStatus: 'waiting', verified: false, eventRpEligible: false, eventRpAwarded: false });
         await tx.set(quotaPath, { ownerUid, accountId, count: (quota?.count || 0) + 1, lastAt: receivedAt });
-        await tx.set(queuePath, { ...queue, runIds: [...(queue.runIds || []), runId],
-          subjects: quota ? queue.subjects : [...(queue.subjects || []), { accountId, ownerHash }],
+        await tx.set(queuePath, { ...queue, runIds: retention ? queue.runIds||[] : [...(queue.runIds || []), runId],
+          subjects: retention ? queue.subjects||[] : quota ? queue.subjects : [...(queue.subjects || []), { accountId, ownerHash }],
+          ...(retention?{retentionCount:retention.retentionCount,retentionPages:retention.retentionPages}:{}),
           admitted: queue.admitted + 1, replayBytes: queue.replayBytes + replay.length, entrants: queue.entrants + (quota ? 0 : 1),
           slots: [...queue.slots, { runId, timeMs, previousTimeMs: eventPb?.timeMs ?? null, receivedAt, notBefore: receivedAt, attempts: 0, lease: null, leaseUntil: 0 }] });
+        if(retention)await tx.set(retention.target,retention.data);
         if (!receipt || timeMs < receipt.timeMs || clockRecovery) await tx.set(receiptPath,
           { ownerUid, accountId, periodId, attemptId, runId, timeMs, status: 'waiting', reason: '', updatedAt: stamp() });
         const pendingPlaybacks = upsertPlayback(board?.pendingPlaybacks || board?.playbacks, pendingPlaybackEntry(run), L.queued);
@@ -403,7 +436,7 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
       });
     },
     async totals() {
-      return await store.transaction(tx => tx.get(path(C.public, 'totals'))) || { entries: [], updatedAt: 0,complete:true,totalEntries:0 };
+      return await store.transaction(async tx=>await tx.get(path(C.public,'totals_full')) || await tx.get(path(C.public,'totals'))) || { entries: [], updatedAt: 0,complete:true,totalEntries:0 };
     },
     async ownReceipt(periodId, ownerUid, accountId) {
       uid(ownerUid); id(periodId); hex(accountId);
@@ -434,8 +467,9 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
           retained.replay.length <= L.replayCharacters && await hash(retained.replay) === retained.replayHash &&
           typeof retained.carStyle === 'string' && retained.carStyle.length <= 256 &&
           int(retained.verifiedAt, 1), 'event_replay_corrupt', 503);
-        demand(board && board.archived === !!archive && (board.entries || []).some(row =>
-          row.accountId === accountId && row.timeMs === retained.timeMs), 'event_replay_identity_mismatch', 503);
+        let published=(board?.entries||[]).some(row=>row.accountId===accountId&&row.timeMs===retained.timeMs);
+        if(!published&&board){const pb=await tx.get(path(C.pbs,periodId+'_'+accountId));published=pb?.timeMs===retained.timeMs&&pb.runId===retained.runId||!!archive&&board.sourceComplete===true&&!!board.pagination;}
+        demand(board&&board.archived===!!archive&&published,'event_replay_identity_mismatch',503);
         return { periodId, accountId, trackId: retained.trackId, runId: retained.runId,
           timeMs: retained.timeMs, frames: retained.timeMs, replayHash: retained.replayHash, replay: retained.replay,
           carStyle: retained.carStyle, verifiedAt: retained.verifiedAt, verificationStatus: 'verified', verified: true,
@@ -480,7 +514,7 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
       return store.transaction(async tx => {
         const history = await tx.get(path(C.history, id(periodId)));
         if (history?.archived === true) return { period: history.period, entries: history.entries,
-          pendingPlaybacks: [], racerCount: history.racerCount ?? history.entries?.length ?? 0,
+          ...(history.pagination?{pagination:history.pagination,sourceRevision:history.sourceRevision,sourceReadTime:history.sourceReadTime,sourceComplete:history.sourceComplete,totalEntries:history.totalEntries,complete:history.complete}:{}),pendingPlaybacks: [], racerCount: history.racerCount ?? history.entries?.length ?? 0,
           archived: true, updatedAt: history.archivedAt };
         const p = await readPeriod(tx, periodId), at = stamp();
         demand(at >= p.startsAt && at < p.endsAt + p.graceMs, 'event_not_public', 404);
@@ -488,6 +522,7 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
         const board = await tx.get(path(C.live, periodId));
         return { period: publicEventPeriod({ ...p, racerCount: board?.racerCount || 0 }), archived: false, updatedAt: board?.updatedAt || 0,
           racerCount: board?.racerCount || 0, pendingPlaybacks: visiblePendingPlaybacks(board?.pendingPlaybacks || board?.playbacks),
+          ...(board?.pagination?{pagination:board.pagination,sourceRevision:board.sourceRevision,sourceReadTime:board.sourceReadTime,sourceComplete:board.sourceComplete,totalEntries:board.totalEntries,complete:board.complete}:{}),
           state: at < p.endsAt ? 'open' : 'settling', entries: eventLeaderboard(p, board?.entries || []) };
       });
     },
@@ -607,7 +642,7 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
         const proof = { key: run.eventKey, verifierVersion: VERIFIER_VERSION, engineDigest: result.engineDigest || null,
           status: result.status, checkedAt: at, reason: text(result.reason, 100) };
         let entries;
-        if (eventImproved) entries = eventLeaderboard(p, [...(board?.entries || []).filter(e => e.accountId !== run.accountId), run]);
+        if (eventImproved) entries = eventLeaderboard(p, [...(board?.entries || []).filter(e => e.accountId !== run.accountId), run]).slice(0,200);
         const priorPending = board?.pendingPlaybacks || board?.playbacks;
         const pendingPlaybacks = status === 'waiting' ? upsertPlayback(priorPending, pendingPlaybackEntry(run), L.queued) :
           visiblePendingPlaybacks(priorPending).filter(row => row.runId !== run.runId);
@@ -620,6 +655,7 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
           await tx.patch(profilePath, profileFields);
         }
         if (eventImproved) {
+          const periodPublicationPending=p.storageVersion===2||entries.length>=200;
           const total = { accountId: run.accountId, name: run.name,
             rp: (priorTotal?.rp || 0) + eventRp(p, run.timeMs) - (eventPb?.rp || 0),
             events: (priorTotal?.events || 0) + (eventPb ? 0 : 1) };
@@ -632,15 +668,15 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
             return { accountId: row.accountId, name: row.name, rp: row.rp, events: row.events, rank };
           });
           await tx.set(totalPath, total);
-          await tx.set(overallPath, { entries: totals, updatedAt: at, complete:totals.length<200&&overall?.complete!==false,totalEntries:totals.length });
+          await tx.set(overallPath, { entries: totals, updatedAt: at, complete:totals.length<200&&overall?.complete!==false,totalEntries:Math.max(overall?.totalEntries||0,overall?.entries?.length||0)+(priorTotal?0:1),revision:(overall?.revision||0)+1,publicationPending:true,pendingPeriodIds:[...new Set([...(Array.isArray(overall?.pendingPeriodIds)?overall.pendingPeriodIds:[]).filter(value=>value!==periodId),...(periodPublicationPending?[periodId]:[])])] });
           await tx.set(eventPath, { periodId, accountId: run.accountId, ownerUid: run.ownerUid,
             trackId: run.trackId, timeMs: run.timeMs, runId: run.runId, replayHash: run.replayHash,
-            submittedAt: run.receivedAt, rp: eventRp(p, run.timeMs) });
+            submittedAt: run.receivedAt, rp: eventRp(p, run.timeMs),name:run.name,carStyle:run.carStyle });
           await tx.set(replayPath, { periodId, accountId: run.accountId, trackId: run.trackId, runId: run.runId,
             timeMs: run.timeMs, replayHash: run.replayHash, replay: run.replay, carStyle: run.carStyle,
             periodBinding: run.periodBinding, verifiedAt: at });
           await tx.set(livePath, { ...(board || {}), periodId, period: publicEventPeriod({ ...p, racerCount: board?.racerCount || 0 }),
-            entries, pendingPlaybacks, racerCount: board?.racerCount || 0, archived: false, updatedAt: at });
+            entries, pagination:null,sourceComplete:p.storageVersion!==2&&entries.length<200,complete:p.storageVersion!==2&&entries.length<200,totalEntries:(board?.totalEntries??board?.entries?.length??0)+(eventPb?0:1),revision:(board?.revision||0)+1,publicationPending:periodPublicationPending,pendingPlaybacks, racerCount: board?.racerCount || 0, archived: false, updatedAt: at });
         } else if (eventOpen) {
           await tx.set(livePath, { ...(board || {}), periodId, period: publicEventPeriod({ ...p, racerCount: board?.racerCount || 0 }),
             entries: board?.entries || [], pendingPlaybacks, racerCount: board?.racerCount || 0, archived: false, updatedAt: at });
@@ -705,12 +741,21 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
             path(C.quotas, `${periodId}_${ownerHash}`), path(C.pbs, `${periodId}_${accountId}`),
             path(C.inbox, `${periodId}_${accountId}`), path(C.cursors, `${periodId}_${accountId}`), path(C.retries, `${periodId}_${accountId}`), path(C.receipts, `${periodId}_${accountId}`)]),
           path(C.cursors, 'provision_' + periodId) ];
-        const start = archive.cleanupCursor || 0, batch = paths.slice(start, start + 8);
+        const start = archive.cleanupCursor || 0;
+        let retentionPath=null,retentionPaths=[],retentionPage=archive.retentionCleanupPage||0,retentionCursor=archive.retentionCleanupCursor||0;
+        if(start>=paths.length&&retentionPage<(queue?.retentionPages||0)){
+          retentionPath=EVENT_RETENTION_COLLECTION+'/'+periodId+'_'+retentionPage;
+          const retained=await tx.get(retentionPath);retentionPaths=eventRetentionPaths(retained,periodId,C);
+        }
+        const batch = retentionPath?retentionPaths.slice(retentionCursor,retentionCursor+7):paths.slice(start,start+8);
         const existing = [];
         for (const target of batch) if (await tx.get(target)) existing.push(target);
-        const cleaned = start + batch.length >= paths.length;
+        const retentionPageDone=!!retentionPath&&retentionCursor+batch.length>=retentionPaths.length;
+        const nextRetentionPage=retentionPage+(retentionPageDone?1:0);
+        const cleaned = start + (retentionPath?0:batch.length) >= paths.length && nextRetentionPage >= (queue?.retentionPages||0);
         for (const target of existing) await tx.delete(target);
-        await tx.patch(archivePath, { cleanupCursor: start + batch.length, cleaned });
+        if(retentionPageDone)await tx.delete(retentionPath);
+        await tx.patch(archivePath, { cleanupCursor: start+(retentionPath?0:batch.length),retentionCleanupPage:nextRetentionPage,retentionCleanupCursor:retentionPath&&!retentionPageDone?retentionCursor+batch.length:0,cleaned });
         if (cleaned) {
           if (queue) await tx.delete(queuePath);
           await tx.set(catalogPath, { ...catalog, periods: catalog.periods.map(row => row.id === periodId ? { ...row, cleaned: true } : row) });
@@ -736,12 +781,13 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
         const monthPeriods = [...(monthIndex?.periods || []).filter(row => row.id !== periodId), publicPeriod]
           .sort((a, b) => b.endsAt - a.endsAt || a.id.localeCompare(b.id));
         demand(monthPeriods.length <= 120, 'archive_month_capacity', 503);
+        demand(!board?.publicationPending,'event_publication_pending',409);
         const entries = eventLeaderboard(p, board?.entries || []);
         // Remaining candidates remain private, explicitly unscored at cutoff.
         await tx.create(archivePath, { period: p, archivedAt: at, entries, racerCount,
           unresolvedRunIds: queue?.slots.map(s => s.runId) || [], settled: queue?.slots.length === 0, cleanupCursor: 0 });
         await tx.set(historyPath, { periodId, period: publicPeriod, archived: true, updatedAt: at,
-          archivedAt: at, racerCount, entries, pendingPlaybacks: [], winner: entries[0] || null });
+          archivedAt: at, racerCount, entries,...(board?.pagination?{pagination:board.pagination,sourceComplete:board.sourceComplete,totalEntries:board.totalEntries,complete:board.complete}:{}),pendingPlaybacks: [], winner: entries[0] || null });
         if (p.kind === 'kodub' && !priorArchiveTrack) await tx.create(archiveTrackPath, { periodId, trackId: p.trackId,
           trackCode: p.kodub.trackCode, trackCodeHash: p.kodub.trackCodeHash, environment: p.kodub.environment, archivedAt: at });
         await tx.set(monthPath, { month, periods: monthPeriods, updatedAt: at });
@@ -788,6 +834,12 @@ export function createEventHandler({ service, authenticate, allowedOrigins, allo
       headers['Access-Control-Allow-Origin'] = origin;
       demand(enabled() === true, 'events_disabled', 503);
       const url = new URL(request.url);
+      const pageMatch=/^\/v1\/events\/(totals|[A-Za-z0-9_-]{1,64}\/snapshot)\/page$/.exec(url.pathname);
+      if(request.method==='GET'&&pageMatch){
+        demand(await allowRequest({request,ownerUid:null})===true,'event_ingress_limit',429);
+        const pageText=url.searchParams.get('page');demand(pageText!==null&&/^\d+$/.test(pageText),'invalid_page');
+        return respond(200,await service.publicPage(pageMatch[1]==='totals'?'event_totals':'event',pageMatch[1]==='totals'?'main':pageMatch[1].split('/')[0],url.searchParams.get('generation'),Number(pageText)));
+      }
       const archiveMonth = /^\/v1\/events\/archives\/(\d{6})$/.exec(url.pathname);
       if (request.method === 'GET' && archiveMonth) {
         demand(await allowRequest({ request, ownerUid: null }) === true, 'event_ingress_limit', 429);

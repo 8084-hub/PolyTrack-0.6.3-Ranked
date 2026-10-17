@@ -4,8 +4,9 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {fetchPublicBackupJson as fetchJson, PublicBackupDeferredError} from './public-backup-fetch.mjs';
 import {publicDisplayName} from './public-display-name.mjs';
+import {assemblePublishedSnapshotPages} from './published-snapshot-pages.mjs';
 
-export const PUBLIC_SNAPSHOT_LIMITS = Object.freeze({trackFetches: 100, eventFetches: 120, eventReplayFetches: 30,
+export const PUBLIC_SNAPSHOT_LIMITS = Object.freeze({trackFetches: 100, eventFetches: 120, eventReplayFetches: 30, pageFetches: 100,
   eventReplaysPerPeriod: 500, eventReplayResponseBytes: 70 * 1024, responseBytes: 2 * 1024 * 1024, concurrency: 4,
   archivedEventRecheckMs: 7 * 86400000});
 const WORKER = 'https://polytrack-ranked-worker.staticquasar931.workers.dev';
@@ -21,7 +22,7 @@ const overallFields = ['updatedAt', 'builtAt', 'revision', 'builtRevision', 'sou
   'schemaVersion', 'averagePlacementVersion', 'derivedMetricsVersion', 'serverAchievementVersion', 'complete',
   'totalEntries', 'totalEntriesExact', 'publishedEntries', 'entryLimit', 'trackLimit', 'resultBundleVersion',
   'resultBundleEncoding', 'resultBundleComplete', 'resultBundleStatus', 'resultBoardCount', 'resultBoardLimit',
-  'resultBoardLimitReached', 'resultCoverage', 'resultBundleLocation'];
+  'resultBoardLimitReached', 'resultCoverage', 'resultBundleLocation', 'sourceComplete', 'paginatedSource', 'pagination'];
 const overallEntryFields = ['userId', 'name', 'countryCode', 'carId', 'carColors', 'carStyle', 'profileCosmetics',
   'cosmeticUnlocks', 'serverAchievements', 'accountCreatedAt', 'totalPlaytimeMs', 'latestPbAt', 'groupCode', 'groupCodeUpdatedAt',
   'score', 'raceCount', 'eligibleTrackCount', 'provisional', 'totalTracks', 'officialCount', 'communityCount',
@@ -48,7 +49,7 @@ const eventEntryFields = ['accountId', 'name', 'carStyle', 'timeMs', 'rp', 'rank
   'runAgeMs', 'eventRpContribution', 'normalRpEligible', 'physicsVerified', 'replayIntegrityVerified'];
 const eventFields = ['id', 'kind', 'trackId', 'period', 'scoreVersion', 'targetPolicy', 'targetMs', 'maxRp', 'sourceRevision',
   'updatedAt', 'archived', 'state', 'racerCount', 'complete', 'totalEntries', 'sourceTotalEntries', 'sourceCompleteness',
-  'contributions', 'eventRpComplete', 'entries'];
+  'contributions', 'eventRpComplete', 'entries', 'sourceComplete', 'paginatedSource', 'pagination'];
 const pendingEventFields = ['accountId', 'runId', 'timeMs', 'name', 'carStyle', 'submittedAt'];
 
 function project(source, fields) {
@@ -98,9 +99,19 @@ function projectOverallEntry(entry) {
   return result;
 }
 
+function validBoardLength(value, legacyLimit) {
+  if (!Array.isArray(value?.entries)) return false;
+  if (value.entries.length <= legacyLimit) return true;
+  const p = value.pagination;
+  return value.entries.length <= 10000 && value.paginatedSource === true && typeof value.sourceComplete === 'boolean' &&
+    typeof value.complete === 'boolean' && value.totalEntries === value.entries.length && p?.version === 1 &&
+    /^[a-f0-9]{64}$/.test(p.generation || '') && p.complete === true && p.pageSize === 100 &&
+    p.totalEntries === value.entries.length && p.pageCount === Math.ceil(value.entries.length / 100);
+}
+
 export function publicOverallBackup(value) {
   if (!value || typeof value !== 'object' || !Number.isSafeInteger(value.updatedAt) || !Array.isArray(value.entries) ||
-      value.entries.length > 200 || !Array.isArray(value.trackSummaries) || value.trackSummaries.length > 500) {
+      !validBoardLength(value, 200) || !Array.isArray(value.trackSummaries) || value.trackSummaries.length > 500) {
     throw Error('Invalid public overall snapshot');
   }
   const snapshot = project(value, overallFields);
@@ -133,11 +144,11 @@ export function publicOverallBackup(value) {
 
 export function publicTrackBackup(value, trackId) {
   if (!TRACK_ID.test(trackId) || !value || typeof value !== 'object' || value.trackId !== trackId ||
-      !Number.isSafeInteger(value.updatedAt) || !Array.isArray(value.entries) || value.entries.length > 500) {
+      !Number.isSafeInteger(value.updatedAt) || !validBoardLength(value, 500)) {
     throw Error('Invalid public track snapshot');
   }
   const snapshot = project(value, ['trackId', 'complete', 'totalEntries', 'updatedAt', 'builtAt', 'schemaVersion',
-    'algorithmVersion', 'revision', 'sourceRevision']);
+    'algorithmVersion', 'revision', 'sourceRevision', 'sourceComplete', 'paginatedSource', 'pagination']);
   snapshot.entries = value.entries.map(entry => {
     const result = project(entry, trackEntryFields);
     if (result.profileCosmetics) result.profileCosmetics = projectCosmetics(result.profileCosmetics);
@@ -181,7 +192,7 @@ function projectPendingEventRows(rows, eventId, period) {
 
 export function publicEventBackup(value, eventId) {
   if (!EVENT_ID.test(eventId) || !value || typeof value !== 'object' || !Number.isSafeInteger(value.updatedAt) ||
-      !Array.isArray(value.entries) || value.entries.length > 500) throw Error('Invalid public event snapshot');
+      !validBoardLength(value, 500) && !(eventId === 'permanent-rolling-hills' && Array.isArray(value.entries) && value.entries.length <= 10000 && value.complete === true && value.totalEntries === value.entries.length && value.sourceCompleteness === 'paged-source-manifest')) throw Error('Invalid public event snapshot');
   if (value.id && value.id !== eventId) throw Error('Public event identity mismatch');
   if (value.period && value.period.id !== eventId) throw Error('Public event period mismatch');
   const result = project(value, eventFields);
@@ -317,7 +328,14 @@ async function writeJsonIfChanged(directory, relative, value) {
 async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outputDirectory, now = Date.now(),
   trackIds = null, log = console.log} = {}) {
   const previous = await readManifest(directory);
-  const overallRaw = await fetchJson(fetchImpl, `${WORKER}/v1/snapshot/overall`);
+  let pageFetches = 0;
+  const assemble = (value, endpoint) => assemblePublishedSnapshotPages(value, {fetchPage: (page, generation) => {
+    if (pageFetches >= PUBLIC_SNAPSHOT_LIMITS.pageFetches) throw new PublicBackupDeferredError('Public snapshot page budget reached');
+    pageFetches++;
+    const url = new URL(endpoint, WORKER);url.searchParams.set('generation', generation);url.searchParams.set('page', String(page));
+    return fetchJson(fetchImpl, url.href);
+  }});
+  const overallRaw = await assemble(await fetchJson(fetchImpl, `${WORKER}/v1/snapshot/overall`), '/v1/snapshot/overall/page');
   const {snapshot: overall, planner} = publicOverallBackup(overallRaw);
   const catalog = await fetchJson(fetchImpl, `${WORKER}/v1/events/catalog`);
   const selectedEvents = selectEventIds(catalog);
@@ -373,14 +391,16 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
     PUBLIC_SNAPSHOT_LIMITS.trackFetches, now);
   const trackRows = await mapLimit(selectedTracks, PUBLIC_SNAPSHOT_LIMITS.concurrency, async id => {
     const value = await fetchJson(fetchImpl, `${WORKER}/v1/snapshot/track?trackId=${encodeURIComponent(id)}`, {optional: true});
-    return {id, value: value ? publicTrackBackup(value, id) : null};
+    const full = value ? await assemble(value, `/v1/snapshot/track/page?trackId=${encodeURIComponent(id)}`) : null;
+    return {id, value: full ? publicTrackBackup(full, id) : null};
   });
   const eventRows = await mapLimit(eventFetchIds, PUBLIC_SNAPSHOT_LIMITS.concurrency, async id => {
     const url = id === 'permanent-rolling-hills'
       ? `${WORKER}/v1/events/permanent-rolling-hills/snapshot`
       : `${WORKER}/v1/events/${encodeURIComponent(id)}/snapshot`;
     const value = await fetchJson(fetchImpl, url, {optional: true});
-    return {id, value: value ? publicEventBackup(value, id) : null};
+    const full = value ? await assemble(value, url + '/page') : null;
+    return {id, value: full ? publicEventBackup(full, id) : null};
   });
 
   const eventValues = new Map();
@@ -507,7 +527,7 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
     trackSummaryMismatches,
     permanentRollingHills: nextEvents['permanent-rolling-hills'] || null};
   await writeJsonIfChanged(directory, 'manifest.json', manifest);
-  log(JSON.stringify({publicSnapshotBackup: {workerRequests: 2 + trackRows.length + eventRows.length + replayCandidates.length,
+  log(JSON.stringify({publicSnapshotBackup: {workerRequests: 2 + trackRows.length + eventRows.length + replayCandidates.length + pageFetches, pageFetches,
     trackFetches: trackRows.length, tracksChanged, tracksMissing: missingTracks,
     eventFetches: eventRows.length, archivedEventsReused: selectedEvents.length - eventRows.length, eventsChanged, eventsMissing: missingEvents,
     eventReplayCandidates: replayCandidates.length, eventReplays: Object.keys(eventReplays).length,

@@ -92,11 +92,11 @@ test('reader uses the exact existing S1 snapshot document and wrapper exposes on
   assert.equal(response.status, 200); assert.equal((await response.json()).complete, true);
 });
 
-test('merged totals report their own size and never label a truncated field complete',()=>{
+test('merged totals preserve the full field before publication paging',()=>{
  const rolling=derivePermanentRollingHills(snapshot());
  const small=mergePermanentRollingIntoTotals({entries:[],complete:true,totalEntries:0},rolling);
  assert.equal(small.totalEntries,2);assert.equal(small.complete,true);
  const entries=Array.from({length:199},(_,i)=>({accountId:'finite-'+i,rp:10}));
  const large=mergePermanentRollingIntoTotals({entries,complete:true,totalEntries:199},rolling);
- assert.equal(large.entries.length,200);assert.equal(large.totalEntries,201);assert.equal(large.complete,false);
+ assert.equal(large.entries.length,201);assert.equal(large.totalEntries,201);assert.equal(large.complete,true);
 });

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { decodeSnapshot, publishSnapshot, MAX_DECODED_BYTES } from './snapshot-package.mjs';
 import { runPublicSnapshotBackup } from './public-snapshot-backup.mjs';
@@ -11,6 +12,9 @@ import { buildProfileSnapshotResults } from './build-profile-snapshot-results.mj
 const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const LOGICAL_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._/-]+\.json$/;
 const HASH = /^[a-f0-9]{64}$/;
+const PAGE_SIZE = 100;
+const MAX_RECONSTRUCTION_PAGES = 4096;
+const MAX_RECONSTRUCTION_BYTES = 512 * 1024 * 1024;
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -23,6 +27,144 @@ function containedChild(root, name) {
   return target;
 }
 
+function validateBoardManifest(manifest, { kind, logicalPath }) {
+  const positiveOrZero = value => Number.isSafeInteger(value) && value >= 0;
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || manifest.kind !== kind ||
+      manifest.pagingVersion !== 1 || manifest.sourceLogicalPath !== logicalPath ||
+      manifest.fullBoardPath !== (manifest.monolithOmitted ? null : logicalPath) || typeof manifest.monolithOmitted !== 'boolean' ||
+      manifest.complete !== (manifest.sourceComplete === true) || typeof manifest.sourceComplete !== 'boolean' ||
+      manifest.pageSize !== PAGE_SIZE || !positiveOrZero(manifest.pageCount) ||
+      !positiveOrZero(manifest.publishedEntries) ||
+      !(manifest.totalEntries === null || positiveOrZero(manifest.totalEntries)) ||
+      typeof manifest.totalEntriesExact !== 'boolean' || typeof manifest.ranksExact !== 'boolean' ||
+      !(manifest.capturedAt === null || typeof manifest.capturedAt === 'string') ||
+      !manifest.boardMetadata || typeof manifest.boardMetadata !== 'object' || Array.isArray(manifest.boardMetadata) ||
+      !Array.isArray(manifest.pageBounds) || manifest.pageBounds.length !== manifest.pageCount ||
+      manifest.pageCount !== Math.ceil(manifest.publishedEntries / PAGE_SIZE)) {
+    throw new Error(`Invalid ${kind} paging manifest: ${logicalPath}`);
+  }
+  if (manifest.sourceComplete && (manifest.totalEntries !== manifest.publishedEntries || !manifest.totalEntriesExact)) {
+    throw new Error(`Incomplete source totals in ${kind}: ${logicalPath}`);
+  }
+}
+
+function validatePagingCatalog(index, hydrated) {
+  const catalogEntry = hydrated.get('snapshot-paging.json');
+  const manifestPaths = Object.keys(index.files).filter(logicalPath =>
+    /^track-manifests\/[a-f0-9]{64}\.json$/.test(logicalPath));
+  const hasOverallManifest = Object.hasOwn(index.files, 'overall-manifest.json');
+  if (!catalogEntry) {
+    if (manifestPaths.length || hasOverallManifest || Object.keys(index.files).some(logicalPath =>
+      /^(?:track-pages|overall-pages)\//.test(logicalPath))) {
+      throw new Error('Snapshot paging files exist without snapshot-paging.json');
+    }
+    return [];
+  }
+  const catalog = catalogEntry.value;
+  if (catalog?.schemaVersion !== 1 || catalog.pagingVersion !== 1 || catalog.pageSize !== PAGE_SIZE ||
+      typeof catalog.legacyMonolithCoverageComplete !== 'boolean' || !Array.isArray(catalog.omittedMonoliths) ||
+      !catalog.tracks || typeof catalog.tracks !== 'object' || Array.isArray(catalog.tracks) ||
+      !(catalog.overall === null || (catalog.overall && typeof catalog.overall === 'object' && !Array.isArray(catalog.overall)))) {
+    throw new Error('Invalid snapshot paging catalog');
+  }
+
+  const omitted = [];
+  const reconstruct = [];
+  const expectedTrackIds = new Set(manifestPaths.map(logicalPath => logicalPath.slice('track-manifests/'.length, -'.json'.length)));
+  if (Object.keys(catalog.tracks).length !== expectedTrackIds.size) throw new Error('Snapshot paging catalog track coverage mismatch');
+  for (const trackId of expectedTrackIds) {
+    const manifestPath = `track-manifests/${trackId}.json`;
+    const hydratedManifest = hydrated.get(manifestPath);
+    if (!hydratedManifest) throw new Error(`Missing track paging manifest: ${manifestPath}`);
+    const manifest = hydratedManifest.value;
+    validateBoardManifest(manifest, { kind: 'track-manifest', logicalPath: `tracks/${trackId}.json` });
+    const descriptor = catalog.tracks[trackId];
+    const expected = { manifestPath, fullBoardPath: manifest.fullBoardPath, monolithOmitted: manifest.monolithOmitted,
+      pageCount: manifest.pageCount, publishedEntries: manifest.publishedEntries, totalEntries: manifest.totalEntries,
+      sourceComplete: manifest.sourceComplete, ranksExact: manifest.ranksExact };
+    if (!isDeepStrictEqual(descriptor, expected)) throw new Error(`Snapshot paging catalog mismatch: ${trackId}`);
+    if (manifest.monolithOmitted) {
+      omitted.push(manifest.sourceLogicalPath);
+      reconstruct.push({ manifestPath, manifest, logicalPath: manifest.sourceLogicalPath, kind: 'track-manifest', trackId });
+    } else if (!Object.hasOwn(index.files, manifest.sourceLogicalPath)) {
+      throw new Error(`Expected track monolith is missing: ${manifest.sourceLogicalPath}`);
+    }
+  }
+
+  if (hasOverallManifest) {
+    const hydratedManifest = hydrated.get('overall-manifest.json');
+    if (!hydratedManifest) throw new Error('Missing overall paging manifest');
+    const manifest = hydratedManifest.value;
+    validateBoardManifest(manifest, { kind: 'overall-manifest', logicalPath: 'overall.json' });
+    const expected = { manifestPath: 'overall-manifest.json', fullBoardPath: manifest.fullBoardPath,
+      monolithOmitted: manifest.monolithOmitted, pageCount: manifest.pageCount,
+      publishedEntries: manifest.publishedEntries, totalEntries: manifest.totalEntries,
+      sourceComplete: manifest.sourceComplete, ranksExact: manifest.ranksExact };
+    if (!isDeepStrictEqual(catalog.overall, expected)) throw new Error('Snapshot paging catalog overall mismatch');
+    if (manifest.monolithOmitted) {
+      omitted.push('overall.json');
+      reconstruct.push({ manifestPath: 'overall-manifest.json', manifest, logicalPath: 'overall.json', kind: 'overall-manifest' });
+    } else if (!Object.hasOwn(index.files, 'overall.json')) {
+      throw new Error('Expected overall monolith is missing');
+    }
+  } else if (catalog.overall !== null) {
+    throw new Error('Snapshot paging catalog has an unbacked overall descriptor');
+  }
+
+  const listedOmitted = [...catalog.omittedMonoliths].sort();
+  const expectedOmitted = omitted.sort();
+  if (!isDeepStrictEqual(listedOmitted, expectedOmitted) ||
+      catalog.legacyMonolithCoverageComplete !== (expectedOmitted.length === 0)) {
+    throw new Error('Snapshot paging catalog omitted-monolith coverage mismatch');
+  }
+  for (const board of reconstruct) {
+    if (Object.hasOwn(index.files, board.logicalPath)) throw new Error(`Omitted monolith is unexpectedly indexed: ${board.logicalPath}`);
+  }
+  return reconstruct;
+}
+
+function reconstructPagedBoard(board, hydrated) {
+  const { manifest, logicalPath, kind, trackId } = board;
+  const commonKeys = ['pagingVersion', 'sourceComplete', 'totalEntries', 'totalEntriesExact', 'publishedEntries',
+    'ranksExact', 'capturedAt', 'pageSize', 'pageCount', ...(trackId ? ['trackId'] : []),
+    'schemaVersion', 'revision', 'sourceRevision', 'algorithmVersion', 'updatedAt', 'builtAt'];
+  const entries = [];
+  for (let index = 0; index < manifest.pageCount; index++) {
+    const expectedBound = manifest.pageBounds[index];
+    const expectedPath = trackId ? `track-pages/${trackId}/${index + 1}.json` : `overall-pages/${index + 1}.json`;
+    const pageCount = Math.min(PAGE_SIZE, manifest.publishedEntries - index * PAGE_SIZE);
+    if (!expectedBound || expectedBound.pageNumber !== index + 1 || expectedBound.offset !== index * PAGE_SIZE ||
+        expectedBound.count !== pageCount || expectedBound.path !== expectedPath) {
+      throw new Error(`Invalid page bounds in ${board.manifestPath}: page ${index + 1}`);
+    }
+    const payload = hydrated.get(expectedPath)?.value;
+    if (!payload || payload.kind !== (trackId ? 'track-page' : 'overall-page') || payload.pageNumber !== index + 1 ||
+        payload.offset !== index * PAGE_SIZE || payload.count !== pageCount || !Array.isArray(payload.entries) ||
+        payload.entries.length !== pageCount || !isDeepStrictEqual(payload.bounds, Object.fromEntries(
+          Object.entries(expectedBound).filter(([key]) => key !== 'path'))) ||
+        commonKeys.some(key => Object.hasOwn(manifest, key) && !isDeepStrictEqual(payload[key], manifest[key]))) {
+      throw new Error(`Invalid or mixed-generation page: ${expectedPath}`);
+    }
+    entries.push(...payload.entries);
+  }
+  if (entries.length !== manifest.publishedEntries) throw new Error(`Incomplete paged board: ${logicalPath}`);
+  return { ...manifest.boardMetadata, entries, complete: manifest.sourceComplete,
+    totalEntries: manifest.totalEntries, totalEntriesExact: manifest.totalEntriesExact,
+    ranksExact: manifest.ranksExact, capturedAt: manifest.capturedAt, _reconstructedFromPages: true };
+}
+
+function reconstructOmittedBoards(index, hydrated) {
+  const boards = validatePagingCatalog(index, hydrated);
+  const pageCount = boards.reduce((total, board) => total + board.manifest.pageCount, 0);
+  const pageBytes = boards.reduce((total, board) => total + board.manifest.pageBounds.reduce((sum, bound) =>
+    sum + (hydrated.get(bound.path)?.decoded.byteLength || 0), 0), 0);
+  if (pageCount > MAX_RECONSTRUCTION_PAGES || pageBytes > MAX_RECONSTRUCTION_BYTES) {
+    throw new Error(`Paged snapshot reconstruction exceeds safety budget (${pageCount} pages, ${pageBytes} bytes)`);
+  }
+  return boards.map(board => ({ logicalPath: board.logicalPath,
+    decoded: Buffer.from(`${JSON.stringify(reconstructPagedBoard(board, hydrated))}\n`, 'utf8') }));
+}
+
 async function hydrateStaging(root, stagingDirectory) {
   const pointer = JSON.parse(await fs.readFile(path.join(root, 'snapshot-current.json'), 'utf8'));
   if (typeof pointer.currentdir !== 'string' || !/^public-snapshots[1-9]\d*$/.test(pointer.currentdir)) {
@@ -31,7 +173,9 @@ async function hydrateStaging(root, stagingDirectory) {
   const generationDirectory = containedChild(root, pointer.currentdir);
   const indexBytes = await fs.readFile(path.join(generationDirectory, 'index.json'));
   const index = JSON.parse(indexBytes.toString('utf8'));
-  if (index.schemaVersion !== 1 || index.encoding !== 'gzip-xor-a7-v1' || !index.files || typeof index.files !== 'object' || Array.isArray(index.files)) {
+  const pointerGeneration = Number(pointer.currentdir.replace('public-snapshots', ''));
+  if (index.schemaVersion !== 1 || index.encoding !== 'gzip-xor-a7-v1' || index.generation !== pointerGeneration ||
+      !index.files || typeof index.files !== 'object' || Array.isArray(index.files)) {
     throw new Error('Current snapshot index is invalid');
   }
   const hydrated = [];
@@ -50,8 +194,10 @@ async function hydrateStaging(root, stagingDirectory) {
     const decoded = Buffer.from(await decodeSnapshot(encoded));
     if (decoded.byteLength !== item.decodedBytes || decoded.byteLength > MAX_DECODED_BYTES) throw new Error(`Snapshot decoded size mismatch: ${logicalPath}`);
     JSON.parse(decoded.toString('utf8'));
-    hydrated.push({ logicalPath, decoded });
+    hydrated.push({ logicalPath, decoded, value: JSON.parse(decoded.toString('utf8')) });
   }
+  const hydratedByPath = new Map(hydrated.map(item => [item.logicalPath, item]));
+  hydrated.push(...reconstructOmittedBoards(index, hydratedByPath));
   await fs.mkdir(stagingDirectory, { recursive: true });
   for (const { logicalPath, decoded } of hydrated) {
     const target = path.resolve(stagingDirectory, ...logicalPath.split('/'));
@@ -65,6 +211,71 @@ async function hydrateStaging(root, stagingDirectory) {
 async function readJsonIfPresent(filePath) {
   try { return JSON.parse(await fs.readFile(filePath, 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+
+const STAGING_BASE_FILE = 'snapshot-staging-base.json';
+
+async function writeStagingBase(root, generation) {
+  const reports = path.join(root, 'local-reports');
+  await fs.mkdir(reports, { recursive: true });
+  const destination = path.join(reports, STAGING_BASE_FILE);
+  const temporary = `${destination}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(temporary, `${JSON.stringify({ schemaVersion: 1, generation })}\n`, { flag: 'wx' });
+  await fs.rename(temporary, destination);
+}
+
+async function mergeMissingJson(source, destination) {
+  for (const entry of await fs.readdir(source, { withFileTypes: true })) {
+    const sourcePath = path.join(source, entry.name);
+    const destinationPath = path.join(destination, entry.name);
+    if (entry.isSymbolicLink()) throw new Error(`Staging directory cannot contain symlinks: ${entry.name}`);
+    if (entry.isDirectory()) {
+      await fs.mkdir(destinationPath, { recursive: true });
+      await mergeMissingJson(sourcePath, destinationPath);
+    } else if (entry.isFile() && entry.name.endsWith('.json') && LOGICAL_PATH.test(entry.name)) {
+      try { await fs.lstat(destinationPath); continue; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+      await fs.copyFile(sourcePath, destinationPath);
+    }
+  }
+}
+
+async function rebaseStaging(root, stagingDirectory, currentDirectory, currentGeneration) {
+  const parent = path.dirname(stagingDirectory);
+  const temporary = path.join(parent, `.snapshot-staging-rebase-${process.pid}-${Date.now()}`);
+  await hydrateStaging(root, temporary);
+  await mergeMissingJson(stagingDirectory, temporary);
+
+  const marker = await readJsonIfPresent(path.join(parent, STAGING_BASE_FILE));
+  const oldBase = Number.isSafeInteger(marker?.generation) ? `public-snapshots${marker.generation}` : 'unknown';
+  const history = path.join(root, 'local-reports', 'snapshot-history');
+  await fs.mkdir(history, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backup = path.join(history, `staging-${oldBase}-before-${currentDirectory}-${stamp}-${process.pid}`);
+  let movedOldStage = false;
+  try {
+    await fs.rename(stagingDirectory, backup);
+    movedOldStage = true;
+    await fs.rename(temporary, stagingDirectory);
+    await fs.writeFile(path.join(backup, 'snapshot-rebase.json'), `${JSON.stringify({
+      schemaVersion: 1,
+      previousBase: oldBase,
+      rebasedTo: currentDirectory,
+      policy: 'The old stage and export-progress checkpoint are retained intact. Missing JSON paths are copied into the new stage; files already present in the newer public baseline take precedence.',
+    }, null, 2)}\n`, { flag: 'wx' });
+    await writeStagingBase(root, currentGeneration);
+  } catch (error) {
+    if (movedOldStage) {
+      const failedStage = path.join(parent, `.snapshot-staging-failed-${process.pid}-${Date.now()}`);
+      await fs.rename(stagingDirectory, failedStage).catch(() => {});
+      await fs.rename(backup, stagingDirectory).catch(() => {});
+      await fs.rm(failedStage, { recursive: true, force: true }).catch(() => {});
+    }
+    await fs.rm(temporary, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  return { directory: currentDirectory, backup: path.basename(backup) };
 }
 
 function makeCoverage(overall, manifest, exportResult, previousCoverage, savedExportSummary) {
@@ -147,11 +358,21 @@ export async function updatePublicSnapshot({ root = moduleRoot, offline = false,
   const stageStat = await fs.stat(stagingDirectory).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
   let backupResult = null;
   let exportResult = null;
-  if (!stageStat) {
-    const pointer = await readJsonIfPresent(path.join(absoluteRoot, 'snapshot-current.json'));
-    if (pointer) await hydrateStaging(absoluteRoot, stagingDirectory);
-    else if (offline) throw new Error('Offline packaging needs staging data or a current packed generation');
-    else await fs.mkdir(stagingDirectory, { recursive: true });
+  const pointer = await readJsonIfPresent(path.join(absoluteRoot, 'snapshot-current.json'));
+  if (pointer) {
+    const match = /^public-snapshots([1-9]\d*)$/.exec(pointer.currentdir || '');
+    if (!match) throw new Error('Current snapshot pointer is invalid');
+    const generation = Number(match[1]);
+    const marker = await readJsonIfPresent(path.join(absoluteRoot, 'local-reports', STAGING_BASE_FILE));
+    if (!stageStat) {
+      await hydrateStaging(absoluteRoot, stagingDirectory);
+      await writeStagingBase(absoluteRoot, generation);
+    } else if (marker?.schemaVersion !== 1 || marker.generation !== generation) {
+      await rebaseStaging(absoluteRoot, stagingDirectory, pointer.currentdir, generation);
+    }
+  } else if (!stageStat) {
+    if (offline) throw new Error('Offline packaging needs staging data or a current packed generation');
+    await fs.mkdir(stagingDirectory, { recursive: true });
   }
   if (!offline) {
     backupResult = await capture({ ...captureOptions, directory: stagingDirectory, log });
@@ -190,6 +411,7 @@ export async function updatePublicSnapshot({ root = moduleRoot, offline = false,
     if (typeof pointer?.currentdir === 'string' && /^public-snapshots[1-9]\d*$/.test(pointer.currentdir)) oldCurrent = pointer.currentdir;
   } catch {}
   const result = await publishSnapshot({ root: absoluteRoot, stagingDirectory, historyDirectory });
+  await writeStagingBase(absoluteRoot, result.generation);
   await updateMeta(absoluteRoot, result.directory);
 
   if (oldCurrent && oldCurrent !== result.directory && result.archivePath) {

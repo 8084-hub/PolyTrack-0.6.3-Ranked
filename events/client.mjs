@@ -43,7 +43,7 @@ const write=(key,value)=>localStorage.setItem(key,JSON.stringify(value));
 const cacheWrite=(key,value)=>{try{write(key,value);}catch{/* Cache storage is optional; never discard a successful cloud read. */}};
 const eventName=kind=>kind==='kodub'?'Kodub weekly':kind==='weekly'?'Weekly':kind==='daily'?'Daily':'Event';
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const EVENT_RECORD_HASH=/^[a-f0-9]{64}$/,EVENT_RECORD_LIMIT=200,EVENT_PENDING_LIMIT=512,EVENT_TIME_LIMIT=300000;
+const EVENT_RECORD_HASH=/^[a-f0-9]{64}$/,EVENT_RECORD_LIMIT=10000,EVENT_PENDING_LIMIT=512,EVENT_TIME_LIMIT=300000;
 export function eventPendingRows(pending){
   if(!Array.isArray(pending)||pending.length>EVENT_PENDING_LIMIT)return [];
   const byAccount=new Map(),runIds=new Set();
@@ -106,8 +106,9 @@ export function eventTrackName(period,lookup){
   const label=typeof period?.label==='string'?period.label.trim():'';
   return publicName||catalogName||label||'Event track';
 }
-export function ensureFeaturedSection(document){
-  const nav=document.querySelector('.track-selection-ui .community-track-versions');
+export function ensureFeaturedSection(document,selection=null){
+  selection=selection||document.querySelector('.track-selection-ui');
+  const nav=selection?.querySelector('.community-track-versions');
   if(!nav)return null;
   let section=nav.parentElement.querySelector(':scope > .sq-featured-events');
   if(!section){
@@ -120,17 +121,11 @@ export function ensureFeaturedSection(document){
     nav.before(section);
     requestAnimationFrame(()=>wrapper.classList.remove('sq-events-layout-pending'));
   }
-  const rolling=document.querySelector('.track-selection-ui img[src*="rolling_hills_racer"]')?.closest('.track');
+  const rolling=selection.querySelector('img[src*="rolling_hills_racer"]')?.closest('.track');
   if(rolling&&rolling.parentElement!==section){
     rolling.classList.add('sq-permanent-track');section.append(rolling);
     const note=document.createElement('small');note.className='sq-permanent-note';
     note.textContent='Normal RP + up to 1001 Event RP / No reset';rolling.querySelector(':scope > button')?.append(note);
-  }
-  const custom=[...nav.querySelectorAll('button')].find(button=>button.textContent.trim()==='StaticQuasar931');
-  if(custom){
-    // Retain the native node so existing track-launch lookups can still use it.
-    if(custom.classList.contains('selected'))[...nav.querySelectorAll('button')].find(button=>button.textContent.trim()==='0.6.3')?.click();
-    if(!custom.hidden)custom.hidden=true;if(custom.getAttribute('aria-hidden')!=='true')custom.setAttribute('aria-hidden','true');if(custom.tabIndex!==-1)custom.tabIndex=-1;
   }
   return section;
 }
@@ -375,7 +370,7 @@ export function installEvents(bridge){
     try{const code=await bridge.readArchivedTrack(period);if(token!==requestId||!dialog)return;close();bridge.importTrackCode(code);}
     catch(error){if(dialog)message(error.message||'Archived track could not be imported.');}
   }
-  async function totals(){if(typeof bridge.openRankedEvents==='function'){close();await bridge.openRankedEvents();return;}shell();selectView('totals');selected=null;const token=++requestId;body('<p>Loading Event RP...</p>');try{let data;try{data=await bridge.readTotals();if(!Array.isArray(data?.entries))throw Error('Invalid standings');cacheWrite(STORE+'-totals',data);}catch(error){data=read(STORE+'-totals',null);if(!data)throw error;data={...data,saved:true};}if(!dialog||token!==requestId)return;body('<h3>Lifetime Event RP</h3><p>Top 200 racers</p>'+(data.saved?'<p class="sq-event-saved">Saved standings</p>':'')+'<p>Points earned across events. Faster event PBs replace earlier points; repeated runs do not stack.</p><ol class="sq-event-results">'+(data.entries||[]).map((row,i)=>`<li><b>#${row.rank||i+1}</b><span>${escape(row.name||'Racer')}</span><span>${Number(row.events)||0} events</span><strong>${Number(row.rp)||0} RP</strong></li>`).join('')+'</ol>'+(!data.entries.length?'<p>No Event RP earned yet. Try a live event.</p>':''));}catch{if(token===requestId)body('<p>Event RP is unavailable right now.</p>');}}
+  async function totals(){if(typeof bridge.openRankedEvents==='function'){close();await bridge.openRankedEvents();return;}shell();selectView('totals');selected=null;const token=++requestId;body('<p>Loading Event RP...</p>');try{let data;try{data=await bridge.readTotals();if(!Array.isArray(data?.entries))throw Error('Invalid standings');cacheWrite(STORE+'-totals',data);}catch(error){data=read(STORE+'-totals',null);if(!data)throw error;data={...data,saved:true};}if(!dialog||token!==requestId)return;body('<h3>Lifetime Event RP</h3><p>'+data.entries.length+' racers loaded</p>'+(data.saved?'<p class="sq-event-saved">Saved standings</p>':'')+'<p>Points earned across events. Faster event PBs replace earlier points; repeated runs do not stack.</p><ol class="sq-event-results">'+(data.entries||[]).map((row,i)=>`<li><b>#${row.rank||i+1}</b><span>${escape(row.name||'Racer')}</span><span>${Number(row.events)||0} events</span><strong>${Number(row.rp)||0} RP</strong></li>`).join('')+'</ol>'+(!data.entries.length?'<p>No Event RP earned yet. Try a live event.</p>':''));}catch{if(token===requestId)body('<p>Event RP is unavailable right now.</p>');}}
   async function archives(month=''){
     shell();selectView('archives');selected=null;const token=++requestId;body('<p>Loading past events...</p>');
     try{
@@ -391,7 +386,7 @@ export function installEvents(bridge){
         onOpenPeriod:(period,snapshot)=>void openArchivedTrack(period,snapshot),renderThumbnail:period=>{const node=document.createElement('span');node.innerHTML=bridge.thumbnail(period.trackId);return node;}});
     }catch{if(token===requestId)body('<p>Past events are unavailable. Please try again.</p>');}
   }
-  let nativeView=null,eventIntent=null,archiveIntent=null;
+  let nativeView=null,eventIntent=null,archiveIntent=null,featuredSelection=null;
   async function openArchivedTrack(period,saved){
     if(period?.kind==='kodub'||period?.kind==='custom')return importArchived(period);
     const snapshot=saved||cache.get(period?.id)||read(STORE+'-'+period?.id,null);
@@ -412,7 +407,7 @@ export function installEvents(bridge){
   }
   function cachedCarStyle(row,period){
     if(!profilesAt||now()-profilesAt>=120000){profilesAt=now();profileStyles=new Map();const saved=read(PROFILE_CACHE,null);for(const entry of (Array.isArray(saved?.entries)?saved.entries:[]).slice(0,1000))profileStyles.set(entry.accountId||entry.userId,entry.carStyle);}
-    const candidates=[window.__polytrackCarStyleByUser062?.[row.accountId],row.carStyle,row.accountId===bridge.accountId()?localBest(period)?.carStyle:null,profileStyles.get(row.accountId)];
+    const candidates=[bridge.racerIdentity?.(row)?.carStyle,window.__polytrackCarStyleByUser062?.[row.accountId],row.carStyle,row.accountId===bridge.accountId()?localBest(period)?.carStyle:null,profileStyles.get(row.accountId)];
     for(const value of candidates){if(typeof value!=='string'||!value||value.length>256)continue;if(validCachedCarStyle(value))return value;}
     return '';
   }
@@ -717,7 +712,7 @@ export function installEvents(bridge){
     const archived=archivePeriodCounts(period,snapshot).verifiedEntries;
     if(view.watch)view.watch.disabled=typeof bridge.watchEvent!=='function'||![...selectedGhosts.values()].some(row=>row.periodId===period.id&&row.accountId===view.accountId);
     const rows=archived.map((row,index)=>({...row,name:displayName(row),rank:Number.isSafeInteger(row.rank)&&row.rank>0?row.rank:index+1,pending:false}));
-    const signature=JSON.stringify([snapshot.updatedAt,rows.map(row=>[row.accountId,row.rank,row.timeMs,row.name,row.rp])]);
+    const signature=JSON.stringify([bridge.identityRevision?.(),snapshot.updatedAt,rows.map(row=>[row.accountId,row.rank,row.timeMs,row.name,row.rp])]);
     for(const button of view.board.querySelectorAll(':scope > .container > button.main')){const selected=selectedGhosts.get(button.dataset.eventAccountId),pending=pendingGhosts.get(button.dataset.eventAccountId),matches=row=>row?.periodId===period.id&&row.accountId===view.accountId&&row.targetTimeMs===Number(button.dataset.eventTime);const active=matches(selected),busy=matches(pending);button.classList.toggle('selected',!!(active||busy));button.classList.toggle('pending-selection',!!busy);button.setAttribute('aria-pressed',String(!!(active||busy)));button.setAttribute('aria-busy',String(!!busy));}
     if(signature===view.signature)return;
     view.signature=signature;view.board.querySelector('h3').textContent=eventName(period.kind)+' archive';
@@ -783,7 +778,7 @@ export function installEvents(bridge){
       const quickLocal=localBest(period),quickReceipt=ownReceipts.get(period.id+'_'+accountId);
       const selection=[...selectedGhosts.values()].filter(row=>row.periodId===period.id&&row.accountId===accountId).map(row=>[row.targetRunId,row.targetTimeMs,row.targetPending]);
       const pendingSelection=[...pendingGhosts.values()].filter(row=>row.periodId===period.id&&row.accountId===accountId).map(row=>[row.targetAccountId,row.targetRunId,row.targetTimeMs,row.targetPending,row.groupToken||0]);
-      const quickSignature=JSON.stringify([bridge.filterRevision?.(),quickBoard.updatedAt,quickBoard.saved,quickLocal?.attemptId,quickLocal?.timeMs,quickReceipt?.attemptId,quickReceipt?.status,quickReceipt?.timeMs,view.page,view.onlyVerified,Math.floor(now()/120000),selection,pendingSelection]);
+      const quickSignature=JSON.stringify([bridge.identityRevision?.(),bridge.filterRevision?.(),quickBoard.updatedAt,quickBoard.saved,quickLocal?.attemptId,quickLocal?.timeMs,quickReceipt?.attemptId,quickReceipt?.status,quickReceipt?.timeMs,view.page,view.onlyVerified,Math.floor(now()/120000),selection,pendingSelection]);
       if(quickSignature===view.quickSignature)return;
       view.quickSignature=quickSignature;
     }
@@ -801,7 +796,7 @@ export function installEvents(bridge){
     const receipt=ownReceipts.get(period.id+'_'+accountId);const statusDescription=receipt?receiptText(receipt,localBest(period),period):statusText;
     // Selection changes do not alter standings. Avoid revalidating every car
     // style and serializing whole result objects on each input/menu tick.
-    const signature=JSON.stringify([bridge.filterRevision?.(),period.id,board?.updatedAt,board?.saved,Math.floor(now()/120000),view.page,view.onlyVerified,placement,rows.map(row=>[row.accountId,row.rank,row.timeMs,row.runId,row.pending,row.rp,row.name,row.carStyle,row.submittedAt])]);
+    const signature=JSON.stringify([bridge.identityRevision?.(),bridge.filterRevision?.(),period.id,board?.updatedAt,board?.saved,Math.floor(now()/120000),view.page,view.onlyVerified,placement,rows.map(row=>[row.accountId,row.rank,row.timeMs,row.runId,row.pending,row.rp,row.name,row.carStyle,row.submittedAt])]);
     if(signature===view.signature){
       for(const button of view.board.querySelectorAll(':scope > .container > button.main')){
         const selectedRow=selectedGhosts.get(button.dataset.eventAccountId);
@@ -894,7 +889,7 @@ export function installEvents(bridge){
       }
       button.removeAttribute('aria-disabled');if(period)knownPeriods.set(period.id,period);
     }
-    const group=ensureFeaturedSection(document);
+    const group=ensureFeaturedSection(document,featuredSelection?.isConnected?featuredSelection:null);
     const kodubCard=group?.querySelector('.sq-kodub-weekly'),kodubIdentity=kodubCard?.dataset.kodubIdentity;
     if(kodubCard&&kodubIdentity){
       const [trackId,endTime]=kodubIdentity.split('@'),p=activePeriods().find(p=>p.kind==='kodub'&&p.trackId===trackId&&p.endsAt===Date.parse(endTime));
@@ -1050,5 +1045,5 @@ export function installEvents(bridge){
     return {newPosition:next.rank,previousPosition:prior?.rank||next.fieldSize||next.rank};
   }
   async function prepareCapture(){await loadCatalog();ensureCapture();}
-  return {prepareCapture,captureReady:()=>!!capture,finishPositions,isEntered:trackId=>sessions.current()?.trackId===trackId,featuredSection:()=>ensureFeaturedSection(document),open,openEvent,totals,tick,flush,getOwnReplay,resumeRace,refreshCatalog:loadCatalog,leave(){entryRequest++;sessions.leave();eventIntent=null;archiveIntent=null;tick();}};
+  return {prepareCapture,captureReady:()=>!!capture,finishPositions,isEntered:trackId=>sessions.current()?.trackId===trackId,featuredSection:selection=>{if(selection?.matches?.('.track-selection-ui'))featuredSelection=selection;return ensureFeaturedSection(document,selection);},open,openEvent,totals,tick,flush,getOwnReplay,resumeRace,refreshCatalog:loadCatalog,leave(){entryRequest++;sessions.leave();eventIntent=null;archiveIntent=null;tick();}};
 }

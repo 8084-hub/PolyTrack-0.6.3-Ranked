@@ -472,6 +472,7 @@ test('a separately rejected row without an exact binding cannot erase a pending 
 
 function identityFor(racer, overall, directory = null) {
   const context = vm.createContext({
+    snapshotRacerDirectoryEntries: directory ? {[racer.accountId||racer.userId]:directory} : {},
     rankedIdentityIndex: null, rankedIdentityIndexSource: null, cleanUserId: value => String(value || ''),
     rankedIdentityRows: () => overall ? [overall] : [],
     snapshotRacerDirectoryIdentity: (_id, _at, seen) => directory && directory.updatedAt > seen ? directory : null
@@ -507,4 +508,10 @@ test('cosmetics preserve fallback when the freshest row has none or no overall r
   const racer = identity('track-name', 100, 'track-theme');
   assert.equal(identityFor(racer, {userId: 'self', name: 'overall-name', identityUpdatedAt: 200}).profileCosmetics.theme, 'track-theme');
   assert.equal(identityFor(racer, null).profileCosmetics.theme, 'track-theme');
+});
+
+test('event-only cosmetic unlock context comes from the directory, not Event RP place',()=>{
+ const racer={userId:'self',rank:1};const directory={updatedAt:300,cosmeticContext:{rank:501,raceCount:12}};
+ assert.deepEqual(identityFor(racer,null,directory).cosmeticContext,{rank:501,raceCount:12});
+ assert.equal(identityFor(racer,{userId:'self',rank:7},directory).cosmeticContext,null);
 });

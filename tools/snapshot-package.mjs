@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { gzip, gunzip } from 'node:zlib';
 import { promisify } from 'node:util';
+import { buildTrackSnapshotPaging, buildOverallSnapshotPaging, buildBoardPageManifest, buildSnapshotBootstrapIndex } from './track-snapshot-paging.mjs';
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
@@ -106,10 +107,13 @@ async function collectJsonFiles(directory) {
       const fullPath = path.join(current, entry.name);
       if (entry.isSymbolicLink()) throw new Error(`Snapshot staging cannot contain symlinks: ${nextRelative}`);
       if (entry.isDirectory()) await walk(fullPath, nextRelative);
-      else if (entry.isFile() && entry.name.endsWith('.json') && entry.name !== 'export-progress.json' && nextRelative !== 'track-statistics.json') {
+      else if (entry.isFile() && entry.name.endsWith('.json') && entry.name !== 'export-progress.json' && nextRelative !== 'track-statistics.json' &&
+          !/^(?:track-previews|track-pages|track-manifests|overall-pages)\//.test(nextRelative) &&
+          !['bootstrap-index.json', 'snapshot-paging.json', 'overall-manifest.json', 'overall-preview.json'].includes(nextRelative)) {
         const logicalPath = safeRelativePath(nextRelative);
         const bytes = await fs.readFile(fullPath);
-        if (bytes.byteLength > MAX_DECODED_BYTES) throw new RangeError(`${logicalPath} exceeds decoded limit (${MAX_DECODED_BYTES} bytes)`);
+        const pageable = /^tracks\/[a-f0-9]{64}\.json$/.test(logicalPath) || logicalPath === 'overall.json';
+        if (!pageable && bytes.byteLength > MAX_DECODED_BYTES) throw new RangeError(`${logicalPath} exceeds decoded limit (${MAX_DECODED_BYTES} bytes)`);
         let value;
         try { value = JSON.parse(bytes.toString('utf8')); } catch (error) { throw new Error(`${logicalPath} is not valid JSON`, { cause: error }); }
         entries.push({ logicalPath, bytes, value });
@@ -117,10 +121,52 @@ async function collectJsonFiles(directory) {
     }
   }
   await walk(directory);
+  const byPath = new Map(entries.map(entry => [entry.logicalPath, entry.value]));
+  const catalog = { schemaVersion: 1, pagingVersion: 1, pageSize: 100, legacyMonolithCoverageComplete: true, omittedMonoliths: [], tracks: {}, overall: null };
+  function addDerived(logicalPath, value) {
+    const bytes = jsonBytes(value);
+    if (bytes.byteLength > MAX_DECODED_BYTES) throw new RangeError(`${logicalPath} exceeds decoded limit`);
+    entries.push({ logicalPath, bytes, value });
+  }
+  function describe(manifestPath, manifest) {
+    if (manifest.monolithOmitted) { catalog.legacyMonolithCoverageComplete = false; catalog.omittedMonoliths.push(manifest.sourceLogicalPath); }
+    return { manifestPath, fullBoardPath: manifest.fullBoardPath, monolithOmitted: manifest.monolithOmitted,
+      pageCount: manifest.pageCount, publishedEntries: manifest.publishedEntries, totalEntries: manifest.totalEntries,
+      sourceComplete: manifest.sourceComplete, ranksExact: manifest.ranksExact };
+  }
+  for (const { logicalPath, value, bytes } of [...entries]) {
+    const match = /^tracks\/([a-f0-9]{64})\.json$/.exec(logicalPath);
+    // Legacy audit-only boards without usable times remain available as monoliths.
+    if (!match || value?.trackId !== match[1] || !Array.isArray(value.entries) ||
+        !value.entries.every(row => Number.isSafeInteger(row?.timeMs) && row.timeMs > 0)) continue;
+    const { preview, pages } = buildTrackSnapshotPaging(value, { capturedAt: byPath.get('manifest.json')?.tracks?.[match[1]]?.checkedAt });
+    const manifestPath = `track-manifests/${match[1]}.json`;
+    const manifest = buildBoardPageManifest(value, preview, bytes.byteLength > MAX_DECODED_BYTES);
+    catalog.tracks[match[1]] = describe(manifestPath, manifest);
+    addDerived(manifestPath, manifest);
+    addDerived(`track-previews/${match[1]}.json`, preview);
+    for (const page of pages) addDerived(`track-pages/${match[1]}/${page.pageNumber}.json`, page);
+  }
+  const overallEntry = entries.find(entry => entry.logicalPath === 'overall.json');
+  if (Array.isArray(overallEntry?.value?.entries) &&
+      (Number.isSafeInteger(overallEntry.value.totalEntries) || overallEntry.bytes.byteLength > MAX_DECODED_BYTES)) {
+    const { preview, pages } = buildOverallSnapshotPaging(overallEntry.value, { capturedAt: byPath.get('public-export-summary.json')?.capturedAt });
+    const manifest = buildBoardPageManifest(overallEntry.value, preview, overallEntry.bytes.byteLength > MAX_DECODED_BYTES);
+    catalog.overall = describe('overall-manifest.json', manifest);
+    addDerived('overall-manifest.json', manifest);
+    addDerived('overall-preview.json', preview);
+    for (const page of pages) addDerived(`overall-pages/${page.pageNumber}.json`, page);
+  }
   const statistics = buildTrackStatistics(entries.filter(entry => entry.logicalPath !== 'track-statistics.json'));
   const statisticsBytes = Buffer.from(`${JSON.stringify(statistics)}\n`, 'utf8');
   if (statisticsBytes.byteLength > MAX_DECODED_BYTES) throw new RangeError('track-statistics.json exceeds decoded limit');
   entries.push({ logicalPath: 'track-statistics.json', bytes: statisticsBytes, value: statistics });
+  if (Object.keys(catalog.tracks).length || catalog.overall) addDerived('snapshot-paging.json', catalog);
+  // Only private staging may contain a large monolith. All public records stay bounded.
+  for (let i = entries.length - 1; i >= 0; i -= 1) if (entries[i].bytes.byteLength > MAX_DECODED_BYTES) {
+    if (!catalog.omittedMonoliths.includes(entries[i].logicalPath)) throw new RangeError(`${entries[i].logicalPath} exceeds decoded limit and cannot be paged`);
+    entries.splice(i, 1);
+  }
   entries.sort((a, b) => a.logicalPath.localeCompare(b.logicalPath, 'en'));
   if (!entries.length) throw new Error('Staging directory contains no JSON snapshots');
   return entries;
@@ -147,6 +193,12 @@ async function matchesPublished(entries, index, directory) {
       if (sha256(published) !== item.sha256) return false;
     } catch { return false; }
   }
+  if (entries.some(entry => entry.logicalPath === 'snapshot-paging.json')) {
+    try {
+      const bootstrap = await fs.readFile(path.join(directory, 'bootstrap-index.json'), 'utf8');
+      if (bootstrap !== `${JSON.stringify(buildSnapshotBootstrapIndex(index))}\n`) return false;
+    } catch { return false; }
+  }
   return true;
 }
 
@@ -163,7 +215,10 @@ async function archiveGeneration(sourceDirectory, historyDirectory, generation) 
     if (sha256(bytes) !== item.sha256) throw new Error(`Published payload hash mismatch: ${logicalPath}`);
     files[payloadName] = bytes.toString('base64');
   }
-  const archive = await gzipAsync(Buffer.from(JSON.stringify({ schemaVersion: 1, generation, index, files }), 'utf8'), { level: 9, mtime: 0 });
+  let bootstrapIndex;
+  try { bootstrapIndex = JSON.parse(await fs.readFile(path.join(sourceDirectory, 'bootstrap-index.json'), 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const archive = await gzipAsync(Buffer.from(JSON.stringify({ schemaVersion: 1, generation, index, files, bootstrapIndex }), 'utf8'), { level: 9, mtime: 0 });
   await fs.mkdir(historyDirectory, { recursive: true });
   const target = path.join(historyDirectory, `generation-${generation}.snapshot.gz`);
   const temporary = `${target}.${process.pid}.tmp`;
@@ -177,6 +232,7 @@ export async function restoreSnapshotArchive(archivePath, destinationDirectory) 
   if (contents.schemaVersion !== 1 || !contents.index?.files || typeof contents.index.files !== 'object') throw new Error('Invalid snapshot history archive');
   await fs.mkdir(destinationDirectory, { recursive: true });
   await fs.writeFile(path.join(destinationDirectory, 'index.json'), JSON.stringify(contents.index, null, 2));
+  if (contents.bootstrapIndex) await fs.writeFile(path.join(destinationDirectory, 'bootstrap-index.json'), `${JSON.stringify(contents.bootstrapIndex)}\n`, { flag: 'wx' });
   for (const item of Object.values(contents.index.files)) {
     const name = path.basename(item.path);
     if (name !== item.path || !Object.hasOwn(contents.files, name)) throw new Error('Invalid payload in snapshot history archive');
@@ -230,6 +286,11 @@ export async function publishSnapshot({ root, stagingDirectory, historyDirectory
     const indexBytes = Buffer.from(`${JSON.stringify(index, null, 2)}\n`, 'utf8');
     if (indexBytes.byteLength > MAX_FILE_BYTES) throw new RangeError(`index.json exceeds ${MAX_FILE_BYTES} bytes`);
     await fs.writeFile(path.join(stagingPublish, 'index.json'), indexBytes, { flag: 'wx' });
+    if (entries.some(entry => entry.logicalPath === 'snapshot-paging.json')) {
+      const bootstrapBytes = Buffer.from(`${JSON.stringify(buildSnapshotBootstrapIndex(index))}\n`, 'utf8');
+      if (bootstrapBytes.byteLength > MAX_DECODED_BYTES) throw new RangeError('bootstrap-index.json exceeds compact index limit');
+      await fs.writeFile(path.join(stagingPublish, 'bootstrap-index.json'), bootstrapBytes, { flag: 'wx' });
+    }
 
     let archivePath = null;
     if (currentDirectory && currentIndex) {

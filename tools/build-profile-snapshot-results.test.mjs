@@ -95,3 +95,21 @@ test('rebuilding a board does not overwrite a newer exported profile identity',a
  await buildProfileSnapshotResults(root);const profile=JSON.parse(await fs.readFile(path.join(root,'profile-results',accountId+'.json'))).publicProfile;
  assert.equal(profile.name,'Current racer');assert.deepEqual(profile.profileCosmetics,{theme:'cyan'});
 });
+
+test('event-only identity stays public and never becomes a normal finish or Overall podium',async t=>{
+  const root=await fixture(t),eventAccount='c'.repeat(64);
+  await fs.mkdir(path.join(root,'events'));
+  await fs.writeFile(path.join(root,'events','daily-test.json'),JSON.stringify({updatedAt:999,entries:[{accountId:eventAccount,name:'Event racer',carStyle:'event-car',identityUpdatedAt:250,rank:1,rp:90,events:2,ownerUid:'private',replay:'private'}]}));
+  await fs.writeFile(path.join(root,'event-totals.json'),JSON.stringify({updatedAt:100,entries:[{accountId:eventAccount,name:'Older name',rank:7,rp:123,events:2}]}));
+  await buildProfileSnapshotResults(root);
+  const directory=JSON.parse(await fs.readFile(path.join(root,'racer-directory.json')));
+  const identity=directory.entries[eventAccount];
+  assert.equal(identity.name,'Event racer');assert.equal(identity.carStyle,'event-car');
+  assert.equal(identity.ownerUid,undefined);assert.equal(identity.replay,undefined);
+  assert.equal(identity.cosmeticContext.rank,0);assert.equal(identity.cosmeticContext.raceCount,0);
+  const results=JSON.parse(await fs.readFile(path.join(root,'profile-results',eventAccount+'.json')));
+  assert.deepEqual(results.results,[]);
+  const totals=JSON.parse(await fs.readFile(path.join(root,'event-totals.json')));
+  assert.deepEqual([totals.entries[0].rank,totals.entries[0].rp,totals.entries[0].events],[7,123,2]);
+  assert.equal(totals.entries[0].carStyle,'event-car');
+});
