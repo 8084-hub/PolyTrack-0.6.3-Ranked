@@ -1,3 +1,4 @@
+import {queueDocumentId,verificationShardId} from '../../workers/ranked/src/verification-shards.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createRequire} from 'node:module';
@@ -57,6 +58,7 @@ function captureJob(job) {
   const uploadId = job?.uploadId ?? null;
   const id = job?.id ?? null;
   const queueCollection = job?.queueCollection || verificationCollectionForTrack(trackId);
+  const queueId = job?.queueId ?? trackId;
   if (!ACCOUNT_ID.test(accountId) || !TRACK_ID.test(trackId) || resultId !== `${accountId}_${trackId}` ||
       !Number.isSafeInteger(timeMs) || timeMs <= 0 || !Number.isSafeInteger(sourceTimeMs) || sourceTimeMs <= 0 ||
       typeof replay !== 'string' || !replay.length || replay.length > LIMITS.replayCharacters ||
@@ -68,6 +70,7 @@ function captureJob(job) {
       ![VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION].includes(queueCollection)) {
     throw Error('Pending replay queue binding mismatch');
   }
+  if(queueId!==trackId&&queueId!==verificationShardId(trackId,accountId))throw Error('Invalid private queue document binding');
   const sourceRow = {accountId, trackId, timeMs: sourceTimeMs, frames, raceTimeFrames, uploadId, id, replayHash};
   const queueKey = String(job?.queueKey || '');
   if (verificationKey(sourceRow) !== queueKey) throw Error('Pending replay queue-key binding mismatch');
@@ -78,7 +81,7 @@ function captureJob(job) {
     correctionCandidate = {frames: correctionFrames, originalTimeMs: sourceTimeMs};
   } else if (sourceTimeMs !== timeMs) throw Error('Invalid source time binding');
   return {accountId, resultId, trackId, timeMs, sourceTimeMs, replayHash, replay,
-    frames, raceTimeFrames, uploadId, id, queueKey, queueCollection, correctionCandidate};
+    frames, raceTimeFrames, uploadId, id, queueKey, queueId, queueCollection, correctionCandidate};
 }
 
 async function writePrivateCapture(file, root, capture) {
@@ -154,11 +157,11 @@ export async function capturePending({file, credentials = process.env.FIREBASE_V
   });
   const originalSlots = new Map();
   for (const doc of discovered) for (const [accountId, slot] of Object.entries(doc.data.slots || {})) {
-    originalSlots.set(`${doc.queueCollection}/${doc.data.trackId}/${accountId}`, slot);
+    originalSlots.set(`${doc.queueCollection}/${queueDocumentId(doc)}/${accountId}`, slot);
   }
   const jobs = [];
   for (const job of selected.jobs) {
-    const slot = originalSlots.get(`${job.queueCollection}/${job.trackId}/${job.accountId}`);
+    const slot = originalSlots.get(`${job.queueCollection}/${job.queueId || job.trackId}/${job.accountId}`);
     if (!slot || slot.key !== job.queueKey) continue;
     jobs.push(captureJob(job));
   }

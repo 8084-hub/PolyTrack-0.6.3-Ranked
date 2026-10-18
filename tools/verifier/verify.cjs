@@ -8,11 +8,12 @@ const { snapshot, serve } = require('./assets.cjs');
 const { sameHashMap } = require('./engine-pin.cjs');
 const { geometryDecision } = require('./geometry.cjs');
 const { partitionTrustedTracks } = require('./kodub-track.cjs');
+const { loadStaticTrackSelection } = require('./track-selection.cjs');
 
 const VERIFIER_VERSION = 'polytrack-native-bounded-v1';
 const MAX_SESSION_RECOVERIES = 2;
 const trace = message => { if (process.env.VERIFIER_DEBUG === '1') process.stderr.write(`[verifier] ${message}\n`); };
-const verifierFingerprint = sha256(['verify.cjs', 'engine-pin.cjs', 'assets.cjs', 'replay.cjs', 'geometry.cjs', 'kodub-track.cjs', 'track-geometry.json'].map(name => name + '\n' + fs.readFileSync(path.join(__dirname, name), 'utf8').replace(/\r\n?/g, '\n')).join('\n'));
+const verifierFingerprint = sha256(['verify.cjs', 'engine-pin.cjs', 'assets.cjs', 'replay.cjs', 'geometry.cjs', 'kodub-track.cjs', 'track-geometry.json', 'track-selection.cjs'].map(name => name + '\n' + fs.readFileSync(path.join(__dirname, name), 'utf8').replace(/\r\n?/g, '\n')).join('\n'));
 
 function duration(name, maximum) {
   const raw = process.env[name];
@@ -185,6 +186,11 @@ async function runWithBoundedRecovery(indices, runJob, recover, onError, onDefer
   return recoveries;
 }
 
+function requireCleanNativeResult(session,result){
+  if(session.pageErrors.length)throw Object.assign(Error('page_error'),{reason:'page_error'});
+  return result;
+}
+
 async function initialize(session, engine, origin, trustedTracks = []) {
   const context = await session.browser.newContext({ serviceWorkers: 'block', viewport: { width: 800, height: 600 } });
   session.context = context;
@@ -221,7 +227,7 @@ async function initialize(session, engine, origin, trustedTracks = []) {
   // Explicit trusted tracks precede static artifacts so a matching native ID
   // remains bound to the server-captured event bytes and expected hash.
   const tracks = [...trustedTracks, ...[...engine.files]
-    .filter(([name, file]) => (name.startsWith('tracks/') || name.startsWith('extra-tracks/track-data/')) && name.endsWith('.track') && file.bytes.length <= LIMITS.trackBytes)
+    .filter(([name, file]) => (name.startsWith('tracks/') || name.startsWith('extra-tracks/track-data/')) && name.endsWith('.track') && file.bytes.length <= LIMITS.trackBytes && (!engine.requestedStaticPaths || engine.requestedStaticPaths.has(name)))
     .map(([name, file]) => ({ name, hash: file.hash, text: file.bytes.toString('utf8').trim(), trusted: false }))];
   const catalog = await page.evaluate(({ tracks }) => {
     const Track = __vrRequire(9117).A;
@@ -323,6 +329,7 @@ async function verifyBatch(root, jobs, trustedTracks, {profile = 'standard'} = {
       catch (error) { output[i] = verdict(jobs[i], error.status || 'unavailable', error.reason || 'input_validation_failed', engine); }
     }
     if (!pending.length) return output;
+    engine.requestedStaticPaths = loadStaticTrackSelection(root, engine, pending.map(index => jobs[index]), trusted);
     const { chromium } = require(process.env.VERIFIER_PLAYWRIGHT_MODULE || 'playwright');
     host = await serve(engine);
     const createSession = async () => {
@@ -353,7 +360,7 @@ async function verifyBatch(root, jobs, trustedTracks, {profile = 'standard'} = {
       if (session.dead) throw Object.assign(Error('isolate_terminated'),{reason:'isolate_terminated'});
       const started = performance.now();
       const result=await bounded(()=>simulate(session,job),session,wallMs,cpuMs);
-      const native=session.pageErrors.length?{status:'unavailable',reason:'page_error'}:result.value;
+      const native=requireCleanNativeResult(session,result.value);
       output[index]=verdict(job,native.status,native.reason,engine,track,{
         deterministic:native.deterministic??null,
         wallMs:Math.round(performance.now()-started),sampledCpuMs:Math.round(result.sampledCpuMs),
@@ -394,4 +401,4 @@ async function verifyBatch(root, jobs, trustedTracks, {profile = 'standard'} = {
 }
 
 module.exports = { verifyBatch, VERIFIER_VERSION, verifierFingerprint,
-  _internals: { bounded, terminate, initialize, browserEnvironment, waitForExit, verdict, runWithBoundedRecovery, MAX_SESSION_RECOVERIES } };
+  _internals: { bounded, terminate, initialize, browserEnvironment, waitForExit, verdict, runWithBoundedRecovery, MAX_SESSION_RECOVERIES, requireCleanNativeResult } };

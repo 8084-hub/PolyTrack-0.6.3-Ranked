@@ -4,9 +4,12 @@ import { spawnSync } from 'node:child_process';
 import {trackMenuReadContract} from './track-menu-read-contract.mjs';
 import {checkRepositoryExtraVerification} from './extra-verification-check.mjs';
 import {buildNamePolicy} from './build-name-policy.mjs';
+import {validateEnginePin} from './verifier/run.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const failures = [];
+try { await validateEnginePin(); }
+catch (error) { failures.push('Verifier engine pin: ' + error.message); }
 try { await buildNamePolicy({check:true}); }
 catch (error) { failures.push('Shared name policy: ' + error.message); }
 failures.push(...checkRepositoryExtraVerification());

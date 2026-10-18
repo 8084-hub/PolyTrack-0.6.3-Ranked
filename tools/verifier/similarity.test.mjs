@@ -110,6 +110,26 @@ test('real decoded exact clones are denied, near-time matches are review-only, a
       {resultId:'same-account-b',accountId:'f'.repeat(64),trackId,timeMs:7100,replay,replayHash:hash,ingestedAt:'2026-10-11T00:00:02Z'}],[sameAccountA,sameAccountB]);
     assert.equal(sameAccountA.status,'verified');
     assert.equal(sameAccountB.status,'verified','same-account repetitions are not duplicate-account enforcement');
+    for(const dates of [[undefined,undefined],['2026-10-11T00:00:01Z','2026-10-11T00:00:01Z'],['2026-10-11T00:00:01Z',undefined]]){
+      const jobs=['a','b'].map((letter,i)=>({resultId:'ambiguous-'+letter,accountId:letter.repeat(64),trackId,timeMs:7200,replay,replayHash:hash,ingestedAt:dates[i]}));
+      const results=jobs.map(job=>({resultId:job.resultId,status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:7200}));
+      await reviewer(jobs,results);
+      assert.equal(results[1].status,'unavailable','missing or tied server order never selects a losing account by ID');
+      assert.equal(results[1].reason,'identical_replay_pending_manual_review');
+      assert.equal(similarityEvidence(results[1]).kind,'identical_replay');
+      assert.equal(results[0].status,'unavailable');
+    }
+    {
+      const jobs=['a','b','c'].map((letter,i)=>({resultId:'three-'+letter,accountId:letter.repeat(64),trackId,timeMs:7300,replay,replayHash:hash,ingestedAt:i===2?'2026-10-11T00:00:02Z':'2026-10-11T00:00:01Z'}));
+      const results=jobs.map(job=>({resultId:job.resultId,status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:7300}));
+      await reviewer(jobs,results);assert.deepEqual(results.map(r=>r.status),['unavailable','unavailable','mismatch']);
+      assert.equal(results[2].reason,'exact_duplicate_run','a definitely later copy is denied even when the original pair ties');
+    }
+    for(const wrap of [value=>new Date(value),value=>({__firestoreTimestamp:value})]){
+      const jobs=['a','b'].map((letter,i)=>({resultId:'server-date-'+letter,accountId:letter.repeat(64),trackId,timeMs:7400,replay,replayHash:hash,ingestedAt:wrap('2026-10-11T00:00:0'+(i+1)+'Z')}));
+      const results=jobs.map(job=>({resultId:job.resultId,status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:7400}));
+      await reviewer(jobs,results);assert.deepEqual(results.map(r=>r.status),['verified','mismatch'],'trusted Firestore timestamp representations preserve server order');
+    }
     const correctedCandidate={resultId:'candidate',accountId:'f'.repeat(64),trackId,timeMs:6000,replay,replayHash:hash,correctionCandidate:{frames:6000}};
     const candidateResult={resultId:'candidate',status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION,trackId,replayHash:hash,timeMs:6000};
     await reviewer([correctedCandidate],[candidateResult]);

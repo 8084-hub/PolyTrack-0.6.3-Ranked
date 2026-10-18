@@ -25,6 +25,10 @@ test('native Kodub spotlight merges snapshot racers and local PB without enterin
  try{
   const page=await browser.newPage({viewport:{width:1366,height:768}}),origin=new URL(url).origin,errors=[];let productionRequests=0;
   page.on('pageerror',error=>errors.push(String(error)));
+  const failedRequests=[],responses=[];
+  page.on('requestfailed',request=>{if(failedRequests.length<40)failedRequests.push({path:new URL(request.url()).pathname,error:request.failure()?.errorText});});
+  page.on('response',response=>{if(response.status()>=400&&responses.length<40)responses.push({path:new URL(response.url()).pathname,status:response.status()});});
+
   await page.route('**/*',route=>{
    const request=route.request(),target=new URL(request.url());
    if(target.pathname==='/v6/user')return route.fulfill({status:200,contentType:'application/json',body:'null'});
@@ -41,7 +45,7 @@ test('native Kodub spotlight merges snapshot racers and local PB without enterin
    localStorage.setItem('polytrack-0.6.2-local-race-results-v1',JSON.stringify([{accountId,userId:accountId,trackId,name:'Local PB fixture',timeMs,frames:timeMs,uploadId:99999999,createdAt:Date.now()}]));
   },fixture);
   await page.goto(url,{waitUntil:'domcontentloaded'});
-  for(const name of ['Exit','Back','Play','Community tracks']){const button=page.getByRole('button',{name,exact:true}).last();await button.waitFor({state:'visible',timeout:60000}).catch(async error=>{console.error(JSON.stringify({stage:name,errors,screen:await page.locator('#error-screen').innerText().catch(()=>null),buttons:await page.locator('button:visible').allTextContents()}));throw error;});await button.click();}
+  for(const name of ['Exit','Back','Play','Community tracks']){const button=page.getByRole('button',{name,exact:true}).last();await button.waitFor({state:'visible',timeout:60000}).catch(async error=>{console.error(JSON.stringify({stage:name,errors,failedRequests,responses,ui:(await page.locator('#ui').innerText().catch(()=>'' )).slice(0,1600),bodyClass:await page.locator('body').getAttribute('class'),screen:await page.locator('#error-screen').innerText().catch(()=>null),buttons:await page.locator('button:visible').allTextContents()}));throw error;});await button.click();}
   const weekly=page.locator('.sq-kodub-weekly > button');await weekly.waitFor({state:'visible',timeout:30000});
   assert.doesNotMatch(await page.locator('.community-track-versions').innerText(),/StaticQuasar931/);
   await page.waitForFunction(()=>{const image=document.querySelector('.sq-featured-events .sq-permanent-track img.thumbnail');return image?.complete&&image.naturalWidth>0&&!image.classList.contains('loading')&&Number(getComputedStyle(image).opacity)>0;},null,{timeout:15000});

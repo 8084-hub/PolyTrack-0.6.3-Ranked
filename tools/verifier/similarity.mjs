@@ -73,7 +73,8 @@ function identicalInformativeInputs(a, b, duration) {
 function jobResultId(job) { return job?.resultId || job?.runId; }
 function submissionOrder(job) {
   for (const value of [job?.ingestedAt, job?.receivedAt]) {
-    const at=typeof value==='number'?value:typeof value==='string'?Date.parse(value):NaN;
+    const at=value instanceof Date?value.getTime():typeof value==='number'?value:typeof value==='string'?Date.parse(value):
+      typeof value?.__firestoreTimestamp==='string'?Date.parse(value.__firestoreTimestamp):NaN;
     if(Number.isSafeInteger(at)&&at>0)return at;
   }
   return Number.MAX_SAFE_INTEGER;
@@ -157,12 +158,21 @@ export function createSimilarityReviewer(root) {
     for(const group of exactGroups.values()) {
       const candidates=group.filter(row=>row.comparisonAllowed&&verifiedControlProof(row.result)?.informative)
         .sort((a,b)=>submissionOrder(a.job)-submissionOrder(b.job)||String(jobResultId(a.job)).localeCompare(String(jobResultId(b.job))));
-      if(candidates.length<2) continue;
-      const winner=candidates[0];
-      for(const row of candidates.slice(1).filter(row=>row.job.accountId!==winner.job.accountId)) {
-        const ref=winner;
-        const evidence=compareControls(row.controls,ref.controls,row.job.timeMs,ref.job.timeMs);
-        if(evidence) setEvidence(row,{...ref.job,replayHash:ref.job.replayHash},evidence,true);
+      if(candidates.length<2||new Set(candidates.map(row=>row.job.accountId)).size<2) continue;
+      const firstByAccount=new Map();
+      for(const row of candidates)if(!firstByAccount.has(row.job.accountId))firstByAccount.set(row.job.accountId,row);
+      for(const row of candidates){
+        const ownOrder=submissionOrder(firstByAccount.get(row.job.accountId).job);
+        const peers=[...firstByAccount.values()].filter(other=>other.job.accountId!==row.job.accountId);
+        const earlier=peers.find(other=>submissionOrder(other.job)<ownOrder&&ownOrder!==Number.MAX_SAFE_INTEGER);
+        const ambiguous=ownOrder===Number.MAX_SAFE_INTEGER||peers.some(other=>
+          submissionOrder(other.job)===Number.MAX_SAFE_INTEGER||submissionOrder(other.job)===ownOrder);
+        if(!earlier&&!ambiguous)continue;
+        const ref=earlier||peers[0],evidence=compareControls(row.controls,ref.controls,row.job.timeMs,ref.job.timeMs);
+        if(!evidence)continue;
+        setEvidence(row,{...ref.job,replayHash:ref.job.replayHash},evidence,true);
+        // IDs cannot establish submission order; only a definitely earlier other account can.
+        if(!earlier){row.result.status='unavailable';row.result.reason='identical_replay_pending_manual_review';}
       }
     }
     for (const result of results) {

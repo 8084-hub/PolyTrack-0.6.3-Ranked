@@ -128,9 +128,27 @@ export function ensureFeaturedSection(document,selection=null){
     featured=rolling;
     featured.classList.add('sq-permanent-track');featured.dataset.sqPermanentFeatured='true';
     const featuredButton=featured.querySelector(':scope > button');
+    section.__sqPermanentSourceGroup=featured.parentElement;
     section.append(featured);
     const note=document.createElement('small');note.className='sq-permanent-note';
     note.textContent='Normal RP + up to 1001 Event RP / No reset';featuredButton?.append(note);
+  }
+  const source=section.__sqPermanentSourceGroup;
+  if(source?.parentElement===nav.parentElement&&source.matches('.community-track-group')){
+    const groups=[...nav.parentElement.children].filter(node=>node.matches('.community-track-group'));
+    const tabs=[...nav.querySelectorAll(':scope > button')],tab=tabs[groups.indexOf(source)];
+    // Hide only the author group emptied by our promotion, never an unrelated tab.
+    if(tab?.textContent.trim()==='StaticQuasar931'&&!source.querySelector('.track')){
+      source.hidden=true;tab.dataset.sqFeaturedEmpty='true';tab.hidden=true;
+      tab.style.setProperty('display','none','important');tab.setAttribute('aria-hidden','true');tab.tabIndex=-1;
+      if(tab.classList.contains('selected')){
+        const next=tabs.find(node=>node!==tab&&!node.hidden&&node.textContent.trim()==='0.6.3')||tabs.find(node=>node!==tab&&!node.hidden);
+        next?.click();
+      }
+    }else if(tab?.dataset.sqFeaturedEmpty==='true'){
+      source.hidden=false;tab.hidden=false;delete tab.dataset.sqFeaturedEmpty;
+      tab.style.removeProperty('display');tab.removeAttribute('aria-hidden');tab.removeAttribute('tabindex');
+    }
   }
   return section;
 }

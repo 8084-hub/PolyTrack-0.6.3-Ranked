@@ -64,8 +64,16 @@ export function verifiedTrackCounts(byTrack = {}) {
       } catch { /* Geometry names remain available if a catalog cannot be read. */ }
     }
     try {
+      const history=JSON.parse(fs.readFileSync(new URL('../../events/kodub/history.json',import.meta.url),'utf8'));
+      for(const row of Array.isArray(history)?history:[])if(/^[a-f0-9]{64}$/.test(row?.trackId||'')&&typeof row.name==='string'&&row.name.trim()&&!trackNames.has(row.trackId))
+        trackNames.set(row.trackId,row.name.replace(/[\r\n]/g,' ').trim().slice(0,120));
+      const current=JSON.parse(fs.readFileSync(new URL('../../events/kodub/current.json',import.meta.url),'utf8')).current;
+      if(/^[a-f0-9]{64}$/.test(current?.trackId||'')&&typeof current.name==='string'&&current.name.trim())
+        trackNames.set(current.trackId,current.name.replace(/[\r\n]/g,' ').trim().slice(0,120));
+    } catch { /* An unavailable feed cannot block verification. */ }
+    try {
       const geometry = JSON.parse(fs.readFileSync(new URL('./track-geometry.json', import.meta.url), 'utf8'));
-      for (const track of geometry.tracks || []) if (!trackNames.has(String(track.id))) trackNames.set(String(track.id), String(track.name || '').split('/').at(-1).replace(/\.track$/i, '')
+      for (const track of geometry.tracks || []) if (!trackNames.has(String(track.id))) trackNames.set(String(track.id), String(track.displayName || track.name || '').split('/').at(-1).replace(/\.track$/i, '')
         .replace(/([a-z])([0-9])/gi, '$1 $2').replace(/[-_]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase()));
     } catch { /* Unknown IDs fall back to their raw ID. */ }
   }

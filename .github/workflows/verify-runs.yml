@@ -31,6 +31,8 @@ jobs:
           cache-dependency-path: tools/verifier/package-lock.json
       - name: Check Extra catalog and trusted track pins
         run: node tools/extra-verification-check.mjs
+      - name: Check trusted engine before Firebase reads
+        run: node --input-type=module -e "import {validateEnginePin} from './tools/verifier/run.mjs'; await validateEnginePin();"
       - name: Check for due verification work
         id: queue
         timeout-minutes: 2

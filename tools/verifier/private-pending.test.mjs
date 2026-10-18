@@ -1,3 +1,5 @@
+import {encode} from './firestore.mjs';
+import {verificationShardId} from '../../workers/ranked/src/verification-shards.js';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -19,7 +21,7 @@ const QUEUE_KEY = verificationKey(ROW);
 const SAFE_JOB = {accountId: ROW.accountId, resultId: `${ROW.accountId}_${TRACK}`, trackId: TRACK,
   timeMs: ROW.timeMs, sourceTimeMs: ROW.timeMs, replayHash: HASH, replay: REPLAY, frames: null,
   raceTimeFrames: null, uploadId: ROW.uploadId, id: null, queueKey: QUEUE_KEY,
-  queueCollection: verificationCollectionForTrack(TRACK), correctionCandidate: null};
+  queueCollection: verificationCollectionForTrack(TRACK), queueId: TRACK, correctionCandidate: null};
 
 async function withPrivateDirectory(run) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'polytrack-private-'));
@@ -146,4 +148,46 @@ test('capture reader rejects repository paths, wrong engine, modified replay, an
     await saveCapture(file, Array.from({length: 17}, () => SAFE_JOB));
     await assert.rejects(readPrivateCapture(file, {root: ROOT}), /schema or pinned engine/);
   });
+});
+
+
+test('private captures retain only safe root or account-shard queue bindings',async()=>{
+ await withPrivateDirectory(async directory=>{
+  const file=path.join(directory,'shard.json'),queueId=verificationShardId(TRACK,ROW.accountId);
+  await saveCapture(file,[{...SAFE_JOB,queueId}]);assert.equal((await readPrivateCapture(file,{root:ROOT})).jobs[0].queueId,queueId);
+  await saveCapture(file,[{...SAFE_JOB,queueId:'other-account-shard'}]);await assert.rejects(readPrivateCapture(file,{root:ROOT}),/queue document binding/);
+  const legacy={...SAFE_JOB};delete legacy.queueId;await saveCapture(file,[legacy]);assert.equal((await readPrivateCapture(file,{root:ROOT})).jobs[0].queueId,TRACK,'old captures never guess a shard');
+ });
+});
+test('private publication reads and writes the captured shard rather than the legacy root',async()=>{
+ await withPrivateDirectory(async directory=>{
+  const file=path.join(directory,'shard.json'),queueId=verificationShardId(TRACK,ROW.accountId);await saveCapture(file,[{...SAFE_JOB,queueId}]);let writes;
+  const document=data=>({updateTime:'version-1',fields:encode(data).mapValue.fields});
+  const db={call:async(endpoint,body)=>{
+   if(endpoint===':commit'){writes=body.writes;return {writeResults:body.writes.map(()=>({updateTime:'version-2'}))};}
+   if(endpoint==='/'+VERIFICATION_COLLECTION+'/'+queueId)return document({trackId:TRACK,queueId,slots:{racer:{accountId:'racer',trackId:TRACK,key:QUEUE_KEY,status:'waiting'}}});
+   if(endpoint==='/0.6.2_race_results/'+SAFE_JOB.resultId)return document(ROW);
+   if(endpoint==='/'+VERIFICATION_COLLECTION+'/'+TRACK)assert.fail('wrong root queue lookup');
+   return null;
+  },write:(collection,id,data,prior)=>({update:{name:collection+'/'+id,fields:encode(data).mapValue.fields},currentDocument:prior?{updateTime:prior.updateTime}:{exists:false}})};
+  const result=await publishPrivateCapture({file,root:ROOT,credentials:'fixture',validateEngine:async()=>{},connectDatabase:async()=>db,
+   verifyNative:async()=>[{resultId:SAFE_JOB.resultId,status:'verified',reason:'native_exact_finish',trackId:TRACK,timeMs:ROW.timeMs,replayHash:HASH,engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION}]});
+  assert.equal(result.verified,1);assert.equal(writes[0].update.name,VERIFICATION_COLLECTION+'/'+queueId);
+ });
+});
+
+
+test('capturePending round-trips a discovered account shard into the private file',async()=>{
+ await withPrivateDirectory(async directory=>{
+  const file=path.join(directory,'captured.json'),queueId=verificationShardId(TRACK,ROW.accountId);
+  const fields=data=>encode(data).mapValue.fields;
+  const db={call:async(endpoint,body)=>{
+   if(endpoint===':runQuery')return body.structuredQuery.from[0].collectionId===VERIFICATION_COLLECTION?[{document:{name:'projects/fixture/databases/(default)/documents/'+VERIFICATION_COLLECTION+'/'+queueId,updateTime:'v1',fields:fields({trackId:TRACK,queueId,notBefore:0,slots:{racer:{accountId:'racer',resultId:SAFE_JOB.resultId,trackId:TRACK,key:QUEUE_KEY,status:'waiting',retryAt:0}}})}}]:[];
+   if(endpoint==='/0.6.2_race_results/'+SAFE_JOB.resultId)return {fields:fields(ROW),updateTime:'v1'};
+   if(endpoint===':commit')assert.fail('capture must not write');
+   return null;
+  }};
+  const captured=await capturePending({file,root:ROOT,credentials:'fixture',now:100,validateEngine:async()=>{},connectDatabase:async()=>db});
+  assert.equal(captured.jobs,1);assert.equal((await readPrivateCapture(file,{root:ROOT})).jobs[0].queueId,queueId);
+ });
 });

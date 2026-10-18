@@ -318,3 +318,14 @@ for(const optionalProof of [undefined,{informative:false},{version:1,verifierVer
   assert.equal(verifiedControlReference(accepted,TRACK),null,'unusable clone signatures remain rejected');
  });
 }
+
+
+test('verification summaries use the current Kodub track name instead of a formatted hash',async()=>{
+ const fs=await import('node:fs/promises');
+ const feed=JSON.parse(await fs.readFile(new URL('../../events/kodub/current.json',import.meta.url),'utf8'));
+ const {verifiedTrackCounts}=await import('./runner.mjs');
+ const result=verifiedTrackCounts({[feed.current.trackId]:3});
+ assert.equal(result[0].trackName,feed.current.name);assert.equal(result[0].count,3);
+ const history=JSON.parse(await fs.readFile(new URL('../../events/kodub/history.json',import.meta.url),'utf8'));
+ const archived=history.find(row=>row.name&&row.trackId!==feed.current.trackId);assert.equal(verifiedTrackCounts({[archived.trackId]:1})[0].trackName,archived.name);
+});

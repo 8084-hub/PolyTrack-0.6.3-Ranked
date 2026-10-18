@@ -35,3 +35,12 @@ test('native verifier uses exact unordered comparison and fingerprints its helpe
   assert.ok(source.includes("['verify.cjs', 'engine-pin.cjs', 'assets.cjs',"));
   assert.ok(source.includes('sha256(JSON.stringify(pin.files)) !== pin.engineDigest'));
 });
+
+
+test('release and workflow gates check trusted engine before queue reads',()=>{
+ const release=fs.readFileSync(path.join(__dirname,'../release-check.mjs'),'utf8');
+ assert.match(release,/await validateEnginePin\(\)/);
+ const workflow=fs.readFileSync(path.join(__dirname,'../../.github/workflows/verify-runs.yml'),'utf8');
+ assert.ok(workflow.indexOf('Check trusted engine before Firebase reads')<workflow.indexOf('Check for due verification work'));
+ assert.match(workflow,/await validateEnginePin\(\)/);
+});

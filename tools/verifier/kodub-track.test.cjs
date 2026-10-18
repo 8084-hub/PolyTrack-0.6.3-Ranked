@@ -279,3 +279,33 @@ test('La Riviera matches only its pinned native identity, hash, and measured geo
     }]);
   assert.equal(forgedCatalog.get(laRivieraId).reason, 'track_geometry_limit');
 });
+
+
+test('Velvoire admits only its exact reviewed asset and measured geometry', () => {
+  const id='bcc7ad7cd3f7fc536dd6b2e966df5136df78b1567a823b9c67a9ff65dfb5b3ff';
+  const hash='df61cff5a4982b0303bffb0a3a346bc26a2b031d7b1bfec1683acd2b26ceff65';
+  const reviewed=require('./track-geometry.json');
+  const row=reviewed.tracks.find(track=>track.id===id);
+  assert.deepEqual(row,{id,name:'trusted/'+id+'.track',hash,parts:74069,spanX:812,spanZ:752});
+  const code=fs.readFileSync(path.join(__dirname,'../../events/kodub/assets/'+hash+'.track'),'utf8');
+  const descriptor={trackId:id,codeHash:hash,code};
+  assert.equal(normalizeTrustedTracks([descriptor],new Set([id]))[0].hash,hash);
+  const {geometryDecision}=require('./geometry.cjs');
+  const track={id,name:row.name,hash,geometry:{parts:74069,spanX:812,spanZ:752}};
+  assert.equal(geometryDecision(track,reviewed.engineDigest).geometryPolicy,'reviewed-pinned');
+  for(const change of [{hash:'a'.repeat(64)},{id:'a'.repeat(64)},{geometry:{...track.geometry,parts:74070}},{geometry:{...track.geometry,spanX:813}}])
+    assert.equal(geometryDecision({...track,...change},reviewed.engineDigest).reason,'track_geometry_limit');
+  assert.equal(geometryDecision(track,'wrong-engine').reason,'track_geometry_limit');
+  assert.throws(()=>normalizeTrustedTracks([{...descriptor,codeHash:'a'.repeat(64)}],new Set([id])),/trusted_track_hash_mismatch/);
+});
+
+test('Jealousy archive admits only its exact measured asset, never a claimed replacement ID',()=>{
+ const id='56cf2ebe98b63c81c03abd5c501f4a3272f676c183d9e34e8b2c4b8a82140306',hash='84129c91045797a07a0b2c5bb5337ca946c80b63ac68287b32704a81c4bf77ba';
+ const policy=require('./track-geometry.json'),row=policy.tracks.find(t=>t.id===id);
+ assert.deepEqual({parts:row.parts,spanX:row.spanX,spanZ:row.spanZ},{parts:54028,spanX:445,spanZ:609});
+ const code=fs.readFileSync(path.join(__dirname,'../../events/kodub/assets/'+hash+'.track'),'utf8');
+ assert.equal(normalizeTrustedTracks([{trackId:id,codeHash:hash,code}],new Set([id]))[0].hash,hash);
+ const forged='f'.repeat(64);assert.throws(()=>normalizeTrustedTracks([{trackId:forged,codeHash:hash,code}],new Set([forged])),/trusted_track_inflated_size_limit|trusted_track_part_limit/);
+ const {geometryDecision}=require('./geometry.cjs'),track={id,name:row.name,hash,geometry:{parts:54028,spanX:445,spanZ:609}};
+ assert.equal(geometryDecision(track,policy.engineDigest).geometryPolicy,'reviewed-pinned');assert.equal(geometryDecision({...track,hash:'a'.repeat(64)},policy.engineDigest).reason,'track_geometry_limit');
+});

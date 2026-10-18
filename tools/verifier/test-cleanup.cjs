@@ -55,3 +55,12 @@ test('still-live owned process remains a real cleanup failure with diagnostics',
   assert.equal(session.cleanup.exitObserved, false);
   assert.equal(child.listenerCount('exit'), 0);
 });
+
+
+test('page errors use bounded recovery instead of contaminating later jobs',async()=>{
+ const {requireCleanNativeResult,runWithBoundedRecovery}=require('./verify.cjs')._internals;
+ let session={pageErrors:['worker error']},recovered=0;const results=[];
+ await runWithBoundedRecovery([0,1],async index=>{results[index]=requireCleanNativeResult(session,{status:'verified',reason:'native_exact_finish'}).reason;},async()=>{recovered++;session={pageErrors:[]};},(index,error)=>{results[index]=error.reason;},()=>assert.fail('unexpected deferred job'));
+ assert.deepEqual(results,['page_error','native_exact_finish']);assert.equal(recovered,1);
+ const clean={status:'verified'};assert.equal(requireCleanNativeResult({pageErrors:[]},clean),clean);
+});
