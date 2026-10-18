@@ -62,3 +62,9 @@ test('live snapshot page helper follows future release cache keys',()=>{
  const input=patch+"import('./tools/ranked-live-snapshot.mjs?v=149');";
  assert.match(stampClientRelease(input,index,150).patch,/ranked-live-snapshot\.mjs\?v=150/);
 });
+
+test('practice modules follow the client cache revision',()=>{
+ const input=patch+"import('./tools/practice-history.mjs?v=153');import('./tools/practice-native.mjs?v=153');";
+ const result=stampClientRelease(input,index,154);
+ assert.match(result.patch,/practice-history\.mjs\?v=154/);assert.match(result.patch,/practice-native\.mjs\?v=154/);
+});

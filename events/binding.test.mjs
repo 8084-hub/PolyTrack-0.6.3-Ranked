@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createPracticeHistory } from '../tools/practice-history.mjs';
+import { installPracticeObserver } from '../tools/practice-native.mjs';
 import { installNativeLocalBinding, installNativeBoundCapture } from './native-binding.mjs';
 
 const root = process.env.EVENT_TEST_REPO || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -219,4 +221,18 @@ test('native caller audit: local profile read precedes controlled construction a
   assert(source.includes('new z.A(null,t,e.settings.recording,null,'));
   assert(source.includes('new z.A(null,t,null,null,'));
   assert.equal(source.split('new Bu.A(').length - 1, 1, 'bootstrap constructs one native profile manager');
+});
+
+test('local practice observer preserves actual native event binding and finish capture',()=>{
+ const r=runtime(),captured=[],history=createPracticeHistory();
+ const account=r.manager.getCurrentUserProfile().tokenHash;
+ const observer=installPracticeObserver({require:r.require,history,accountId:()=>account,schedule:()=>1,cancel(){}});
+ const capture=installNativeBoundCapture({require:r.require,onFinish:run=>captured.push(run),onError:error=>{throw error;},newRaceId:()=> 'practice_event'});
+ try{
+  const car=r.construct();car.addResetCallback(()=>{});car.addFinishCallback(()=>{});r.finish(0,20402);
+  assert.equal(captured.length,1);assert.equal(captured[0].timeMs,20402);
+  assert.equal(history.get(account,r.track.getId()).finishes,1);
+  assert.equal(history.get(account,r.track.getId()).bestMs,20402);
+  assert.deepEqual(Array.from(r.physics.messages,m=>m.messageType),[3,6]);
+ }finally{capture.stop();observer.stop();}
 });

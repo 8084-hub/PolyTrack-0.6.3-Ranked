@@ -2,7 +2,7 @@ import {archivePeriodCounts,catalogArchivePeriods,mountArchiveView} from './arch
 import {preparePublishedEventGhost} from './public-replay.mjs';
 import {eventFinishPlace} from './placement.mjs';
 import {createEventSession,keepEventBest,matchingEventRuns} from './session.mjs';
-import {installNativeLocalBinding} from './native-binding.mjs';
+import {installNativeLocalBinding} from './native-binding.mjs?v=153';
 import {installFinishCapture} from './native-finish.mjs';
 import {prepareOwnEventGhost} from './native-replay.mjs';
 const STORE='polytrack-062-events-v1',QUEUE=STORE+'-queue',BEST=STORE+'-best';

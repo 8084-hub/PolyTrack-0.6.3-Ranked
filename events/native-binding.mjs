@@ -125,6 +125,8 @@ export function installNativeLocalBinding({ require, onError, newRaceId = () => 
     throw error;
   }
   installations.add(Car);
+  const practiceMarker=Symbol.for('polytrack-native-local-binding');
+  Physics.prototype[practiceMarker]=true;
   return Object.freeze({
     Car,
     requiresRaceRestart: true,
@@ -158,6 +160,7 @@ export function installNativeLocalBinding({ require, onError, newRaceId = () => 
     },
     stop() {
       active = false; observed = null;
+      delete Physics.prototype[practiceMarker];
       for (const h of [...hooks].reverse()) if (h.prototype[h.name] === h.wrapper) h.prototype[h.name] = h.prior;
     }
   });
