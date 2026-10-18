@@ -1,5 +1,5 @@
 // Public, same-origin backups never replace the authoritative PB submission path.
-export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now,packed=false,bootstrap=false,optimizedIndex=false,byteCache,onGenerationChange}){
+export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now,packed=false,bootstrap=false,optimizedIndex=false,byteCache,onRead,onGenerationChange}){
   const pending=new Map(),saved=new Map(),retryAt=new Map();
   const lookupCache=new Map(),lookupPending=new Map(),lookupRetryAt=new Map();let manifestValue=null;
 
@@ -221,10 +221,12 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
       kind==='recording'&&/^\d{1,16}$/.test(String(id))&&Number.isSafeInteger(Number(id))&&Number(id)>0?`recordings/${id}.json`:
       kind==='event-replay'&&/^[A-Za-z0-9_-]{1,64}$/.test(id)&&/^[a-f0-9]{64}$/.test(accountId)?`event-replays/${id}/${accountId}.json`:null;
     if(!path)return null;
+    const readStarted=now();
+    const measured=source=>{try{onRead?.({kind,source,durationMs:Math.max(0,now()-readStarted)});}catch{}};
     if(['track-preview','track-page','track-manifest','overall-preview','overall-page','overall-manifest','snapshot-paging'].includes(kind))preferBootstrap=true;
     if(kind==='manifest'&&manifestValue)return {...manifestValue,_dataSource:'cached'};
     const cached=saved.get(path);
-    if(cached&&(packed||now()-cached.checkedAt<600000)){saved.delete(path);saved.set(path,cached);return {...cached.value,_dataSource:'cached'};}
+    if(cached&&(packed||now()-cached.checkedAt<600000)){saved.delete(path);saved.set(path,cached);measured('memory');return {...cached.value,_dataSource:'cached'};}
     if(pending.has(path))return pending.get(path);
     if(now()<(retryAt.get(path)||0))return cached?.value||null;
     const request=(async()=>{
@@ -277,11 +279,11 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
           let bytes=0;for(const entry of saved.values())bytes+=entry.bytes;
           while(saved.size>128||bytes>8*1024*1024){const oldest=saved.keys().next().value;bytes-=saved.get(oldest).bytes;saved.delete(oldest);}
         }
-        retryAt.delete(path);
+        retryAt.delete(path);measured('snapshot');
         return result;
       }catch(error){
         if(requestedGeneration!==generation)return null;
-        retryAt.set(path,now()+(isTransientFailure(error)?SHORT_RETRY_MS:LONG_RETRY_MS));if(retryAt.size>512)retryAt.delete(retryAt.keys().next().value);return cached?.value||null;
+        measured('failed');retryAt.set(path,now()+(isTransientFailure(error)?SHORT_RETRY_MS:LONG_RETRY_MS));if(retryAt.size>512)retryAt.delete(retryAt.keys().next().value);return cached?.value||null;
       }
     })();
     pending.set(path,request);

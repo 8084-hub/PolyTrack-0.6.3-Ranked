@@ -40,10 +40,10 @@ test('practice is only a bounded hint and sparse data never claims a track is im
 function nativeFixture(){
  class Physics{createCar(_a,_b,_c,track,recording){return {id:1,carState:{frames:0},track,recording};}}
  class Car{constructor(state){this.state=state;this.reset=[];this.finish=[];this.started=true;this.paused=false;this.finished=false;}addResetCallback(fn){this.reset.push(fn);}addFinishCallback(fn){this.finish.push(fn);}getCarState(){return this.state;}getTime(){return {numberOfFrames:this.state.frames};}hasStarted(){return this.started;}hasFinished(){return this.finished;}get isPaused(){return this.paused;}getNextCheckpointIndex(){return 2;}dispose(){return 'native-disposed';}}
- let tick,shown=true;const h=setup(),physics=new Physics(),require=id=>({A:id===5220?Physics:Car});
- const observer=installPracticeObserver({require,history:h.history,accountId:()=>account,visible:()=>shown,schedule:fn=>{tick=fn;return 1;},cancel(){}});
+ let tick,shown=true,clock=0;const h=setup(),physics=new Physics(),require=id=>({A:id===5220?Physics:Car});
+ const observer=installPracticeObserver({require,history:h.history,accountId:()=>account,visible:()=>shown,clock:()=>clock,schedule:fn=>{tick=fn;return 1;},cancel(){}});
  const car=(recording=null)=>{const result=physics.createCar(null,null,null,{getId:()=>track},recording);const value=new Car(result.carState);value.addResetCallback(()=>{});return value;};
- return {h,physics,Car,Physics,require,observer,car,tick:()=>tick(),hide:()=>shown=false,show:()=>shown=true};
+ return {h,physics,Car,Physics,require,observer,car,tick:()=>{clock+=1000;tick();},hide:()=>shown=false,show:()=>shown=true};
 }
 test('native observer excludes ghosts, pauses and hidden time; repeated install is idempotent',()=>{
  const f=nativeFixture();try{const ghost=f.car('replay');ghost.state.frames=1000;f.tick();assert.equal(f.h.history.get(account,track),null);

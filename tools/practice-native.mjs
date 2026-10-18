@@ -1,6 +1,6 @@
 // Observes native callbacks only. No engine assets, inputs, replay data or messages are changed.
 const installed=new WeakMap();
-export function installPracticeObserver({require,history,accountId,bestMs=()=>0,visible=()=>true,onTrack=()=>{},schedule=setInterval,cancel=clearInterval}){
+export function installPracticeObserver({require,history,accountId,bestMs=()=>0,visible=()=>true,onTrack=()=>{},schedule=setInterval,cancel=clearInterval,clock=()=>performance.now()}){
  const Physics=require(5220)?.A,Car=require(641)?.A;
  if(!Physics?.prototype||!Car?.prototype)throw Error('practice_native_unavailable');
  const pp=Physics.prototype,cp=Car.prototype;
@@ -15,8 +15,10 @@ export function installPracticeObserver({require,history,accountId,bestMs=()=>0,
  function sample(){
   if(!current)return;
   const frame=Number(current.car.getTime()?.numberOfFrames)||0;
-  const delta=frame-current.frame;
-  if(visible()&&!current.car.isPaused&&current.car.hasStarted()&&!current.finished&&delta>0)current.attempt?.tick(delta,current.car.getNextCheckpointIndex());
+  const delta=frame-current.frame,wall=clock()-current.sampleAt;current.sampleAt=clock();
+  if(wall>2500||!visible()||current.car.isPaused)current.reliable=false;
+  if(visible()&&!current.car.isPaused&&current.car.hasStarted()&&!current.finished&&delta>0)current.attempt?.tick(delta,current.car.getNextCheckpointIndex(),Math.min(2000,Math.max(0,current.running?wall:Math.min(wall,delta))));
+  current.running=visible()&&!current.car.isPaused&&current.car.hasStarted()&&!current.finished&&delta>0;
   current.frame=frame;current.last=Math.max(current.last,frame);
  }
  function create(...args){
@@ -32,10 +34,10 @@ export function installPracticeObserver({require,history,accountId,bestMs=()=>0,
      if(pending&&pending.physics===evidence.physics&&pending.trackId===evidence.trackId&&pending.account===accountId()){pending.attempt?.restart(pending.last);pending=null;}
      if(current){sample();current.attempt?.leave();}
      const car=this,account=accountId(),attempt=history.begin(account,evidence.trackId,bestMs(account,evidence.trackId));
-     const state={...evidence,account,car,attempt,frame:Number(car.getTime()?.numberOfFrames)||0,last:0,finished:false};current=state;
+     const state={...evidence,account,car,attempt,frame:Number(car.getTime()?.numberOfFrames)||0,last:0,finished:false,sampleAt:clock(),reliable:true};current=state;
      report(()=>onTrack(evidence.trackId));
-     originalReset.call(car,()=>report(()=>{sample();if(!state.finished)attempt?.respawn(state.last);}));
-     originalFinish.call(car,()=>report(()=>{if(current===state)sample();attempt?.finish(Number(car.getFinishTime?.()?.numberOfFrames??car.getTime()?.numberOfFrames));state.finished=true;}));
+     originalReset.call(car,()=>report(()=>{sample();if(!state.finished){state.reliable=false;attempt?.respawn(state.last);}}));
+     originalFinish.call(car,()=>report(()=>{if(current===state)sample();attempt?.finish(Number(car.getFinishTime?.()?.numberOfFrames??car.getTime()?.numberOfFrames),{reliable:state.reliable});state.finished=true;}));
      const dispose=car.dispose;
      car.dispose=function(...args){
       if(current===state){report(sample);current=null;if(!state.finished){pending=state;queueMicrotask(()=>{if(pending===state){pending=null;attempt?.leave();}});}}
