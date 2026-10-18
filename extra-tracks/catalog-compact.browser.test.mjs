@@ -38,6 +38,16 @@ test('catalog header, filters and review controls fit small touch screens with e
     assert.ok(item.scroll<=item.client+1,'header labels are not clipped');
     if(item.button)assert.ok(item.height>=44,'touch header buttons must be at least 44px at '+width+'x'+height);
    }
+   const menuState=await page.locator('.sq-extra-menu').evaluate(menu=>{
+    menu.scrollTop=menu.scrollHeight;
+    const box=menu.getBoundingClientRect(),pagination=menu.querySelector('.sq-extra-pagination').getBoundingClientRect();
+    const visibleControls=[...menu.querySelectorAll('.sq-extra-close,.sq-extra-export,.sq-extra-submit,.sq-extra-advanced-toggle,.sq-extra-field input,.sq-extra-field select,.sq-extra-favorite,.sq-extra-more,.sq-extra-play,.sq-extra-pagination button')].filter(node=>node.getClientRects().length);
+    return {box:{top:box.top,bottom:box.bottom,height:box.height},scrollHeight:menu.scrollHeight,clientHeight:menu.clientHeight,scrollTop:menu.scrollTop,pagination:{top:pagination.top,bottom:pagination.bottom},controls:visibleControls.map(node=>({name:node.className||node.type,height:node.getBoundingClientRect().height,width:node.getBoundingClientRect().width}))};
+   });
+   assert.ok(menuState.box.top>=0&&menuState.box.bottom<=height+1,'catalog scroller stays inside '+width+'x'+height);
+   assert.ok(menuState.scrollHeight>menuState.clientHeight&&menuState.scrollTop>0,'catalog content scrolls in short viewport '+width+'x'+height);
+   assert.ok(menuState.pagination.bottom<=height+1&&menuState.pagination.top>=0,'bottom pagination is reachable after scrolling at '+width+'x'+height);
+   for(const control of menuState.controls)assert.ok(control.height>=43.99&&control.width>=43.99,'coarse-pointer target is at least 44px: '+control.name+' at '+width+'x'+height+' ('+control.width+'x'+control.height+')');
    if(width===390&&process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR)await page.screenshot({path:process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR+'/catalog-390.png'});
    await page.locator('.sq-extra-export').click();
    const more=page.locator('.sq-extra-more').first();await more.scrollIntoViewIfNeeded();await more.click();

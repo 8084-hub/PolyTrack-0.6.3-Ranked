@@ -230,7 +230,7 @@
 @media(max-width:600px) and (orientation:landscape) {
   .track-info-ui .leaderboard-ui > .button-wrapper:has(>[data-personal-filter-button]) {
     gap: 4px !important;
-    grid-template-columns: minmax(42px, .7fr) minmax(92px, 1.5fr) minmax(64px, 1.2fr) 40px !important;
+    grid-template-columns: minmax(0, .7fr) minmax(0, 1.5fr) minmax(0, 1.2fr) 40px !important;
   }
 }
 
@@ -304,6 +304,23 @@ html body #polytrackTrackFreshness.polytrack-track-freshness[data-layout="vertic
 @media(max-width:600px) and (orientation:portrait) {
   html body #polytrackTrackFreshness.polytrack-track-freshness { max-width:min(20em,var(--sq-track-data-width, 20em),calc(100vw - 1.25em))!important; }
   html body #polytrackTrackFreshness.polytrack-track-freshness > strong { flex-direction:column;gap:0.12em; }
+}
+/* Compact the informational card without shrinking native touch controls. */
+@media(max-width:600px), (max-height:500px) {
+  html body #polytrackTrackFreshness.polytrack-track-freshness {
+    font-size:clamp(12px,calc(14px * var(--sq-ui-scale,1)),16px)!important;
+    padding:.4em .55em!important;
+    gap:.18em!important;
+    max-width:min(24em,var(--sq-track-data-width,24em),calc(100vw - 1.25em))!important;
+    line-height:1.2!important;
+  }
+  html body #polytrackTrackFreshness.polytrack-track-freshness > strong {font-size:1.05em!important;line-height:1.2!important;}
+  html body #polytrackTrackFreshness.polytrack-track-freshness > span {font-size:1em!important;line-height:1.25!important;}
+}
+@media(max-width:600px) and (orientation:portrait) {
+  html body #polytrackTrackFreshness.polytrack-track-freshness {
+    max-width:min(19em,var(--sq-track-data-width,19em),calc(100vw - 1.25em))!important;
+  }
 }
 /* At extreme zoom, match the native menu scale instead of covering its rows. */
 @media(max-height:320px) {

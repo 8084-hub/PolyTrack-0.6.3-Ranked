@@ -14,9 +14,11 @@ const homeCss = fs.readFileSync(new URL('../home-ui.css', import.meta.url), 'utf
 const eventsCss = fs.readFileSync(new URL('../events/events.css', import.meta.url), 'utf8');
 
 const viewports = [
+  [320, 568],
   [320, 720],
   [390, 844],
   [600, 960],
+  [568, 320],
   [600, 400],
   [820, 1180],
   [1107, 1282],
@@ -40,6 +42,7 @@ test('compact snapshot panel keeps age and countdown visible across resolutions'
       });
       assert.ok(box.left>=0&&box.right<=width&&box.top>=0&&box.bottom<=height,JSON.stringify(box));
       assert.ok(box.width<=360,JSON.stringify(box));
+      if(width<=600||height<=500)assert.ok(box.bottom-box.top<=140,`Compact card does not dominate ${width}x${height}: ${JSON.stringify(box)}`);
       assert.ok(box.scrollHeight<=box.clientHeight+1,'All four status rows remain visible: '+JSON.stringify(box));
     }
   }finally{await browser.close();}

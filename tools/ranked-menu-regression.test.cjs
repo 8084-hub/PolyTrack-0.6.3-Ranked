@@ -317,6 +317,26 @@ test('event click targets cover the complete row and dropdown arrows have their 
  assert.match(css,/sq-category-chevron[^}]*margin-left:auto!important/);
  assert.match(extract('ensureRankedCategoryPicker'),/aria-hidden="true" focusable="false"/);
 });
+test('portrait track-selection layout does not override native hidden state',()=>{
+ const trackRule=source.match(/\\n\.menu-ui>\.track-selection-ui:not\(\.hidden\):not\(\[hidden\]\)\{([^}]*)\}/);
+ const infoRule=source.match(/\\n\s*\.menu-ui>\.track-info-ui:not\(\.hidden\):not\(\[hidden\]\)\{([^}]*)\}/);
+ const settingsRule=source.match(/\\n\.menu-ui>\.settings-menu-ui:not\(\.hidden\):not\(\[hidden\]\)\{([^}]*)\}/);
+ for(const [rule,name] of [[trackRule,'track selection'],[infoRule,'track info'],[settingsRule,'settings']]){
+  assert.ok(rule,`${name} active-state layout is present`);
+  assert.match(rule[1],/display:flex(?:;|$)/);
+  assert.doesNotMatch(rule[1],/display:flex!important/);
+ }
+ for(const selector of ['track-selection-ui','track-info-ui','settings-menu-ui'])
+  assert.match(source,new RegExp(`body>div:has\\(>\\.menu-ui>\\.${selector}:not\\(\\.hidden\\):not\\(\\[hidden\\]\\)\\)`));
+});
+test('ranked category popup is bounded and scrollable on short viewports',()=>{
+ const position=extract('openRankedCategoryMenu');
+ assert.ok(position.includes("menu.style.maxHeight=Math.max(0,innerHeight-16)+'px'"));
+ assert.ok(position.includes("menu.style.overflowY='auto'"));
+ assert.ok(position.includes("menu.style.overscrollBehavior='contain'"));
+ assert.ok(position.indexOf("menu.style.maxHeight=")<position.indexOf('menu.style.top='),'popup is height-bounded before vertical placement');
+});
+
 test('manual refresh is bounded while requests are in flight and during failure cooldowns',async()=>{
  let now=1000000,calls=0,finish;const timers=[];
  const ctx=vm.createContext({Date:{now:()=>now},lastRankedManualRefreshAt:0,RANKED_MANUAL_REFRESH_COOLDOWN_MS:120000,rankedManualRefreshFailed:false,rankedRefreshCooldownTimer:0,overallCategory:'overall',overallLoadState:{status:'cache'},snapshotOnlyForNewAccount:()=>false,updateRankedFreshness(){},clearTimeout(){},setTimeout:(fn)=>{timers.push(fn);return timers.length;},writeJsonStorage(){},OVERALL_REBUILD_BACKOFF_KEY:'key',openRankedPanel:()=>{calls++;ctx.overallLoadState.status='loading';return new Promise(resolve=>finish=resolve);}});
