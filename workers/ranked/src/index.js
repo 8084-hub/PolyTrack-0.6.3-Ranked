@@ -1669,17 +1669,29 @@ async function notifyProfile(request, env, context, uid, body) {
     carId: safeText(profile.data.carId, 64) || null,
     carColors: safeText(profile.data.carColors, 64) || null,
     carStyle: safeText(profile.data.carStyle, 256),
-    profileCosmetics: sanitizeProfileCosmetics(profile.data.profileCosmetics),
-    identityUpdatedAt: Math.max(Number(profile.data.identityUpdatedAt) || 0, Number(profile.data.profileUpdatedAt) || 0)
+    profileCosmetics: sanitizeProfileCosmetics(profile.data.profileCosmetics)
   };
   const groupTag = await readDocument(env, COLLECTIONS.groupTags, `account_${accountId}`);
   identity.groupCode = groupTag?.data?.groupCode || '';
   identity.groupCodeUpdatedAt = Number(groupTag?.data?.updatedAt || 0);
-  const signature = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(identity))).then((bytes) => base64Url(new Uint8Array(bytes)));
   const jobId = `profile_${accountId}`;
   const existingDoc=await readDocument(env,COLLECTIONS.jobs,jobId);
   const existing=existingDoc?.data||{};
-  if (existing.signature === signature) {
+  const identityFields = ['accountId', 'name', 'countryCode', 'carId', 'carColors', 'carStyle', 'profileCosmetics', 'groupCode', 'groupCodeUpdatedAt'];
+  const canonicalize = (value) => Array.isArray(value)
+    ? value.map(canonicalize)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]))
+      : value;
+  const identityChanged = !existing.identity || identityFields.some((key) =>
+    JSON.stringify(canonicalize(existing.identity[key])) !== JSON.stringify(canonicalize(identity[key])));
+  const priorIdentityUpdatedAt = Number(existing.identity?.identityUpdatedAt || 0);
+  const profileUpdatedAt = Date.parse(profile.updateTime || '');
+  identity.identityUpdatedAt = identityChanged || priorIdentityUpdatedAt <= 0
+    ? (Number.isFinite(profileUpdatedAt) && profileUpdatedAt > 0 ? profileUpdatedAt : Date.now())
+    : priorIdentityUpdatedAt;
+  const signatureWithTimestamp = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(identity))).then((bytes) => base64Url(new Uint8Array(bytes)));
+  if (!identityChanged && priorIdentityUpdatedAt > 0) {
     const queued = Array.isArray(existing.pendingTrackIds) ? existing.pendingTrackIds.length : 0;
     if (!queued || existing.active === true) {
       // Scheduled processing continues existing work without re-reading completed tracks.
@@ -1688,11 +1700,11 @@ async function notifyProfile(request, env, context, uid, body) {
   }
   const results = await runQuery(env, COLLECTIONS.raceResults, { field: 'accountId', value: accountId }, 100);
   const trackIds = [...new Set(results.map((result) => safeText(result.data.trackId, 80)).filter(Boolean))].slice(0, 100);
-  const pendingTrackIds = existing.signature === signature
+  const pendingTrackIds = existing.signature === signatureWithTimestamp
     ? [...new Set([...(existing.pendingTrackIds || []), ...trackIds])]
     : trackIds;
-  const written=await writeDocument(env, COLLECTIONS.jobs, jobId, { kind: 'profile', active: pendingTrackIds.length > 0, accountId, identity, signature, pendingTrackIds, createdAt: Number(existing.createdAt || Date.now()), updatedAt: Date.now() },existingDoc?.updateTime||'');
-  const task = processProfileJob(env, jobId, { kind: 'profile', active: true, accountId, identity, signature, pendingTrackIds },written?.updateTime||'');
+  const written=await writeDocument(env, COLLECTIONS.jobs, jobId, { kind: 'profile', active: pendingTrackIds.length > 0, accountId, identity, signature:signatureWithTimestamp, pendingTrackIds, createdAt: Number(existing.createdAt || Date.now()), updatedAt: Date.now() },existingDoc?.updateTime||'');
+  const task = processProfileJob(env, jobId, { kind: 'profile', active: true, accountId, identity, signature:signatureWithTimestamp, pendingTrackIds },written?.updateTime||'');
   if (context.waitUntil) context.waitUntil(task.catch((error) => console.error('Deferred profile job failed', String(error?.message || error))));
   return json(request.headers.get('Origin') || '', env, 202, { accepted: true, accountId, queued: pendingTrackIds.length, betaEntitlement });
 }

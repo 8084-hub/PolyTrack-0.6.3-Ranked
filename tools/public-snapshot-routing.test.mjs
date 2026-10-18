@@ -67,7 +67,7 @@ test('snapshot racer-directory overlays overall identity only when profile metad
   const [updated]=context.overlaySnapshotRacerDirectory(live);
   assert.equal(updated.name,'Natsujo');assert.equal(updated.identityUpdatedAt,500);
   assert.equal(context.snapshotRacerDirectoryIdentity(id,0,600),null);
-  const pbNewer=[{userId:id,name:'Latest canonical PB name',identityUpdatedAt:0,pbAt:900}];
+  const pbNewer=[{userId:id,name:'Latest canonical PB name',identityUpdatedAt:900,pbAt:900}];
   assert.equal(context.overlaySnapshotRacerDirectory(pbNewer)[0].name,'Latest canonical PB name');
 });
 
@@ -85,8 +85,8 @@ test('native per-track identity uses a newer directory profile but preserves fre
   const hydrated=context.rankedIdentityForRacer({userId:id,name:'Track cached name',identityUpdatedAt:700});
   assert.equal(hydrated.name,'Natsujo');assert.equal(hydrated.carStyle,'directory-style');assert.equal(hydrated.countryCode,'JP');
   assert.equal(hydrated.profileCosmetics.theme,'classic');assert.equal(hydrated.identityUpdatedAt,800);
-  const latestPb=context.rankedIdentityForRacer({userId:id,name:'Latest canonical PB name',identityUpdatedAt:0,pbAt:900});
-  assert.equal(latestPb.name,'Latest canonical PB name');assert.equal(latestPb.carStyle,'live-style');
+  const latestPb=context.rankedIdentityForRacer({userId:id,name:'Latest canonical PB name',identityUpdatedAt:900,pbAt:900});
+  assert.equal(latestPb.name,'Latest canonical PB name');assert.equal(latestPb.carStyle,'directory-style');
 });
 
 test('canonical display names choose the freshest row identity over older live and directory caches',()=>{

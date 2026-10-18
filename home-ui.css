@@ -500,3 +500,7 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
   #overallProfilePopup .profile-achievement-medals .profile-medal-card img{width:18px!important;height:18px!important}
   #overallProfilePopup .profile-achievement-medals .profile-medal-card small{min-width:0!important;font-size:9px!important;letter-spacing:0!important;white-space:nowrap!important}
 }
+
+@media(pointer:coarse) and (max-height:360px){
+ #overallLeaderboardPanel .overall-action-btn{min-height:44px!important;line-height:1.1!important}
+}

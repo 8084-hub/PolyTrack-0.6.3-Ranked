@@ -494,7 +494,7 @@ test('fresh directory cosmetics win, while a newer row rejects stale directory c
   const racer = identity('track-name', 100, 'track-theme'), overall = identity('overall-name', 200, 'overall-theme');
   const directory = {...identity('directory-name', 300, 'directory-theme'), updatedAt: 300};
   assert.equal(identityFor(racer, overall, directory).profileCosmetics.theme, 'directory-theme');
-  const fresh = {...racer, pbAt: 400};
+  const fresh = {...racer, identityUpdatedAt: 400, pbAt: 400};
   const actual = identityFor(fresh, overall, directory);
   assert.equal(actual.name, 'track-name'); assert.equal(actual.profileCosmetics.theme, 'track-theme');
 });

@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=151',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=152',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='151';
+  const extraCatalogRevision='152';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -63,7 +63,7 @@
     return kodubHistoryLoad;
   }
   async function nativeWeeklyFeed(){
-    kodubAdapter=await import(new URL('./kodub-weekly.mjs?v=151',eventsModuleUrl).href);
+    kodubAdapter=await import(new URL('./kodub-weekly.mjs?v=152',eventsModuleUrl).href);
     await ensureEventUi();
     const response=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
     nativeWeeklySelection=response.current;
@@ -90,7 +90,7 @@
     if(localWeeklyCatalogRequest||Date.now()<localWeeklyCatalogUntil)return localWeeklyCatalogRequest;
     localWeeklyCatalogUntil=Date.now()+60000;
     const request=(async()=>{
-      kodubAdapter ||= await import(new URL('./kodub-weekly.mjs?v=151',eventsModuleUrl).href);
+      kodubAdapter ||= await import(new URL('./kodub-weekly.mjs?v=152',eventsModuleUrl).href);
       const feed=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
       const current=feed.current,end=Date.parse(current?.endTime||'');
       localWeeklyCatalogUntil=current&&end>Date.now()?end:Date.now()+60000;
@@ -1279,7 +1279,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     return identity&&Number.isFinite(directoryAt)&&directoryAt>0&&directoryAt>rowAt?identity:null;
   }
   function rowIdentityFreshness(row){
-    return Math.max(0,Number(row?.identityUpdatedAt||0),Number(row?.pbAt||0),Number(row?.latestPbAt||0),Number(row?.createdAt||0))||0;
+    // PB/submission dates are not profile revision dates.
+    return Math.max(0,...[row?.identityUpdatedAt,row?.profileUpdatedAt].map(value=>Number.isFinite(Number(value))?Number(value):0));
   }
   function overlaySnapshotRacerDirectory(entries,sourceUpdatedAt=0){
     if(!Object.keys(snapshotRacerDirectoryEntries).length)return entries;
@@ -1290,7 +1291,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       return {...row,
         name:identity.name||identity.nickname||row.name,
         nickname:identity.nickname||identity.name||row.nickname,
-        countryCode:identity.countryCode||row.countryCode,
+        countryCode:identity.countryCode??row.countryCode,
         carStyle:identity.carStyle||row.carStyle,
         carId:identity.carId||row.carId,
         carColors:identity.carColors||row.carColors,
@@ -1301,11 +1302,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     });
   }
   function hasExplicitProfileCosmetics(entry){
-    const accountId=cleanUserId(entry?.userId||entry?.accountId||'');
-    const local=accountId&&accountId===activeRankedAccountId()?readJsonStorage(PROFILE_COSMETICS_KEY,null):null;
-    const shared=accountId?readCosmeticDirectory().entries[accountId]?.value:null;
-    const value=sanitizeProfileCosmetics(local||shared||savedCosmeticDesign(accountId)||entry?.profileCosmetics);
-    return Object.keys(COSMETIC_DEFAULTS).some((kind)=>value[kind]!==COSMETIC_DEFAULTS[kind])||value.overridePodium===true;
+    const value=resolveCosmeticsForEntry(entry);
+    return Object.keys(COSMETIC_DEFAULTS).some(kind=>value[kind]!==COSMETIC_DEFAULTS[kind])||value.overridePodium===true;
   }
   /* Public designs travel through each racer's own profile document, so a blocked
      Ranked Worker never stops another device from seeing them. Changes use a timestamp cursor; legacy designs are seeded gradually.
@@ -1329,7 +1327,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
           let seedQuery=fire.collection(COLLECTIONS.profilesPublic).orderBy(window.firebase.firestore.FieldPath.documentId(),'asc');
           if(seedId)seedQuery=seedQuery.startAfter(seedId);
           const seed=await seedQuery.limit(10).get({source:'server'});
-          seed.forEach(doc=>{const data=doc.data()||{};seedId=doc.id;if(data.profileCosmetics)entries[cleanUserId(data.accountId||doc.id)]={at:Number(data.cosmeticsSyncedAt?.toMillis?.()||0),value:sanitizeProfileCosmetics(data.profileCosmetics)};});
+          seed.forEach(doc=>{const data=doc.data()||{};seedId=doc.id;if(data.profileCosmetics)entries[cleanUserId(data.accountId||doc.id)]={...entries[cleanUserId(data.accountId||doc.id)],at:Number(data.cosmeticsSyncedAt?.toMillis?.()||0),value:sanitizeProfileCosmetics(data.profileCosmetics)};});
           seeded=seed.size<10;
         }
         const snapshot=await query.limit(20).get({source:'server'});
@@ -1338,7 +1336,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
           const data=doc.data()||{},id=cleanUserId(data.accountId||doc.id),at=data.cosmeticsSyncedAt;
           if(!id||!at||typeof at.toMillis!=='function')return;
           cursor={seconds:at.seconds,nanoseconds:at.nanoseconds};cursorId=doc.id;
-          entries[id]={at:at.toMillis(),value:sanitizeProfileCosmetics(data.profileCosmetics)};changed++;
+          entries[id]={...entries[id],at:at.toMillis(),value:sanitizeProfileCosmetics(data.profileCosmetics)};changed++;
         });
         writeCosmeticDirectory({cursor,cursorId,seeded,seedId,checkedAt:Date.now(),entries});
         if(changed){log('info','[COSMETIC200] Public designs synced from Firestore',{changed});renderEntries();}
@@ -1383,10 +1381,15 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       if(local)return enforceCosmeticUnlocks(sanitizeProfileCosmetics(local),entry?.cosmeticContext||entry);
     }
     const shared=accountId?readCosmeticDirectory().entries[accountId]:null;
-    // Public profile reads are authoritative for designs; aggregate clocks may be legacy or stale.
-    const source=shared?shared.value:savedCosmeticDesign(accountId)||entry?.profileCosmetics;
-
-    return enforceCosmeticUnlocks(sanitizeProfileCosmetics(source),entry?.cosmeticContext||entry);
+    const saved=typeof snapshotCosmeticEntries!=='undefined'?snapshotCosmeticEntries[accountId]:null;
+    const rawRowAt=Number.isFinite(Number(entry?.cosmeticsUpdatedAt))?Number(entry.cosmeticsUpdatedAt):typeof rowIdentityFreshness==='function'?rowIdentityFreshness(entry):Math.max(0,Number(entry?.identityUpdatedAt)||0);
+    const rowAt=Number.isFinite(rawRowAt)&&rawRowAt>=0&&rawRowAt<=Date.now()+300000?rawRowAt:0;
+    const candidates=[
+      {value:shared?.value,at:Number(shared?.at)||0,priority:3},
+      {value:saved?.value??(typeof savedCosmeticDesign==='function'?savedCosmeticDesign(accountId):null),at:Number(saved?.at||saved?.updatedAt)||0,priority:2},
+      {value:entry?.profileCosmetics,at:rowAt,priority:1}
+    ].filter(item=>item.value&&typeof item.value==='object').sort((a,b)=>b.at-a.at||b.priority-a.priority);
+    return enforceCosmeticUnlocks(sanitizeProfileCosmetics(candidates[0]?.value),entry?.cosmeticContext||entry);
   }
   function cosmeticUnlocked(requirement,entry){
     if(requirement===0)return true;
@@ -1760,7 +1763,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       }
       return;
     }
-    const nodes = Array.from(root.querySelectorAll('.overall-car-model.image-container'));
+    const nodes = Array.from(root.querySelectorAll('.overall-car-model.image-container,[data-sq-live-car].image-container'));
     const retry=overallCarRendererRetries.get(root);
     if(retry){clearTimeout(retry);overallCarRendererRetries.delete(root);}
     nodes.forEach((node)=>{
@@ -2243,17 +2246,16 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
 
   function canonicalDisplayName(accountId, embeddedName='',embeddedIdentityAt=0){
     const id=String(accountId||'').slice(0,128);
-    const live=Array.isArray(overallEntriesCache)
-      ? overallEntriesCache.find((entry)=>String(entry.userId||entry.accountId||'')===id)
-      : null;
-    const cached=readOverallSnapshotCache()?.entries?.find((entry)=>String(entry.userId||entry.accountId||'')===id);
-    const liveAt=rowIdentityFreshness(live),cachedAt=rowIdentityFreshness(cached),embeddedAt=Math.max(Number(embeddedIdentityAt||0),rowIdentityFreshness({identityUpdatedAt:embeddedIdentityAt}));
-    const directory=snapshotRacerDirectoryIdentity(id,0,Math.max(liveAt,cachedAt,embeddedAt));
+    const live=Array.isArray(overallEntriesCache)?overallEntriesCache.find(entry=>String(entry.userId||entry.accountId||'')===id):null;
+    const cached=readOverallSnapshotCache()?.entries?.find(entry=>String(entry.userId||entry.accountId||'')===id);
+    const directory=snapshotRacerDirectoryIdentity(id,0,0);
+    const shared=typeof readCosmeticDirectory==='function'?readCosmeticDirectory().entries[id]?.identity:null;
     const candidates=[
-      {name:live?.name||live?.nickname,at:liveAt,priority:3},
-      {name:cached?.name||cached?.nickname,at:cachedAt,priority:2},
+      {name:live?.name||live?.nickname,at:rowIdentityFreshness(live),priority:3},
+      {name:cached?.name||cached?.nickname,at:rowIdentityFreshness(cached),priority:2},
       {name:directory?.name||directory?.nickname,at:Number(directory?.updatedAt||0),priority:1},
-      {name:embeddedName,at:embeddedAt,priority:4}
+      {name:shared?.name||shared?.nickname,at:rowIdentityFreshness(shared),priority:4},
+      {name:embeddedName,at:Math.max(0,Number(embeddedIdentityAt)||0),priority:0}
     ].filter(candidate=>candidate.name).sort((a,b)=>b.at-a.at||b.priority-a.priority);
     const name=safeDisplayName(candidates[0]?.name||getLastKnownName(id)||'Guest',id);
     if(id)setLastKnownName(id,name);
@@ -2847,7 +2849,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=151',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=152',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -4265,6 +4267,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
           carColors: normalizeCarColorId(row.carColors || ''),
           carStyle,
           profileCosmetics: row.profileCosmetics || null,
+          identityUpdatedAt:[row.identityUpdatedAt,row.profileUpdatedAt].reduce((latest,value)=>Number.isFinite(Number(value))?Math.max(latest,Number(value)):latest,0),
           pbCount:Math.max(0,Number(row.pbCount||0)||0),
           totalPlaytimeMs:Math.max(0,Number(row.totalPlaytimeMs||0)||0),
           createdAt: pbTimestamp(row),
@@ -4284,7 +4287,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const out = enrichLegacyLeaderboardEntries(entries).map((entry)=>({ ...entry, id: safeRecordingId(entry.id) || safeRecordingId(entry.uploadId) || null }));
     for(const entry of out){
       const id=String(entry.userId||entry.accountId||'').slice(0,128);
-      const name=safeDisplayName(entry.nickname||entry.name||getLastKnownName(id)||'Guest',id);
+      const name=canonicalDisplayName(id,entry.nickname||entry.name||getLastKnownName(id)||'Guest',rowIdentityFreshness(entry));
       entry.name=name; entry.nickname=name; setLastKnownName(id,name);
     }
     return out;
@@ -5167,7 +5170,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=151',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=152',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -5187,8 +5190,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=151',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=151',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=151',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=152',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=152',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=152',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -6455,6 +6458,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       openRankedDialog(popup);return;
     }
     if(!entry||!popup||!content)return;
+    const identity=rankedIdentityForRacer(entry);
+    entry={...entry,...Object.fromEntries(['name','nickname','countryCode','carStyle','carId','carColors','profileCosmetics','identityUpdatedAt','cosmeticsUpdatedAt'].filter(key=>Object.hasOwn(identity,key)).map(key=>[key,identity[key]]))};
     if(!extraTrackInfoById.size&&!extraProfileRefreshPending){
       extraProfileRefreshPending=true;
       void loadExtraTracksCatalog().then(()=>{
@@ -6907,8 +6912,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   let snapshotTrackStatistics = {};
   let metadataRecovery=null;
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=151').then(async module=>{
-      const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=151');
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=152').then(async module=>{
+      const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=152');
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]')),bootstrap:true,onGenerationChange:()=>{
         metadataRecovery.reset();
         snapshotTrackStatistics={};snapshotCosmeticEntries={};snapshotRacerDirectoryEntries={};publicSnapshotCapturedAt=0;
@@ -6926,7 +6931,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
           if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries(overallEntriesCache,overallLoadState,{preservePage:true});
           decorateNativeLeaderboardCosmetics();
         }else if(kind==='racer-directory'){
-          snapshotRacerDirectoryEntries=value.entries;overallCacheGeneration++;
+          snapshotRacerDirectoryEntries=value.entries;overallCacheGeneration++;cosmeticEpoch++;
           if(isElementVisible(document.getElementById('overallLeaderboardPanel')))renderEntries(overallEntriesCache,overallLoadState,{preservePage:true});
           decorateNativeLeaderboardCosmetics();
         }else if(kind==='snapshot-meta'){
@@ -6968,7 +6973,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       if(!contentType.includes('application/json'))throw new Error('Ranked edge was replaced by a network filter');
       let payload=await response.json();
       if(payload?.pagination){
-        const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=151');
+        const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=152');
         payload=await completeRankedSnapshot(payload,{saved,kind,trackId,endpoint});
       }
       clearRankedEdgeFailure();
@@ -7325,12 +7330,16 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         log('info','[NET201] /user POST intercepted');
         const accountId = await accountIdFromPayload(hinted, guestAccountId);
         const previousLocalName = sanitizeDisplayName(localStorage.getItem(LAST_ACTIVE_NAME_KEY) || getOrCreateDefaultDisplayName(accountId));
+        const previousLocalStyle=localStorage.getItem('polytrack-0.6.2-last-active-car-style')||'';
+        const previousLocalCountry=localStorage.getItem('polytrack-0.6.2-last-active-country-code')||'';
+        const previousLocalAccount=localStorage.getItem('polytrack-0.6.2-active-account-id')||'';
         let safeName = await enforceSafeDisplayName(hinted.nickname || getOrCreateDefaultDisplayName(accountId), accountId);
         const countryCode = typeof hinted.countryCode === 'string' ? hinted.countryCode.slice(0,8) : null;
         const carStyle = __pt062NormalizeStyle(hinted.carStyle || getDefaultCarStyle());
         try {
           localStorage.setItem(LAST_ACTIVE_NAME_KEY, safeName);
           localStorage.setItem('polytrack-0.6.2-last-active-car-style', carStyle);
+          localStorage.setItem('polytrack-0.6.2-last-active-country-code',String(countryCode||''));
           localStorage.setItem('polytrack-0.6.2-active-account-id', accountId);
         } catch {}
         setLastKnownName(accountId, safeName);
@@ -7345,7 +7354,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
           const ownerUid = window.firebase.auth().currentUser?.uid || '';
           const profileRef=d.collection(COLLECTIONS.profilesPublic).doc(accountId);
           await d.runTransaction(async tx=>{const previous=await tx.get(profileRef);assertCloudOwner(accountId,ownerUid,previous.exists?previous.data():null);tx.set(profileRef,{accountId,ownerUid,name:safeName,nickname:safeName,countryCode,carStyle,isVerifier:false,updatedAt:nowTs},{merge:true});});
-          if(previousLocalName!==safeName) await updateOverallIdentity(d,accountId,safeName,countryCode,carStyle);
+          if(previousLocalAccount!==accountId||previousLocalName!==safeName||previousLocalStyle!==carStyle||previousLocalCountry!==String(countryCode||''))await updateOverallIdentity(d,accountId,safeName,countryCode,carStyle);
           log('info','[FB202] profiles_public.set ok',{accountId});
         } catch (err) { if(err?.code==='account-session-conflict')showCloudOwnerConflict();log('warn','[FB402] profiles_public.set failed', String(err && (err.message || err))); }
         return {};
@@ -8622,24 +8631,34 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const buttons=Array.from(host.querySelectorAll(':scope > .container > button.main'));
     if(!buttons.length)return;
     const accountId=activeRankedAccountId();
-    const lookupKey=[trackId,trackCacheGeneration,overallCacheGeneration,localRaceGeneration,accountId].join('|');
+    const lookupKey=[trackId,trackCacheGeneration,overallCacheGeneration,localRaceGeneration,cosmeticEpoch,accountId].join('|');
     if(nativeDecorationLookupCache?.key!==lookupKey){
       const rows=localTrackDisplayEntries(trackId,readTrackSnapshotCache(trackId)?.entries||[],accountId);
       const byVisibleResult=new Map();
       for(const row of rows){
         const timeMs=canonicalRaceTimeMs(row);
         if(timeMs<=0)continue;
-        const key=canonicalDisplayName(row.accountId||row.userId,row.nickname||row.name||'',rowIdentityFreshness(row))+'|'+formatRaceTime(timeMs);
-        byVisibleResult.set(key,byVisibleResult.has(key)?null:row);
+        const names=new Set([row.nickname,row.name,canonicalDisplayName(row.accountId||row.userId,row.nickname||row.name||'',rowIdentityFreshness(row))].filter(Boolean));
+        for(const name of names){
+          const key=name+'|'+formatRaceTime(timeMs),previous=byVisibleResult.get(key);
+          byVisibleResult.set(key,byVisibleResult.has(key)&&previous!==row?null:row);
+        }
       }
-      nativeDecorationLookupCache={key:lookupKey,rows:byVisibleResult};
+      nativeDecorationLookupCache={key:lookupKey,rows:byVisibleResult,byAccountId:new Map(rows.map(row=>[cleanUserId(row.accountId||row.userId),row]))};
     }
     const byVisibleResult=nativeDecorationLookupCache.rows;
     for(const button of buttons){
       const rank=Math.max(0,Number((String(button.querySelector('.position')?.textContent||'').match(/\d+/)||[])[0]||0)||0);
       const visibleName=Array.from(button.querySelector('.name')?.childNodes||[]).filter(node=>node.nodeType===Node.TEXT_NODE).map(node=>node.textContent||'').join('').trim();
       const visibleTime=String(button.querySelector('.left p:not(.position)')?.textContent||'').trim();
-      const racer=visibleName&&visibleTime?byVisibleResult.get(visibleName+'|'+visibleTime)||null:null;
+      const boundId=button.dataset.sqRacerAccountId;
+      const boundTime=button.dataset.sqRacerTime;
+      const priorName=button.dataset.sqRacerVisibleName;
+      const boundRow=boundId?nativeDecorationLookupCache.byAccountId.get(boundId):null;
+      const bound=boundRow&&boundTime===visibleTime&&priorName===visibleName&&formatRaceTime(canonicalRaceTimeMs(boundRow))===visibleTime?boundRow:null;
+      const racer=bound||(visibleName&&visibleTime?byVisibleResult.get(visibleName+'|'+visibleTime)||null:null);
+      if(racer){button.dataset.sqRacerAccountId=cleanUserId(racer.accountId||racer.userId);button.dataset.sqRacerTime=visibleTime;}
+      else{delete button.dataset.sqRacerAccountId;delete button.dataset.sqRacerTime;delete button.dataset.sqRacerVisibleName;}
       const integrityState=button.querySelector('.verified-state');
       if(integrityState){
         if(racer)integrityState.dataset.sqRunStatus=runStatus(racer);
@@ -8652,10 +8671,17 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       for(const name of Array.from(button.classList))if(name==='sq-racer-cosmetic'||name==='sq-racer-top'||name.startsWith('cosmetic-'))button.classList.remove(name);
       if(!racer){button.querySelector('.sq-track-identity')?.remove();continue;}
       const identity=rankedIdentityForRacer(racer);
+      const car=button.querySelector(':scope > .image-container');
+      const style=__pt062NormalizeStyle(identity.carStyle||'');
+      if(car&&style&&(car.dataset.renderarg!==style||car.dataset.userid!==identity.userId)){
+        car.dataset.sqLiveCar='true';car.dataset.renderarg=style;car.dataset.userid=identity.userId;
+        hydrateOverallCarModels(button);
+      }
       const cosmeticClasses=racerCosmeticClasses(identity).split(/\s+/).filter(Boolean);
       if(cosmeticClasses.length)button.classList.add('sq-racer-cosmetic',...cosmeticClasses);
       button.classList.toggle('sq-racer-top',rank>0&&rank<=3);
       decorateNativeLeaderboardIdentity(button,identity);
+      button.dataset.sqRacerVisibleName=Array.from(button.querySelector('.name')?.childNodes||[]).filter(node=>node.nodeType===Node.TEXT_NODE).map(node=>node.textContent||'').join('').trim();
     }
   }
 
@@ -8676,32 +8702,40 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const rows=rankedIdentityRows();
     if(rows!==rankedIdentityIndexSource){
       rankedIdentityIndexSource=rows;
-      rankedIdentityIndex=new Map(rows.map((row)=>[cleanUserId(row.userId||row.accountId||''),row]));
+      rankedIdentityIndex=new Map(rows.map(row=>[cleanUserId(row.userId||row.accountId||''),row]));
     }
     const overallRow=rankedIdentityIndex.get(accountId)||{};
-    const identity=snapshotRacerDirectoryIdentity(accountId,0,Math.max(rowIdentityFreshness(racer),rowIdentityFreshness(overallRow)));
-    const racerIdentityNewer=rowIdentityFreshness(racer)>rowIdentityFreshness(overallRow);
-    const cosmeticContext=Object.keys(overallRow).length?null:snapshotRacerDirectoryEntries[accountId]?.cosmeticContext||null;
-    return {
-      ...racer,
-      ...overallRow,
-      ...(racerIdentityNewer?{name:racer?.name||racer?.nickname||overallRow.name,nickname:racer?.nickname||racer?.name||overallRow.nickname,countryCode:racer?.countryCode||overallRow.countryCode,carStyle:racer?.carStyle||overallRow.carStyle,carId:racer?.carId||overallRow.carId,carColors:racer?.carColors||overallRow.carColors,profileCosmetics:racer?.profileCosmetics||overallRow.profileCosmetics,identityUpdatedAt:racer?.identityUpdatedAt||0}:{}),
-      ...(identity?{name:identity.name||identity.nickname||racer?.name||overallRow.name,nickname:identity.nickname||identity.name||racer?.nickname||overallRow.nickname,countryCode:identity.countryCode||racer?.countryCode||overallRow.countryCode,carStyle:identity.carStyle||racer?.carStyle||overallRow.carStyle,carId:identity.carId||racer?.carId||overallRow.carId,carColors:identity.carColors||racer?.carColors||overallRow.carColors,profileCosmetics:identity.profileCosmetics||racer?.profileCosmetics||overallRow.profileCosmetics,identityUpdatedAt:Number(identity.updatedAt)||0}:{}),
-      cosmeticContext,
-      userId:accountId,
+    const directory=snapshotRacerDirectoryIdentity(accountId,0,0);
+    const shared=typeof readCosmeticDirectory==='function'?readCosmeticDirectory().entries[accountId]?.identity:null;
+    const candidates=[
+      {row:racer||{},at:rowIdentityFreshness(racer),priority:0},
+      {row:overallRow,at:rowIdentityFreshness(overallRow),priority:3},
+      {row:directory,at:Number(directory?.updatedAt||0),priority:1},
+      {row:shared,at:rowIdentityFreshness(shared),priority:4}
+    ].filter(item=>item.row).sort((a,b)=>b.at-a.at||b.priority-a.priority);
+    const merged={};
+    for(const field of ['name','nickname','countryCode','carStyle','carId','carColors','profileCosmetics']){
+      const candidate=candidates.find(item=>Object.hasOwn(item.row,field)&&item.row[field]!=null&&(!['name','nickname','carStyle'].includes(field)||item.row[field]!==''));
+      if(candidate){merged[field]=candidate.row[field];if(field==='profileCosmetics')merged.cosmeticsUpdatedAt=candidate.at;}
+    }
+    const named=candidates.find(item=>item.row.name||item.row.nickname);
+    if(named){merged.name=named.row.name||named.row.nickname;merged.nickname=merged.name;}
+    const cosmeticContext=Object.keys(overallRow).length?null:(typeof snapshotRacerDirectoryEntries!=='undefined'?snapshotRacerDirectoryEntries[accountId]?.cosmeticContext:null)||null;
+    return {...racer,...overallRow,...merged,
+      identityUpdatedAt:Math.max(...candidates.map(item=>item.at),0),cosmeticContext,userId:accountId,
       rank:Number(overallRow.rank||0)||0,
       raceCount:Number(overallRow.raceCount||racer?.raceCount||0)||0,
       pbCount:Number(overallRow.pbCount||racer?.pbCount||0)||0,
       badges:overallRow.badges||racer?.badges||cosmeticContext?.badges||null,
       accountCreatedAt:Number(racer?.accountCreatedAt||overallRow.accountCreatedAt||0)||0,
-      profileCosmetics:identity?.profileCosmetics||(racerIdentityNewer?racer?.profileCosmetics||overallRow.profileCosmetics:overallRow.profileCosmetics||racer?.profileCosmetics)||null
+      profileCosmetics:merged.profileCosmetics??null
     };
   }
   function decorateNativeLeaderboardIdentity(button,entry){
     const nameEl=button.querySelector('.name');
     if(!nameEl)return;
-    if(button.querySelector('.name-container > .country-flag'))return;
     const accountId=cleanUserId(entry.userId||entry.accountId||'');
+    button.querySelectorAll('.name-container > .country-flag').forEach(node=>node.remove());
     const signature=[accountId,String(entry.countryCode||''),String(entry.name||entry.nickname||'')].join('|');
     let extras=button.querySelector('.sq-track-identity');
     if(extras&&extras.dataset.signature===signature)return;
@@ -8856,12 +8890,18 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
 
   async function updateOverallIdentity(d,accountId,nextName,countryCode,carStyle){
-    const safeId=String(accountId||'').slice(0,128); if(!safeId)return;
-    const safeName=safeDisplayName(nextName,safeId);
-    overallEntriesCache=overallEntriesCache.map((entry)=>String(entry.userId||entry.accountId||'')===safeId?{...entry,name:safeName,nickname:safeName,countryCode:String(countryCode||entry.countryCode||'').slice(0,8),carStyle:__pt062NormalizeStyle(carStyle||entry.carStyle||'')}:entry);
+    const safeId=String(accountId||'').slice(0,128);if(!safeId)return;
+    const safeName=safeDisplayName(nextName,safeId),identityUpdatedAt=Date.now();
+    const identity={name:safeName,nickname:safeName,countryCode:String(countryCode??'').slice(0,8),carStyle:__pt062NormalizeStyle(carStyle||''),identityUpdatedAt};
+    const directory=readCosmeticDirectory(),previous=directory.entries[safeId]||{};
+    writeCosmeticDirectory({...directory,entries:{...directory.entries,[safeId]:{...previous,identity}}});
+    const apply=entry=>String(entry.userId||entry.accountId||'')===safeId?{...entry,...identity}:entry;
+    overallEntriesCache=overallEntriesCache.map(apply);
     const cached=readOverallSnapshotCache();
-    if(cached?.entries?.length)writeOverallSnapshotCache(cached.entries.map((entry)=>String(entry.userId||entry.accountId||'')===safeId?{...entry,name:safeName,nickname:safeName,countryCode:String(countryCode||entry.countryCode||'').slice(0,8),carStyle:__pt062NormalizeStyle(carStyle||entry.carStyle||'')}:entry),cached);
+    if(cached?.entries?.length)writeOverallSnapshotCache(cached.entries.map(apply),cached);
+    overallCacheGeneration++;
     if(document.getElementById('overallLeaderboardPanel')?.style.display==='flex')renderEntries();
+    decorateNativeLeaderboardCosmetics();
     await sendRankedProfileNotification(safeId);
     log('info','[PROFILE203] Ranked identity queued for authoritative refresh',{accountId:safeId});
   }
@@ -8967,7 +9007,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=151',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:151,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=152',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:152,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);
