@@ -1,0 +1,11 @@
+PolyTrack public leaderboard read protection (prepared, NOT deployed)
+
+Based on docs/security/backend-abuse-20261010/candidate.rules. Only five public leaderboard allow-get/read expressions change true -> false. Profile access, PB intake, event submission/receipt rules and multiplayer rules remain unchanged. Public page collections already default-deny client access.
+
+Publish updated client and static snapshots first, verify Worker public endpoints, then compare this candidate against the ACTUAL deployed rules before applying. Deploying an old full rules file over newer production rules is unsafe. Current cloud rules have not been downloaded/confirmed here.
+
+The trusted Worker and verifier use service-account IAM, not browser Firebase credentials, and are not granted access by these client rules. Legacy clients lose direct online leaderboard reads. Current clients keep static/local boards during a Worker outage; own submissions retain existing permissions. Direct profile and other publicly allowed collections remain potential read sources, so this does not impose a global billing cap.
+
+Rollback: restore only the five changed read predicates from the reviewed deployed baseline. Never open private jobs, receipts, replay signatures, moderation or entitlements.
+
+References: https://firebase.google.com/docs/firestore/security/rules-conditions and https://firebase.google.com/docs/firestore/pricing

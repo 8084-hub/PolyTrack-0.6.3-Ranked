@@ -11,8 +11,10 @@ export async function completeRankedSnapshot(value,{saved,kind,trackId='',endpoi
   return assemblePublishedSnapshotPages(value,{maxPages:100,fetchPage:async(page,generation)=>{
     if(reusable)return {generation,page,pageSize:100,pageCount:p.pageCount,totalEntries:p.totalEntries,
       complete:true,sourceComplete:saved.sourceComplete!==false,sourceRevision:saved.sourceRevision,entries:saved.entries.slice(page*100,(page+1)*100)};
-    if(!['overall','track'].includes(kind))throw Error('Invalid live snapshot kind');
-    const url=new URL('/v1/snapshot/'+kind+'/page',endpoint);
+    if(!['overall','track','event','event-totals'].includes(kind))throw Error('Invalid live snapshot kind');
+    if(kind==='event'&&!/^[A-Za-z0-9_-]{1,64}$/.test(trackId))throw Error('Invalid event snapshot id');
+    const path=kind==='event'?'/v1/events/'+encodeURIComponent(trackId)+'/snapshot/page':kind==='event-totals'?'/v1/events/totals/page':'/v1/snapshot/'+kind+'/page';
+    const url=new URL(path,endpoint);
     if(kind==='track')url.searchParams.set('trackId',trackId);
     url.searchParams.set('generation',generation);url.searchParams.set('page',String(page));
     const response=await fetchImpl(url.href,{headers:{Accept:'application/json'},cache:'default',credentials:'omit',referrerPolicy:'no-referrer',signal:AbortSignal.timeout(5000)});

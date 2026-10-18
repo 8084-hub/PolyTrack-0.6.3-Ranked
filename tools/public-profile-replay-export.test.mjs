@@ -189,7 +189,7 @@ test('cached canonical time must match the staged binding time',async()=>{
   assert.equal(JSON.parse(await fs.readFile(canonicalPath,'utf8')).timeMs,15000);
  });});
 
-test('previously missing bindings retry within each run document limit',async()=>{
+test('explicit zero backoff preserves immediate missing-binding retries within the document limit',async()=>{
  await withDirectory(async directory=>{await stage(directory,[binding()]);
   const firstRequests=[];
   await exportPublicProfilesAndReplays({directory,maxDocuments:1,
@@ -200,7 +200,7 @@ test('previously missing bindings retry within each run document limit',async()=
   progress.raceExport.covered[signature]=true;
   await fs.writeFile(progressPath,JSON.stringify(progress));
   const retryRequests=[];
-  const result=await exportPublicProfilesAndReplays({directory,maxDocuments:1,
+  const result=await exportPublicProfilesAndReplays({directory,maxDocuments:1,retryInvalidAfterMs:0,
    fetchImpl:fixtureFetch(req=>[{missing:req.options.documents[0]}],retryRequests),log:()=>{}});
   assert.equal(result.budgetReached,false);
   assert.equal(result.fetchedDocumentsThisRun,1);
@@ -208,6 +208,163 @@ test('previously missing bindings retry within each run document limit',async()=
   assert.equal(retryRequests[0].url.endsWith(':batchGet'),true);
   assert.equal(retryRequests[0].options.documents.length,1);
  });});
+
+const readProgress = async directory => JSON.parse(await fs.readFile(path.join(directory,'export-progress.json'),'utf8'));
+const writeProgress = (directory,value) => fs.writeFile(path.join(directory,'export-progress.json'),JSON.stringify(value));
+async function prepareRetry(directory,entries=[binding()]){
+ await stage(directory,entries);await writeProgress(directory,{profiles:{complete:true,ids:[]}});
+}
+const signature = row => JSON.stringify([row.accountId,row.trackId,row.uploadId,row.frames,row.replayHash]);
+
+test('missing bindings use exponential capped backoff and stay incomplete throughout cooldown',async()=>{
+ await withDirectory(async directory=>{
+  await prepareRetry(directory);let calls=0,now=1000;
+  const fetchImpl=fixtureFetch(req=>{calls++;return req.options.documents.map(missing=>({missing}));});
+  const run=at=>exportPublicProfilesAndReplays({directory,includeProfiles:false,now:at,fetchImpl});
+  await run(now);assert.equal(calls,1);
+  for(let attempts=1;attempts<=7;attempts++){
+   const delay=Math.min(86400000,3600000*2**(attempts-1));
+   const before=await run(now+delay-1);assert.equal(calls,attempts);assert.equal(before.deferredBindingRetries,1);
+   assert.equal(before.complete,false);assert.equal(before.totalCoverage.missing,1);assert.equal(before.totalCoverage.available,0);
+   now+=delay;await run(now);assert.equal(calls,attempts+1);
+  }
+  const record=Object.values((await readProgress(directory)).raceExport.records)[0];assert.equal(record.attempts,8);
+ });
+});
+
+test('never-attempted bindings precede due retries even if their signatures sort later',async()=>{
+ await withDirectory(async directory=>{
+  const fresh=binding({accountId:otherAccount,uploadId:43});await prepareRetry(directory);
+  await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1000,fetchImpl:fixtureFetch(req=>req.options.documents.map(missing=>({missing})))});
+  await stage(directory,[binding(),fresh]);const requests=[];
+  const result=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:3601000,maxDocuments:1,
+   fetchImpl:fixtureFetch(req=>batchResponse(req,raceFields({accountId:str(otherAccount),uploadId:int(43)})),requests)});
+  assert.deepEqual(requests[0].options.documents,[ref('0.6.2_race_results',otherAccount+'_'+trackId)]);
+  assert.equal(result.counts.recordings,1);assert.equal(result.totalCoverage.missing,1);assert.equal(result.complete,false);assert.equal(result.budgetReached,true);
+  const pending=(await readProgress(directory)).raceExport.pending;assert.deepEqual(pending,[signature(binding())]);
+ });
+});
+
+test('valid saved pairs dominate stale failures and forged covered flags never hide missing files',async()=>{
+ await withDirectory(async directory=>{
+  await prepareRetry(directory);await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1000,fetchImpl:fixtureFetch(req=>batchResponse(req))});
+  const progress=await readProgress(directory),key=signature(binding());
+  progress.raceExport.records[key]={signature:key,available:false,reason:'missing',checkedAt:1000,attempts:32};
+  await writeProgress(directory,progress);
+  const result=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1001,fetchImpl:async()=>{throw Error('valid local pair must win');}});
+  assert.equal(result.complete,true);assert.equal(result.deferredBindingRetries,0);assert.equal(result.counts.recordings,1);
+  assert.equal(Object.hasOwn((await readProgress(directory)).raceExport.records[key],'attempts'),false);
+  await fs.unlink(path.join(directory,'recordings','42.json'));
+  const requests=[];const repaired=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1002,fetchImpl:fixtureFetch(req=>batchResponse(req),requests)});
+  assert.equal(requests.length,1);assert.equal(repaired.complete,true);
+ });
+});
+
+test('every binding identity change bypasses old deterministic cooldown, display-only edits do not',async()=>{
+ for(const patch of [{uploadId:43},{frames:901,raceTimeFrames:901},{replayHash:'d'.repeat(64)},{accountId:otherAccount},{timeMs:14000}]){
+  await withDirectory(async directory=>{
+   await prepareRetry(directory);const fetchImpl=fixtureFetch(req=>req.options.documents.map(missing=>({missing})));
+   await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1000,fetchImpl});
+   await stage(directory,[binding({...patch,name:'new display'})]);const requests=[];
+   const result=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1001,fetchImpl:fixtureFetch(req=>req.options.documents.map(missing=>({missing})),requests)});
+   assert.equal(requests.length,1);assert.equal(result.deferredBindingRetries,0);
+   assert.equal(Object.keys((await readProgress(directory)).raceExport.records).length,1);
+   await stage(directory,[binding({...patch,name:'another display'})]);
+   const deferred=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1002,fetchImpl:async()=>{throw Error('same binding must back off');}});
+   assert.equal(deferred.deferredBindingRetries,1);assert.equal(deferred.complete,false);
+  });
+ }
+});
+
+test('legacy deterministic failure records without attempts retain checkedAt cooldown',async()=>{
+ await withDirectory(async directory=>{
+  await prepareRetry(directory);
+  const fetchImpl=fixtureFetch(req=>batchResponse(req,raceFields({uploadId:int(999)})));
+  await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1000,fetchImpl});
+  const progress=await readProgress(directory),key=signature(binding());delete progress.raceExport.records[key].attempts;delete progress.raceExport.records[key].bindingTimeMs;
+  await writeProgress(directory,progress);
+  const result=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1001,fetchImpl:async()=>{throw Error('legacy failure must back off');}});
+  assert.equal(result.deferredBindingRetries,1);assert.equal(result.totalCoverage.invalid,1);assert.equal(result.complete,false);
+ });
+});
+
+test('upload conflicts and oversized public outputs back off without skipping valid saved matches',async()=>{
+ for(const reason of ['upload-conflict','output-too-large'])await withDirectory(async directory=>{
+  await prepareRetry(directory);
+  let fields=raceFields();
+  if(reason==='upload-conflict'){
+   await fs.mkdir(path.join(directory,'recordings'));await fs.writeFile(path.join(directory,'recordings','42.json'),JSON.stringify({accountId:otherAccount}));
+  }else{
+   // JSON escaping can exceed the public file cap while replay bytes are valid.
+   const payload='\0'.repeat(360000),hash=createHash('sha256').update(payload).digest('hex');
+   await stage(directory,[binding({replayHash:hash})]);fields=raceFields({replay:str(payload),replayHash:str(hash)});
+  }
+  await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1000,fetchImpl:fixtureFetch(req=>batchResponse(req,fields))});
+  assert.equal(Object.values((await readProgress(directory)).raceExport.records)[0].reason,reason);
+  const result=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1001,fetchImpl:async()=>{throw Error('deterministic failure should defer');}});
+  assert.equal(result.deferredBindingRetries,1);assert.equal(result.totalCoverage.invalid,1);assert.equal(result.complete,false);
+ });
+});
+
+test('partial, duplicate, unexpected and undecodable batch responses never get deterministic cooldown',async()=>{
+ const responses=[()=>[],req=>[{found:{name:req.options.documents[0],fields:{accountId:{unsupported:'bad'}}}}],
+  req=>[{found:{name:req.options.documents[0]+'_wrong',fields:raceFields()}}],
+  req=>[{found:{name:req.options.documents[0],fields:raceFields()},missing:req.options.documents[0]}]];
+ for(const response of responses)await withDirectory(async directory=>{
+  await prepareRetry(directory);
+  const bad=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1000,fetchImpl:fixtureFetch(response)});
+  assert.equal(bad.complete,false);assert.equal(bad.totalCoverage.invalid,1);assert.equal(bad.totalCoverage.missing,0);
+  const requests=[];const recovered=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1001,fetchImpl:fixtureFetch(req=>batchResponse(req),requests)});
+  assert.equal(requests.length,1);assert.equal(recovered.complete,true);assert.equal(recovered.totalCoverage.invalid,0);
+ });
+ await withDirectory(async directory=>{
+  await prepareRetry(directory);const bad=await exportPublicProfilesAndReplays({directory,includeProfiles:false,fetchImpl:fixtureFetch(req=>{const rows=batchResponse(req);return [...rows,...rows];})});
+  assert.equal(bad.complete,false);assert.equal(bad.totalCoverage.invalid,1);
+ });
+});
+
+test('HTTP, network and invalid JSON failures throw and leave pending checkpoint recoverable',async()=>{
+ for(const fetchImpl of [async()=>{throw Error('offline');},async()=>({ok:false,status:503}),async()=>({ok:true,text:async()=>'not json'})]){
+  await withDirectory(async directory=>{
+   await prepareRetry(directory);await assert.rejects(exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1000,fetchImpl}));
+   const progress=await readProgress(directory);assert.equal(progress.raceExport.pending.length,1);assert.deepEqual(progress.raceExport.records,{});
+   const recovered=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1001,fetchImpl:fixtureFetch(req=>batchResponse(req))});assert.equal(recovered.complete,true);
+  });
+ }
+});
+
+test('untrusted future retry timestamps cannot pin a binding indefinitely',async()=>{
+ await withDirectory(async directory=>{
+  await prepareRetry(directory);const p=await readProgress(directory);
+  p.raceExport={records:{[signature(binding())]:{available:false,reason:'missing',checkedAt:Number.MAX_SAFE_INTEGER,attempts:1e9,retryAt:Number.MAX_SAFE_INTEGER}}};await writeProgress(directory,p);
+  const requests=[];const result=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1000,fetchImpl:fixtureFetch(req=>batchResponse(req),requests)});
+  assert.equal(requests.length,1);assert.equal(result.complete,true);
+ });
+});
+
+test('canonical time mismatch cannot overwrite a previously valid replay/canonical pair',async()=>{
+ await withDirectory(async directory=>{
+  await prepareRetry(directory);await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1000,fetchImpl:fixtureFetch(req=>batchResponse(req))});
+  const canonicalPath=path.join(directory,'canonical',trackId,accountId+'.json');
+  const oldCanonical=await fs.readFile(canonicalPath,'utf8');
+  await stage(directory,[binding({timeMs:14000})]);
+  const result=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1001,fetchImpl:fixtureFetch(req=>batchResponse(req))});
+  assert.equal(result.complete,false);assert.equal(result.totalCoverage.available,0);assert.equal(result.totalCoverage.invalid,1);
+  assert.equal(await fs.readFile(canonicalPath,'utf8'),oldCanonical);
+  const repaired=await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:3601001,fetchImpl:fixtureFetch(req=>batchResponse(req,raceFields({timeMs:int(14000)})))});
+  assert.equal(repaired.complete,true);assert.equal(JSON.parse(await fs.readFile(canonicalPath,'utf8')).timeMs,14000);
+ });
+});
+
+test('profile checkpoints preserve pending replay failure history on transient profile failure',async()=>{
+ await withDirectory(async directory=>{
+  await prepareRetry(directory);await exportPublicProfilesAndReplays({directory,includeProfiles:false,now:1000,fetchImpl:fixtureFetch(req=>req.options.documents.map(missing=>({missing})))});
+  const p=await readProgress(directory);p.profiles.complete=false;await writeProgress(directory,p);let calls=0;
+  await assert.rejects(exportPublicProfilesAndReplays({directory,pageSize:1,now:1001,fetchImpl:fixtureFetch(()=>{if(calls++===0)return [profileDoc()];throw Error('profile transient');})}));
+  const saved=await readProgress(directory);assert.equal(saved.raceExport.records[signature(binding())].reason,'missing');
+  assert.equal(saved.raceExport.records[signature(binding())].checkedAt,1000);
+ });
+});
 
 test('unchanged invalid bindings back off without claiming completeness, even after unrelated snapshot edits',async()=>{
  await withDirectory(async directory=>{

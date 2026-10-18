@@ -4,7 +4,7 @@ export function trackMenuReadContract(source) {
   if (start < 0 || end <= start) return ['Track menu read contract is missing.'];
   const loader = source.slice(start, end);
   const failures = [];
-  if (!/\.collection\(COLLECTIONS\.leaderboardsTrack\)\.doc\(safeTrackId\)/.test(loader)) {
+  if (!/\.collection\(COLLECTIONS\.leaderboardsTrack\)\.doc\(safeTrackId\)/.test(loader)&&!(/readDirectPublicSnapshot\(COLLECTIONS\.leaderboardsTrack,safeTrackId\)/.test(loader)&&/async function readDirectPublicSnapshot/.test(source)&&/database\.collection\(collection\)\.doc\(id\)\.get\(\)/.test(source))) {
     failures.push('Blocked edge fallback is missing the one-document published track snapshot.');
   }
   if (/\bfetchCanonicalTrackEntries\s*\(|COLLECTIONS\.raceResults/.test(loader)) {

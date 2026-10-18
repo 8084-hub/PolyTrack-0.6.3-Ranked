@@ -12,6 +12,7 @@ import { VERIFICATION_BOOTSTRAP_ID, VERIFICATION_BOOTSTRAP_BATCH, bootstrapSlots
 import { aggregateServerAchievements, BEAT_OWNER_STAGES, OWNER_PUBLIC_ID, SERVER_ACHIEVEMENT_VERSION, SPECIAL_ROLLING_HILLS_TRACK_ID } from './server-achievements.js';
 import { EXTRA_TRACK_IDS } from './extra-track-ids.js';
 import { recordFirestoreReads } from './firestore-read-cost.js';
+import {loadOverallSources, sourceCatalogAfterTrackWrite, sourceCatalogNeedsScan} from './overall-source-cache.js';
 const FIREBASE_JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
 const FIREBASE_JWKS_REFRESH_COOLDOWN_MS = 30000;
 const FIREBASE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -32,7 +33,7 @@ const TRACK_LIMIT = 500;
 const UNRANKED_EXTRA_TRACK_ID = '586fbb2ef6e638f8d22e050342896497f22da6302ff081e434aa17bf6f75cf87';
 const OVERALL_BOARD_PAGE_SIZE = 100;
 const OVERALL_BOARD_LIMIT = 500;
-const REBUILD_COOLDOWN_MS = 15 * 60 * 1000;
+const REBUILD_COOLDOWN_MS = 30 * 60 * 1000;
 const OVERALL_REBUILD_FAILURE_BASE_MS = 15 * 60 * 1000;
 const OVERALL_REBUILD_FAILURE_MAX_MS = 2 * 60 * 60 * 1000;
 const overallBuildRequests = new WeakMap();
@@ -372,6 +373,7 @@ function decodeFields(fields) {
 }
 
 async function firestoreRequest(env, path, init = {}) {
+  takeOverallRequest(env);
   const audit=env.__FIRESTORE_READ_AUDIT;
   if (!audit) return loadFirestoreRequest(env,path,init);
   audit.httpRequests++;
@@ -380,6 +382,13 @@ async function firestoreRequest(env, path, init = {}) {
     recordFirestoreReads(audit,path,init,value);
     return value;
   } catch(error) { audit.failedRequests++; throw error; }
+}
+
+function takeOverallRequest(env) {
+  const budget = env.__OVERALL_REQUEST_BUDGET;
+  if (!budget) return;
+  if (budget.used >= budget.limit) throw Error('OVERALL_REQUEST_BUDGET_EXHAUSTED');
+  budget.used++;
 }
 
 async function loadFirestoreRequest(env, path, init = {}) {
@@ -651,32 +660,25 @@ async function runOverallBoardPage(env, afterName = '', limit = OVERALL_BOARD_PA
   });
   return (Array.isArray(payload) ? payload : []).flatMap(item => item.document ? [{
     name: item.document.name,
+    id: item.document.name.split('/').at(-1),
+    updateTime: item.document.updateTime || '',
     data: decodeFields(item.document.fields || {})
   }] : []);
 }
 
-async function readOverallBoards(env) {
-  const boards = [], trackCatalog = [];
+async function scanOverallSourceDocuments(env, request) {
+  const documents = [];
   let afterName = '';
-  while (boards.length < OVERALL_BOARD_LIMIT) {
-    const page = await runOverallBoardPage(env, afterName);
-    for (const document of page) {
-      const data = document.data;
-      // Discover non-scoring/legacy boards by document identity, without changing scoring inputs.
-      const trackId = document.name?.split('/').at(-1) || safeText(data.trackId, 80);
-      if (/^[a-f0-9]{64}$/.test(trackId)) trackCatalog.push({trackId,
-        updatedAt: Number.isSafeInteger(data.updatedAt) && data.updatedAt >= 0 ? data.updatedAt
-          : Number.isSafeInteger(data.builtAt) && data.builtAt >= 0 ? data.builtAt : 0});
-      if (data.pagination) data.entries = await loadPublicationEntries(data,'track',data.trackId,(c,id)=>readDocument(env,c,id));
-      boards.push(data);
-    }
-    if (page.length < OVERALL_BOARD_PAGE_SIZE) return {boards, trackCatalog, limitReached: false};
+  while (documents.length < OVERALL_BOARD_LIMIT) {
+    const page = await request(() => runOverallBoardPage(env, afterName));
+    documents.push(...page);
+    if (page.length < OVERALL_BOARD_PAGE_SIZE) return {documents, fullScan: true, limitReached: false};
     const lastName = page.at(-1)?.name;
     if (!lastName || lastName === afterName) throw Error('OVERALL_BOARD_CURSOR_INVALID');
     afterName = lastName;
   }
-  const overflow = await runOverallBoardPage(env, afterName, 1);
-  return {boards, trackCatalog, limitReached: overflow.length > 0};
+  const overflow = await request(() => runOverallBoardPage(env, afterName, 1));
+  return {documents, fullScan: overflow.length === 0, limitReached: overflow.length > 0};
 }
 
 function placementCost(rank, fieldSize) {
@@ -868,7 +870,7 @@ function preservePublishedIdentity(entry, previous) {
   };
 }
 
-async function persistTrackSnapshot(env, trackId, entries, prior = null, build = {}) {
+export async function persistTrackSnapshot(env, trackId, entries, prior = null, build = {}) {
   const signatureInput = entries.map((entry) => [
     entry.accountId,
     entry.timeMs,
@@ -911,15 +913,18 @@ async function persistTrackSnapshot(env, trackId, entries, prior = null, build =
       data:{...(work?.data||{entries:[],totalEntries:0,complete:false,revision:0}),publicationPending:true}});
   }
   if(paged)completion.push({collection:PUBLIC_MANIFEST_COLLECTION,id:publicationManifestId('track',trackId,paged.pagination.generation),data:{...paged.pagination,sourceRevision:revision},unconditional:true});
-  if (!overallChanged) {
-    await commitDocuments(env, [...completion,trackWrite]);
-    return {changed:true,overallChanged:false,entries,revision};
-  }
+  // Membership and exact bindings advance atomically even for non-scoring rewrites.
   const metaDoc = await readDocument(env, COLLECTIONS.meta, 'current');
   const meta = metaDoc?.data || {};
+  const sourceCatalog = sourceCatalogAfterTrackWrite(meta.sourceCatalog, trackId, {id:trackId,data:trackWrite.data});
+  if (!overallChanged) {
+    await commitDocuments(env, [...completion,trackWrite,
+      {collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data:{...meta,sourceCatalog}}]);
+    return {changed:true,overallChanged:false,entries,revision};
+  }
   await commitDocuments(env, [
     ...completion,trackWrite,
-    {collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data:{...meta,algorithmVersion:ALGORITHM_VERSION,schemaVersion:TRACK_SCHEMA_VERSION,dirty:true,revision:Math.max(Number(meta.revision||0)+1,revision),builtRevision:Number(meta.builtRevision||0),lastPbAt:now,updatedAt:now,rankedWritesEnabled:String(env.RANKED_WRITES_ENABLED)!=='false',multiplayerEnabled:String(env.MULTIPLAYER_ENABLED)!=='false'}}
+    {collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data:{...meta,sourceCatalog,algorithmVersion:ALGORITHM_VERSION,schemaVersion:TRACK_SCHEMA_VERSION,dirty:true,revision:Math.max(Number(meta.revision||0)+1,revision),builtRevision:Number(meta.builtRevision||0),lastPbAt:now,updatedAt:now,rankedWritesEnabled:String(env.RANKED_WRITES_ENABLED)!=='false',multiplayerEnabled:String(env.MULTIPLAYER_ENABLED)!=='false'}}
   ]);
   return { changed: true, overallChanged:true, entries, revision };
 }
@@ -1476,14 +1481,23 @@ async function mapConcurrent(values, concurrency, mapper) {
 export function rebuildOverall(env, force = false) {
   const key=env.__FIRESTORE_ROOT_ENV || env;
   const pending = overallBuildRequests.get(key);
-  if (pending) return force ? pending.then(result => result.rebuilt ? result : rebuildOverall(env, true)) : pending;
+  if (pending) {
+    // A forced admin call must not inherit a non-forced cache-only build.
+    if (force && !pending.force) return pending.request.then(
+      () => rebuildOverall(env,true), () => rebuildOverall(env,true));
+    return pending.request;
+  }
   const request = loadOverallRebuild(env, force);
-  overallBuildRequests.set(key, request);
-  request.finally(() => { if (overallBuildRequests.get(key) === request) overallBuildRequests.delete(key); }).catch(() => {});
+  const state = {request,force};
+  overallBuildRequests.set(key, state);
+  request.finally(() => { if (overallBuildRequests.get(key) === state) overallBuildRequests.delete(key); }).catch(() => {});
   return request;
 }
 
 async function loadOverallRebuild(env, force = false) {
+  // Include earlier scheduled/request Firestore work; reserve five of an assumed
+  // fifty subrequests for cold auth/other external work. Cache calls count too.
+  env = {...env,__OVERALL_REQUEST_BUDGET:{used:Number(env.__FIRESTORE_READ_AUDIT?.httpRequests || 0),limit:42}};
   const metaDoc = await readDocument(env, COLLECTIONS.meta, 'current');
   const meta = metaDoc?.data || {};
   const now = Date.now();
@@ -1493,16 +1507,21 @@ async function loadOverallRebuild(env, force = false) {
       attempts: Number(meta.overallRebuildFailureAttempts || 0)};
   }
   const metricsOutdated = Number(meta.plannerPublicationVersion || 0) < PLANNER_PUBLICATION_VERSION || Number(meta.plannerBundleVersion || 0) < PLANNER_BUNDLE_VERSION || Number(meta.cosmeticEntitlementVersion||0)<COSMETIC_ENTITLEMENT_VERSION || Number(meta.averagePlacementVersion || 0) < AVERAGE_PLACEMENT_VERSION || Number(meta.derivedMetricsVersion || 0) < DERIVED_METRICS_VERSION;
-  if (!force && !metricsOutdated && (!meta.dirty || now - Number(meta.lastOverallBuildAt || 0) < REBUILD_COOLDOWN_MS)) return { rebuilt: false, reason: meta.dirty ? 'cooldown' : 'clean', revision: Number(meta.builtRevision || 0) };
+  const catalogScanDue = sourceCatalogNeedsScan(meta.sourceCatalog, {now,force});
+  if (!force && !catalogScanDue && !metricsOutdated && (!meta.dirty || now - Number(meta.lastOverallBuildAt || 0) < REBUILD_COOLDOWN_MS)) return { rebuilt: false, reason: meta.dirty ? 'cooldown' : 'clean', revision: Number(meta.builtRevision || 0) };
   try {
-    return await buildOverallSnapshot(env, metaDoc, meta, now);
+    return await buildOverallSnapshot(env, metaDoc, meta, now, force);
   } catch (error) {
-    await recordOverallRebuildFailure(env, meta);
+    await recordOverallRebuildFailure(env, meta, error);
     throw error;
   }
 }
 
-async function recordOverallRebuildFailure(env, initialMeta) {
+async function recordOverallRebuildFailure(env, initialMeta, sourceError) {
+  const budget = env.__OVERALL_REQUEST_BUDGET;
+  const previousLimit = budget?.limit;
+  // Three slots are reserved from normal work for fresh-meta guarded backoff.
+  if (budget) budget.limit = 45;
   try {
     const currentDoc = await readDocument(env, COLLECTIONS.meta, 'current');
     const current = currentDoc?.data || {};
@@ -1516,14 +1535,28 @@ async function recordOverallRebuildFailure(env, initialMeta) {
     const retryDelay = Math.min(OVERALL_REBUILD_FAILURE_MAX_MS,
       OVERALL_REBUILD_FAILURE_BASE_MS * 2 ** Math.min(attempts - 1, 4));
     await commitDocuments(env, [{collection: COLLECTIONS.meta, id: 'current', prior: currentDoc,
-      data: {...current, overallRebuildFailureAttempts: attempts, overallRebuildRetryAt: Date.now() + retryDelay}}]);
+      data: {...current, ...(sourceError?.invalidateSourceBundle ? {sourceBundle:{version:1,ready:false}} : {}),
+        overallRebuildFailureAttempts: attempts, overallRebuildRetryAt: Date.now() + retryDelay}}]);
   } catch {
     // Failure bookkeeping must not hide the original build error or weaken CAS.
+  } finally {
+    if (budget) budget.limit = previousLimit;
   }
 }
 
-async function buildOverallSnapshot(env, metaDoc, meta, now) {
-  const {boards, trackCatalog, limitReached: boardLimitReached} = await readOverallBoards(env);
+async function buildOverallSnapshot(env, metaDoc, meta, now, force = false) {
+  const sourceCache = env.__TEST_OVERALL_SOURCE_CACHE ?? globalThis.caches?.default;
+  const cache = sourceCache ? {
+    match: key => { takeOverallRequest(env); return sourceCache.match(key); },
+    put: (key, response) => { takeOverallRequest(env); return sourceCache.put(key,response); }
+  } : null;
+  const sources = await loadOverallSources({meta, now, forceScan:force, cache,
+    scope:documentBase(env)+'/'+COLLECTIONS.track+'/overall-bundle-loader-v1',
+    scanSources:({request})=>scanOverallSourceDocuments(env,request),
+    readDocuments:async ids=>(await readDocumentsForCollections(env,[[COLLECTIONS.track,ids]])).get(COLLECTIONS.track),
+    loadEntries:(root,id,read)=>loadPublicationEntries(root,'track',id,read),
+    readPage:(collection,id)=>readDocument(env,collection,id)});
+  const {boards, trackCatalog, limitReached: boardLimitReached} = sources;
   const priorDoc = await readOverallSnapshot(env);
   const prior = priorDoc?.data || {};
   const revision = Number(meta.revision || 0);
@@ -1634,7 +1667,9 @@ async function buildOverallSnapshot(env, metaDoc, meta, now) {
     Object.assign(snapshot, packed);
   }
   if (plannerDocumentBytes(snapshot) >= PLANNER_DOCUMENT_BUDGET) throw Error('OVERALL_DOCUMENT_CAP');
-  const successMeta = {...meta};
+  const successMeta = {...meta,
+    ...(sources.sourceCatalog ? {sourceCatalog:sources.sourceCatalog} : {}),
+    ...(sources.sourceBundle ? {sourceBundle:sources.sourceBundle} : {})};
   delete successMeta.overallRebuildFailureAttempts;
   delete successMeta.overallRebuildRetryAt;
   while(entitlementWrites.length>450){
@@ -1650,7 +1685,10 @@ async function buildOverallSnapshot(env, metaDoc, meta, now) {
     overallIncompleteObservations: incompleteObservations, overallRetryPending: incompleteRetryPending,
     overallRetryExhausted: sourceIncomplete && !incompleteRetryPending,
     revision, builtRevision: revision, lastOverallBuildAt: now, updatedAt: now, algorithmVersion: ALGORITHM_VERSION, schemaVersion: TRACK_SCHEMA_VERSION, averagePlacementVersion: AVERAGE_PLACEMENT_VERSION, derivedMetricsVersion: DERIVED_METRICS_VERSION, rankedWritesEnabled: String(env.RANKED_WRITES_ENABLED) !== 'false', multiplayerEnabled: String(env.MULTIPLAYER_ENABLED) !== 'false' }}]);
-  console.log('Ranked overall source reads', JSON.stringify({revision,sourceBoards:boards.length,entitlementDocuments:accountIds.length}));
+  console.log('Ranked overall source reads', JSON.stringify({revision,sourceBoards:boards.length,
+    entitlementDocuments:accountIds.length,usedSourceCatalog:sources.usedSourceCatalog,
+    recoveredCorruptBundle:sources.recoveredCorruptBundle,
+    sourceRequests:sources.requests,invocationCountedRequests:env.__OVERALL_REQUEST_BUDGET.used}));
   return { rebuilt: true, revision, racers: entries.length, tracks: trackSummaries.length };
 }
 
@@ -2331,7 +2369,7 @@ export default {
           }
         });
       }
-      // Legacy recovery: bootstrap 7 + reconciliation 32 + overall 5 + cold auth 1 = 45 subrequests.
+      // Overall budgets prior Firestore work plus its own Firestore/Cache calls.
       // Optional maintenance stays in a separate cron invocation.
       const maintenance=_event.cron==='2-59/5 * * * *';
       const tasks=maintenance?[[processCosmeticJobs,processProfileJobs,resumeOrCreateMigration][Math.floor(Number(_event.scheduledTime||Date.now())/300000)%3]]:[bootstrapSnapshotVerification,reconcileCanonicalChanges];

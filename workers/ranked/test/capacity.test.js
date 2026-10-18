@@ -16,7 +16,7 @@ const row=i=>({accountId:`r${String(i).padStart(4,'0')}`,name:`Racer ${i}`,track
 const proof=r=>({...pendingSlot(r),status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST,verifierVersion:VERIFIER_VERSION});
 function fixture(count) {
  const data=new Map(), versions=new Map(), calls=[], commits=[], queries=[];let snapshot=null;
- const wire=(key,value=data.get(key))=>({name:base+key,fields:eventEncode(value).mapValue.fields,updateTime:`v${versions.get(key)||0}`});
+ const wire=(key,value=data.get(key))=>({name:base+key,fields:eventEncode(value).mapValue.fields,updateTime:`2026-10-18T00:00:00.${String(versions.get(key)||0).padStart(9,'0')}Z`});
  const rows=Array.from({length:count},(_,i)=>row(i));
  rows.forEach(r=>data.set(`${results}/${r.accountId}_${track}`,r));
  const legacy=Object.fromEntries(rows.slice(0,500).map(r=>[r.accountId,proof(r)]));
@@ -43,9 +43,9 @@ function fixture(count) {
    }
    if(route===':commit'){
      const writes=JSON.parse(init.body).writes;assert.ok(writes.length<=500);commits.push(writes);
-     for(const w of writes){const key=w.update.name.slice(base.length);if(w.currentDocument)assert.deepEqual(w.currentDocument,data.has(key)?{updateTime:`v${versions.get(key)||0}`}:{exists:false});}
+     for(const w of writes){const key=w.update.name.slice(base.length);if(w.currentDocument)assert.deepEqual(w.currentDocument,data.has(key)?{updateTime:`2026-10-18T00:00:00.${String(versions.get(key)||0).padStart(9,'0')}Z`}:{exists:false});}
      for(const w of writes){const key=w.update.name.slice(base.length);data.set(key,eventDecode({mapValue:{fields:w.update.fields}}));versions.set(key,(versions.get(key)||0)+1);}
-     return {writeResults:writes.map(w=>({updateTime:`v${versions.get(w.update.name.slice(base.length))}`}))};
+     return {writeResults:writes.map(w=>({updateTime:`2026-10-18T00:00:00.${String(versions.get(w.update.name.slice(base.length))).padStart(9,'0')}Z`}))};
    }
    const url=new URL('https://fixture.test'+route),key=decodeURIComponent(url.pathname.slice(1)),source=url.searchParams.has('readTime')?snapshot:data;
    return source?.has(key)?wire(key,source.get(key)):null;

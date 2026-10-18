@@ -19,6 +19,13 @@ const RACE_FIELDS = ['accountId', 'trackId', 'name', 'nickname', 'countryCode', 
   'replay', 'replayHash'];
 const MAX_DOCUMENTS_PER_RUN = 2000;
 const BATCH_GET_SIZE = 20;
+const MAX_RETRY_DELAY_MS = 86400000;
+const MAX_FAILURE_ATTEMPTS = 32;
+const DETERMINISTIC_FAILURES = new Set(['missing', 'binding-mismatch', 'upload-conflict', 'output-too-large']);
+const FAILURE_REASONS = new Set([...DETERMINISTIC_FAILURES, 'batch-response-mismatch']);
+const failureAttempts = record => Number.isSafeInteger(record?.attempts) && record.attempts > 0
+  ? Math.min(MAX_FAILURE_ATTEMPTS, record.attempts) : 1;
+const retryDelay = (record, baseMs) => Math.min(MAX_RETRY_DELAY_MS, baseMs * 2 ** (failureAttempts(record) - 1));
 const ACCOUNT_ID = /^[a-f0-9]{64}$/;
 const TRACK_ID = /^[a-f0-9]{64}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -201,7 +208,9 @@ function raceDocumentName(projectId, accountId, trackId) {
 function validBoundRace(row, binding) {
   const frames = row.frames ?? row.raceTimeFrames;
   return row.accountId === binding.accountId && row.trackId === binding.trackId && row.uploadId === binding.uploadId &&
-    Number.isSafeInteger(row.timeMs) && row.timeMs > 0 && Number.isSafeInteger(frames) && frames === binding.frames &&
+    Number.isSafeInteger(row.timeMs) && row.timeMs > 0 &&
+    (binding.metadata.timeMs === undefined || row.timeMs === binding.metadata.timeMs) &&
+    Number.isSafeInteger(frames) && frames === binding.frames &&
     (row.frames === undefined || row.frames === binding.frames) &&
     (row.raceTimeFrames === undefined || row.raceTimeFrames === binding.frames) &&
     row.replayHash === binding.replayHash && HASH.test(row.replayHash || '') && typeof row.replay === 'string' &&
@@ -228,25 +237,24 @@ async function savedMatchExists(directory, binding) {
 }
 
 function currentRaceState(bindings, fingerprint, invalid, previous) {
-  const same = previous?.fingerprint === fingerprint;
-  const state = same ? previous : {fingerprint, pending: [], covered: {}, records: {}, invalid,
-    responseInvalid: 0, known: bindings.length};
-  if (!same) {
-    state.pending = [];
-    state.covered = {};
-    state.records = Object.fromEntries(bindings.filter(binding => previous?.records?.[binding.signature]?.reason === 'binding-mismatch')
-      .map(binding => [binding.signature, previous.records[binding.signature]]));
-    state.responseInvalid = 0;
+  // Retry state belongs to exact current bindings, not snapshot display metadata.
+  // Revalidate all successful files below instead of trusting covered flags.
+  const records = {};
+  for (const binding of bindings) {
+    const prior = previous?.records?.[binding.signature];
+    if (prior?.available === false && FAILURE_REASONS.has(prior.reason) &&
+        (!Object.hasOwn(prior, 'bindingTimeMs') || prior.bindingTimeMs === (binding.metadata.timeMs ?? null))) {
+      records[binding.signature] = {signature: binding.signature, available: false, reason: prior.reason,
+        checkedAt: Number.isSafeInteger(prior.checkedAt) && prior.checkedAt >= 0 ? prior.checkedAt : null,
+        attempts: failureAttempts(prior), bindingTimeMs: binding.metadata.timeMs ?? null};
+    }
   }
-  state.fingerprint = fingerprint;
-  state.invalid = invalid;
-  state.known = bindings.length;
-  return state;
+  return {fingerprint, pending: [], covered: {}, records, invalid, responseInvalid: 0, known: bindings.length};
 }
 
 export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directory, projectId = 'polytrack-052', maxDocuments = 2000,
   pageSize = 100, log = () => {}, fullSnapshot = false, includeProfiles = true, snapshotDirectory = directory,
-  retryInvalidAfterMs = 0, now = Date.now()} = {}) {
+  retryInvalidAfterMs = 3600000, now = Date.now()} = {}) {
   if (typeof fetchImpl !== 'function' || typeof directory !== 'string' || !directory || typeof snapshotDirectory !== 'string' ||
       !Number.isSafeInteger(maxDocuments) || maxDocuments < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 ||
       typeof includeProfiles !== 'boolean' || fullSnapshot && !includeProfiles ||
@@ -273,6 +281,9 @@ export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directo
     fullSnapshotPending: fullSnapshot || previous.fullSnapshotPending === true,
     raceExport: null};
   const staged = await loadStagedBindings(directory, snapshotDirectory);
+  const race = currentRaceState(staged.bindings, staged.fingerprint, staged.invalid, previous.raceExport);
+  // Profile checkpoints must retain replay retry history even if a later request fails.
+  progress.raceExport = race;
   let usedThisRun = 0, budgetReached = false, incompletePage = false;
   const base = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents`;
   if (includeProfiles && !progress.profiles.complete) {
@@ -321,10 +332,6 @@ export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directo
     }
   }
 
-  const race = currentRaceState(staged.bindings, staged.fingerprint, staged.invalid, previous.raceExport);
-  race.responseInvalid = Number.isSafeInteger(race.responseInvalid) ? race.responseInvalid : 0;
-  race.known = staged.bindings.length;
-  race.invalid = staged.invalid;
   const bindingBySignature = new Map(staged.bindings.map(binding => [binding.signature, binding]));
   const deferredBindings = new Set();
   for (const binding of staged.bindings) {
@@ -335,14 +342,16 @@ export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directo
       race.covered[signature] = true;
     } else {
       const failure = race.records[signature];
-      if (failure?.reason === 'binding-mismatch' && Number.isSafeInteger(failure.checkedAt) && failure.checkedAt <= now &&
-          now - failure.checkedAt < retryInvalidAfterMs) deferredBindings.add(signature);
-      else delete race.records[signature];
+      if (DETERMINISTIC_FAILURES.has(failure?.reason) && Number.isSafeInteger(failure.checkedAt) && failure.checkedAt <= now &&
+          now - failure.checkedAt < retryDelay(failure, retryInvalidAfterMs)) deferredBindings.add(signature);
       delete race.covered[signature];
     }
   }
-  race.pending = staged.bindings.map(binding => binding.signature).filter(signature => !race.covered[signature] && !deferredBindings.has(signature)).sort();
+  race.pending = staged.bindings.map(binding => binding.signature).filter(signature => !race.covered[signature] && !deferredBindings.has(signature))
+    .sort((a, b) => Number(!!race.records[a]) - Number(!!race.records[b]) ||
+      (race.records[a]?.checkedAt ?? 0) - (race.records[b]?.checkedAt ?? 0) || a.localeCompare(b));
   progress.raceExport = race;
+  await atomicWrite(directory, 'export-progress.json', progress);
   while (race.pending.length && usedThisRun < maxDocuments) {
     const count = Math.min(BATCH_GET_SIZE, pageSize, maxDocuments - usedThisRun, race.pending.length);
     const signatures = race.pending.slice(0, count);
@@ -356,23 +365,24 @@ export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directo
     let rows; try { rows = JSON.parse(body); } catch { throw Error('Invalid Firestore batchGet JSON'); }
     if (!Array.isArray(rows)) throw Error('Invalid Firestore batchGet response');
     const byName = new Map();
-    let unexpectedBatchResult = false;
     for (const result of rows) {
       const name = result?.found?.name || result?.missing;
-      if (typeof name !== 'string' || !names.includes(name) || byName.has(name)) { race.responseInvalid++; unexpectedBatchResult = true; continue; }
+      if (typeof name !== 'string' || !names.includes(name) || byName.has(name) ||
+          !!result.found === (typeof result.missing === 'string')) { race.responseInvalid++; continue; }
       byName.set(name, result);
     }
     for (let index = 0; index < batchBindings.length; index++) {
       const binding = batchBindings[index], name = names[index], signature = binding.signature;
+      const priorFailure = race.records[signature];
       const result = byName.get(name);
       if (!result || result.missing === name) {
         race.records[signature] = {signature, available: false,
-          reason: !result && unexpectedBatchResult ? 'batch-response-mismatch' : 'missing'};
+          reason: !result ? 'batch-response-mismatch' : 'missing'};
       } else {
         let row;
         try { row = decodeDocument(result.found).fields; } catch { row = null; }
         if (!row || !validBoundRace(row, binding)) {
-          race.records[signature] = {signature, available: false, reason: 'binding-mismatch'};
+          race.records[signature] = {signature, available: false, reason: row ? 'binding-mismatch' : 'batch-response-mismatch'};
         } else {
           const updatedAt = [row.updatedAt, row.pbAt, row.createdAt, binding.metadata.pbAt, binding.metadata.createdAt]
             .find(value => Number.isSafeInteger(value) && value >= 0) ?? 0;
@@ -401,7 +411,11 @@ export async function exportPublicProfilesAndReplays({fetchImpl = fetch, directo
         }
       }
       if (race.records[signature]?.available) race.covered[signature] = true;
-      else { delete race.covered[signature]; race.records[signature].checkedAt = now; }
+      else {
+        delete race.covered[signature];
+        Object.assign(race.records[signature], {checkedAt: now, bindingTimeMs: binding.metadata.timeMs ?? null,
+          attempts: priorFailure ? Math.min(MAX_FAILURE_ATTEMPTS, failureAttempts(priorFailure) + 1) : 1});
+      }
       usedThisRun++;
     }
     race.pending = race.pending.slice(count);

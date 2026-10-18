@@ -52,7 +52,7 @@ function fixture({badCount = 4, staleProof = false, pendingCount = 1} = {}) {
     if (failed.some(id => path.endsWith('/0.6.2_s1_leaderboards_track/' + id))) throw Error('persistent targeted publication failure');
     if (path.endsWith('/0.6.2_s1_leaderboards_track/' + TRACK)) return document(board);
     if (path.endsWith('/0.6.2_s1_verification/' + TRACK)) return document({slots});
-    if (path.endsWith('/0.6.2_s1_release_meta/current')) return document({revision: 525, builtRevision: 525});
+    if (path.endsWith('/0.6.2_s1_release_meta/current')) return document({revision: 525, builtRevision: 525, dirty});
     return null;
   }};
   return {env, selected, get job() {return job;}, get board() {return board;}, get dirty() {return dirty;}, get scans() {return scans;}};

@@ -62,3 +62,5 @@ test('footer spinner switches immediately while text entry waits for Enter',()=>
 });
 
 test('page-field arrows step from an edited page number rather than losing the edit',()=>{const f=pageFieldFixture();f.input.value='7';f.context.handleOverallPageInput(f.event('keydown','ArrowUp'));assert.equal(f.input.value,'8');assert.deepEqual(f.pages,[8]);});
+
+test('pointer spinners support replacement input and change events across browser implementations',()=>{const f=pageFieldFixture();f.input.value='6';f.context.handleOverallPageInput(f.event('input',null,'insertReplacementText'));assert.deepEqual(f.pages,[6]);f.input.value='7';f.context.handleOverallPageInput(f.event('change'));assert.deepEqual(f.pages,[6,7]);assert.match(source,/addEventListener\('change',handleOverallPageInput\)/);});

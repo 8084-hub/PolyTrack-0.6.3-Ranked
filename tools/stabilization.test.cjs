@@ -74,7 +74,7 @@ function overallContext({firestoreData=null,workerData=null,offline=false,failFi
  fetchRankedSnapshot:async()=>{if(workerData)return workerData;throw Error('blocked')},
  db:async()=>{if(failFirestore)throw Error('quota');return {collection:()=>({doc:()=>({get:async()=>({data:()=>firestoreData,metadata:{fromCache:offline}})})})}},
  expandRankedResults:async data=>run('decodeRankedResults')(data),normalizeEntries:x=>x,annotateOverallMovement:x=>x,writeOverallSnapshotCache:(rows,meta)=>{ctx.written={rows,meta}},log:()=>{},isLocalApiCapableHost:()=>false,
- COLLECTIONS:{leaderboardsOverall:'overall'},AVERAGE_PLACEMENT_VERSION:1,AVERAGE_FINISH_VERSION:1,RANK_MODEL:'test',TRACK_CACHE_SCHEMA:1};return ctx;
+ COLLECTIONS:{leaderboardsOverall:'overall'},AVERAGE_PLACEMENT_VERSION:1,AVERAGE_FINISH_VERSION:1,RANK_MODEL:'test',TRACK_CACHE_SCHEMA:1};ctx.readDirectPublicSnapshot=async(collection,id)=>(await ctx.db()).collection(collection).doc(id).get();return ctx;
 }
 test('blocked Worker falls back to a complete Firestore snapshot',async()=>{
  const data={entries:[{userId:'new',rankModel:'test',averageFinishVersion:1,averagePlacementVersion:1}],trackSummaries:[{trackId:'new'}],algorithmVersion:'test',schemaVersion:1,revision:2,builtRevision:2,sourceRevision:2,updatedAt:2};
@@ -245,7 +245,7 @@ test('failed SDK script can be retried; simultaneous callers share the same load
  const next=load('sdk');assert.equal(scripts.length,2);scripts[1].onload();await next;
 });
 test('Firebase failed initialization clears its memoized promise with retry backoff',async()=>{
- const ctx={Date,firebaseQuotaPaused:()=>false,firestorePromise:null,firebaseRetryAt:0,loadScript:async()=>{throw Error('blocked')}};
+ const ctx={Date,assertOnlineCompatibility:()=>{},firebaseQuotaPaused:()=>false,firestorePromise:null,firebaseRetryAt:0,loadScript:async()=>{throw Error('blocked')}};
  const get=run('db',ctx);await assert.rejects(get(),/blocked/);assert.equal(ctx.firestorePromise,null);assert.ok(ctx.firebaseRetryAt>Date.now());
  await assert.rejects(get(),/cooling down/);
 });

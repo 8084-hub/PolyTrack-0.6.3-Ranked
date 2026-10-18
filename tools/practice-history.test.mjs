@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createPracticeHistory,practiceAdvice,PRACTICE_KEY} from './practice-history.mjs';
+import {createPracticeHistory,practiceAdvice,PRACTICE_KEY,HUNT_IDLE_MS} from './practice-history.mjs';
 import {installPracticeObserver} from './practice-native.mjs';
 const account='a'.repeat(64),track='b'.repeat(64);
 function setup(){let at=100000,saved=null,writes=0;const storage={getItem:()=>saved,setItem:(_key,value)=>{saved=value;writes++;}};const history=createPracticeHistory({storage,now:()=>at});return {history,storage,advance:ms=>at+=ms,writes:()=>writes,saved:()=>saved};}
@@ -80,3 +80,88 @@ test('opening and leaving a track without driving is not a practice attempt',()=
 test('return hint uses observed improvements on other tracks without changing points',()=>{const at=1000000000,row={trackId:track,attempts:8,activeMs:600000,lastPlayedAt:at-4*86400000};const advice=practiceAdvice(row,at,{otherTracks:['c','d','e'].map(id=>({trackId:id.repeat(64),improvedMs:100,lastPbAt:at-1000}))});assert.equal(advice.factor,1.1);assert.match(advice.text,/3 other tracks improved/);});
 
 test('native leave callback ignores repeated disposal and synchronous replacement',async()=>{let leaves=0;const f=nativeFixture(()=>leaves++);try{const first=f.car();first.dispose();f.car();await Promise.resolve();assert.equal(leaves,0);first.dispose();await Promise.resolve();assert.equal(leaves,0);const last=f.car();last.dispose();await Promise.resolve();assert.equal(leaves,1);last.dispose();await Promise.resolve();assert.equal(leaves,1);}finally{f.observer.stop();}});
+
+const moving={visible:true,paused:false,progressing:true,moving:true};
+function observe(h,attempt,evidence=moving,ms=1000){h.advance(ms);attempt.observe(ms,evidence);}
+
+test('tracked best is never seeded from baseline, legacy best or legacy finishes',()=>{
+ const h=setup();let a=h.history.begin(account,track,10000);
+ assert.equal(h.history.get(account,track).trackedBestMs,0);
+ a.finish(12000);assert.equal(h.history.get(account,track).trackedBestMs,12000);
+ a=h.history.begin(account,track,9000);a.finish(11000);
+ assert.equal(h.history.get(account,track).trackedBestMs,11000);
+ assert.equal(h.history.get(account,track).bestMs,9000);
+ const legacy={version:1,accounts:{[account]:{[track]:{bestMs:8000,activeMs:5000,recentFinishes:[{at:90000,timeMs:8000}]}}}};
+ const restored=createPracticeHistory({storage:{getItem:()=>JSON.stringify(legacy)},now:()=>100000});
+ const row=restored.get(account,track);assert.equal(row.trackedBestMs,0);assert.equal(row.observationVersion,0);assert.equal(row.legacyActiveMs,5000);assert.equal(row.movingMs,0);
+});
+
+test('observed baseline improvement and ordinary finish PB improvements stay distinct',()=>{
+ const h=setup();h.history.begin(account,track,30000).leave();
+ h.history.observeBest(account,track,20000);
+ h.history.begin(account,track,19000).finish(18000);
+ const row=h.history.get(account,track);
+ assert.equal(row.biggestObservedImprovementMs,10000);assert.equal(row.biggestPbImprovementMs,1000);assert.equal(row.improvedMs,1000);
+ assert.equal(row.trackedBestMs,18000);
+ h.history.begin(account,track).finish(22000);assert.equal(h.history.get(account,track).biggestPbImprovementMs,1000);
+});
+
+test('observed time categories distinguish stationary clock progress and missing motion',()=>{
+ const h=setup(),a=h.history.begin(account,track);
+ observe(h,a);observe(h,a,{...moving,moving:false});observe(h,a,{...moving,moving:null});
+ observe(h,a,{...moving,progressing:false});observe(h,a,{...moving,paused:true});observe(h,a,{...moving,visible:false,paused:true});
+ observe(h,a,moving,10000);
+ const row=h.history.get(account,track);
+ assert.equal(row.focusedMs,4000);assert.equal(row.progressingMs,3000);assert.equal(row.movingMs,1000);assert.equal(row.motionObservedMs,3000);
+ assert.equal(row.stationaryMs,1000);assert.equal(row.idleMs,1000);assert.equal(row.pausedMs,1000);assert.equal(row.hiddenMs,1000);assert.equal(row.unobservedGapMs,10000);
+ assert.equal(row.longestHuntMs,1000);assert.equal(row.observationVersion,1);
+});
+
+test('hunts span restarts and reloads but count only observed moving time',()=>{
+ const h=setup();let a=h.history.begin(account,track);observe(h,a);a.restart(1000);
+ a=h.history.begin(account,track);observe(h,a,{...moving,moving:false});observe(h,a);a.leave();h.history.flush(true);
+ const reloaded=createPracticeHistory({storage:h.storage,now:()=>104000});
+ reloaded.begin(account,track).observe(1000,moving);
+ const row=reloaded.get(account,track);assert.equal(row.longestHuntMs,3000);assert.equal(row.hunt.movingMs,3000);
+ const clone=reloaded.get(account,track);clone.hunt.movingMs=999999;assert.equal(reloaded.get(account,track).hunt.movingMs,3000);
+});
+
+test('track switch and long stationary/hidden/paused inactivity break hunts',()=>{
+ for(const evidence of [{...moving,moving:false},{...moving,visible:false},{...moving,paused:true}]){
+  const h=setup();let a=h.history.begin(account,track);observe(h,a);observe(h,a);h.advance(HUNT_IDLE_MS+1);a.observe(1000,evidence);observe(h,a);
+  assert.equal(h.history.get(account,track).hunt.movingMs,1000);assert.equal(h.history.get(account,track).longestHuntMs,2000);
+  a.leave();h.history.begin(account,'c'.repeat(64)).leave();a=h.history.begin(account,track);observe(h,a);
+  assert.equal(h.history.get(account,track).hunt.movingMs,1000);
+ }
+});
+
+test('legacy tick has no motion coverage and never creates a hunt',()=>{
+ const h=setup(),a=h.history.begin(account,track);a.tick(1000);
+ const row=h.history.get(account,track);assert.equal(row.observationVersion,0);assert.equal(row.longestHuntMs,0);assert.equal(row.motionObservedMs,0);
+});
+
+test('first placement requires a matching new finish and complete authoritative exact evidence',()=>{
+ const h=setup();const a=h.history.begin(account,track,9000);
+ const evidence={rank:4,total:100,exact:true,complete:true,authoritative:true,timeMs:10000,finishedAt:100000,at:100000};
+ assert.equal(h.history.observePlacement(account,track,evidence),false);
+ const finish=a.finish(10000);assert.deepEqual(finish,{timeMs:10000,finishedAt:100000});
+ for(const patch of [{complete:false},{authoritative:false},{exact:false},{at:undefined},{at:99999},{total:3},{timeMs:9000},{finishedAt:99999},{rank:1.5}])assert.equal(h.history.observePlacement(account,track,{...evidence,...patch}),false);
+ assert.equal(h.history.get(account,track).firstPlacement,null);
+ assert.equal(h.history.observePlacement(account,track,evidence),true);
+ assert.equal(h.history.observePlacement(account,track,{...evidence,rank:2}),false);
+ h.history.flush(true);const restored=createPracticeHistory({storage:h.storage,now:()=>100000});assert.equal(restored.get(account,track).firstPlacement.rank,4);
+});
+
+test('late placement for an older finish is rejected and storage remains bounded',()=>{
+ const h=setup();const old=h.history.begin(account,track).finish(10000);h.advance(1000);h.history.begin(account,track).finish(9000);
+ assert.equal(h.history.observePlacement(account,track,{...old,at:101000,rank:2,total:100,complete:true,authoritative:true,exact:true}),false);
+ const a=h.history.begin(account,track);for(let i=0;i<10000;i++)a.observe(1000,moving);h.history.flush(true);
+ assert.ok(h.saved().length<3000);assert.equal(h.history.get(account,track).firstPlacement,null);
+});
+
+test('new observation timestamps round-trip at real epoch scale without duration clamping',()=>{
+ let saved;const at=Date.UTC(2026,9,18),storage={getItem:()=>saved,setItem:(_key,value)=>saved=value};
+ const h=createPracticeHistory({storage,now:()=>at});const a=h.begin(account,track);a.observe(1000,moving);a.finish(12000);h.flush(true);
+ const row=createPracticeHistory({storage,now:()=>at}).get(account,track);
+ assert.equal(row.observedStartedAt,at);assert.equal(row.lastObservedFinishAt,at);assert.equal(row.trackedBestMs,12000);assert.equal(row.observationVersion,1);
+});

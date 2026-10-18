@@ -268,7 +268,7 @@ test('actual event bridge serves finalized static archives without a Worker or F
 
 test('actual event bridge still gets authoritative live standings from the Worker',async()=>{
   let cloud=0;const live={id:'d_live',archived:false};
-  const context=vm.createContext({snapshotOnlyForNewAccount:()=>false,readPublicSnapshotBackup:async()=>live,rankedEdgeAvailable:()=>true,
+  const context=vm.createContext({snapshotOnlyForNewAccount:()=>false,readPublicSnapshotBackup:async()=>live,eventCloudRetryAt:new Map(),rankedEdgeAvailable:()=>true,
     rankedBrokerUrl:()=> 'https://example.test',AbortSignal,fetch:async()=>{cloud++;return {status:200,ok:true,headers:new Headers({'content-type':'application/json'}),json:async()=>live};}});
   vm.runInContext(section('  async function loadEventCloudRead(', '  const archiveMonthReads='),context);
   const result=await context.loadEventCloudRead('/v1/events/d_live/snapshot','0.6.2_event_public','d_live');

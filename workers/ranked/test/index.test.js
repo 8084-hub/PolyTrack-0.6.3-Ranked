@@ -902,6 +902,7 @@ test('scheduled idle recovery scans canonical results every fifteen minutes with
       if(path.includes('/canonical_reconcile_v2'))return {fields:wire({backfillComplete:true,
         cursorIngestedAt:'2026-09-09T00:00:00.000000123Z',pendingTrackIds:[]}).mapValue.fields,updateTime:'job-v1'};
       if(path.includes('/0.6.2_s1_release_meta/current'))return {fields:wire({dirty:false,
+        sourceCatalog:{version:1,complete:true,scannedAt:Date.now(),count:0,tracks:{}},
         plannerPublicationVersion:Number.MAX_SAFE_INTEGER,plannerBundleVersion:Number.MAX_SAFE_INTEGER,
         cosmeticEntitlementVersion:Number.MAX_SAFE_INTEGER,averagePlacementVersion:Number.MAX_SAFE_INTEGER,
         derivedMetricsVersion:Number.MAX_SAFE_INTEGER}).mapValue.fields,updateTime:'meta-v1'};
@@ -1260,7 +1261,7 @@ test('200-racer entitlement initialization uses one atomic batch within the Free
  const result=await rebuildOverall({__TEST_FIRESTORE:async(path,init={})=>{
   requests++;
   if(path===':commit'){commit=JSON.parse(init.body);return {};}
-  if(path===':runQuery')return boards.map(b=>({document:{fields:wire(b).mapValue.fields}}));
+  if(path===':runQuery')return boards.map(b=>({document:{name:'projects/test/databases/(default)/documents/0.6.2_s1_leaderboards_track/'+b.trackId,updateTime:'2026-10-18T00:00:00Z',fields:wire(b).mapValue.fields}}));
   if(path.includes('s1_release_meta'))return {fields:wire({dirty:true,revision:10}).mapValue.fields,updateTime:'2026-09-09T00:00:00Z'};
   return null;
  }},true);
@@ -1517,7 +1518,7 @@ function overallFixture(boards) {
       assert.ok(q.limit===100||q.limit===1);
       assert.equal(q.orderBy[0].field.fieldPath,'__name__');
       const base='projects/test/databases/(default)/documents/0.6.2_s1_leaderboards_track/';
-      return boards.map(board=>({document:{name:base+board.trackId,fields:wire(board).mapValue.fields}}))
+      return boards.map(board=>({document:{name:base+board.trackId,updateTime:'2026-10-18T00:00:00Z',fields:wire(board).mapValue.fields}}))
         .filter(item=>!q.startAt||item.document.name>q.startAt.values[0].referenceValue)
         .sort((a,b)=>a.document.name.localeCompare(b.document.name)).slice(0,q.limit);
     }
@@ -1547,7 +1548,7 @@ test('pending-only board changes do not alter the verified overall input', () =>
   assert.notEqual(overallTrackInput(TRACK,before),overallTrackInput(TRACK,[{...verified,name:'New name'}]));
 });
 
-test('a pending-only PB publishes its track without reading or dirtying overall metadata', async () => {
+test('a pending-only PB publishes its track with guarded catalog metadata but does not dirty scoring', async () => {
   const old=validRun({accountId:'pending',trackId:TRACK,timeMs:20000,runVerified:false,
     name:'Current Name',nickname:'Current Name',countryCode:'CA',carId:'current-car',carColors:'blue',
     carStyle:'current-style',profileCosmetics:{version:7,accent:'cyan'},groupCode:'123456',groupCodeUpdatedAt:42});
@@ -1567,10 +1568,12 @@ test('a pending-only PB publishes its track without reading or dirtying overall 
   const result=await mergeCanonicalResultIntoTrack(env,TRACK,next,true);
   assert.equal(result.changed,true);
   assert.equal(result.overallChanged,false);
-  assert.equal(calls.some(path=>path.includes('s1_release_meta')),false);
+  assert.equal(calls.filter(path=>path.includes('s1_release_meta')).length,1);
   assert.equal(calls.includes(':runQuery'),false);
   assert.equal(writes.filter(write=>write.update.name.includes('s1_leaderboards_track')).length,1);
-  assert.equal(writes.some(write=>write.update.name.includes('s1_release_meta')),false);
+  const metaWrite=writes.find(write=>write.update.name.includes('s1_release_meta'));
+  assert.ok(metaWrite);
+  assert.equal(unwire({mapValue:{fields:metaWrite.update.fields}}).dirty,undefined);
   assert.equal(result.entries[0].timeMs,19000,'the new PB still publishes');
   for(const key of ['name','nickname','countryCode','carId','carColors','carStyle','profileCosmetics','groupCode','groupCodeUpdatedAt'])
     assert.deepEqual(result.entries[0][key],entries[0][key],`published profile overlay ${key} survives canonical PB data`);
@@ -1624,7 +1627,7 @@ test('concurrent overall rebuilds share one source-board crawl and commit', asyn
   assert.equal(f.commits.length,1);
 });
 
-test('normal overall updates wait fifteen minutes without reading source boards', async () => {
+test('normal overall updates wait thirty minutes without reading source boards', async () => {
   const f=overallFixture([{trackId:TRACK,complete:true,entries:[]}]);
   await rebuildOverall(f.env,true);
   const doc=f.documents.get('/0.6.2_s1_release_meta/current');
@@ -1769,7 +1772,7 @@ test('a prior server beta badge is retained with immutable source metadata witho
   let commit;
   const prior={entries:[{userId:'beta-racer',badges:{betaTester:true}}],revision:4,sourceRevision:4,updatedAt:1700000000000};
   const env={__TEST_FIRESTORE:async(path,init={})=>{
-    if(path===':runQuery')return boards.map(board=>({document:{fields:wire(board).mapValue.fields}}));
+    if(path===':runQuery')return boards.map(board=>({document:{name:'projects/test/databases/(default)/documents/0.6.2_s1_leaderboards_track/'+board.trackId,updateTime:'2026-10-18T00:00:00Z',fields:wire(board).mapValue.fields}}));
     if(path===':batchGet')return [];
     if(path===':commit'){commit=JSON.parse(init.body);return {};}
     if(path.includes('s1_leaderboards_overall/main'))return {fields:wire(prior).mapValue.fields,updateTime:'v1'};
@@ -1793,7 +1796,7 @@ test('a legacy server entitlement retains beta for a returning racer absent from
   ]}];
   let commit;
   const env={__TEST_FIRESTORE:async(path,init={})=>{
-    if(path===':runQuery')return boards.map(board=>({document:{fields:wire(board).mapValue.fields}}));
+    if(path===':runQuery')return boards.map(board=>({document:{name:'projects/test/databases/(default)/documents/0.6.2_s1_leaderboards_track/'+board.trackId,updateTime:'2026-10-18T00:00:00Z',fields:wire(board).mapValue.fields}}));
     if(path===':batchGet')return [{found:{name:'projects/test/databases/(default)/documents/0.6.2_s1_cosmetic_entitlements/returning-beta',
       fields:wire({badge:['auto','betaTester']}).mapValue.fields,updateTime:'2026-09-01T00:00:00Z'}}];
     if(path===':commit'){commit=JSON.parse(init.body);return {};}
@@ -1816,7 +1819,7 @@ test('open beta defaults on and server-issues eligible racers before cutoff with
   ]}];
   let commit;
   const env={BETA_CUTOFF_MS:String(cutoff),__TEST_FIRESTORE:async(path,init={})=>{
-    if(path===':runQuery')return boards.map(board=>({document:{fields:wire(board).mapValue.fields}}));
+    if(path===':runQuery')return boards.map(board=>({document:{name:'projects/test/databases/(default)/documents/0.6.2_s1_leaderboards_track/'+board.trackId,updateTime:'2026-10-18T00:00:00Z',fields:wire(board).mapValue.fields}}));
     if(path===':batchGet')return [];
     if(path===':commit'){commit=JSON.parse(init.body);return {};}
     if(path.includes('s1_release_meta'))return {fields:wire({dirty:true,revision:7}).mapValue.fields,updateTime:'v1'};
@@ -1842,7 +1845,7 @@ test('client PB createdAt cannot backdate a beta grant past the server registrat
   ]}];
   let commit;
   const env={BETA_CUTOFF_MS:String(cutoff),__TEST_FIRESTORE:async(path,init={})=>{
-    if(path===':runQuery')return boards.map(board=>({document:{fields:wire(board).mapValue.fields}}));
+    if(path===':runQuery')return boards.map(board=>({document:{name:'projects/test/databases/(default)/documents/0.6.2_s1_leaderboards_track/'+board.trackId,updateTime:'2026-10-18T00:00:00Z',fields:wire(board).mapValue.fields}}));
     if(path===':batchGet')return [{found:{name:'projects/test/databases/(default)/documents/0.6.2_s1_beta_registration/late-racer',
       fields:wire({accountId:'late-racer',source:'ranked-worker',firstRegisteredAt:registrationTime,schemaVersion:1}).mapValue.fields,updateTime:'registered-after-cutoff'}}];
     if(path===':commit'){commit=JSON.parse(init.body);return {};}
@@ -1867,7 +1870,7 @@ test('post-cutoff open-beta grants and snapshot badges are not grandfathered by 
   let commit;
   const prior={updatedAt:Date.now(),sourceRevision:12,entries:[{userId:'snapshot-only',badges:{betaTester:true}}]};
   const env={BETA_CUTOFF_MS:String(cutoff),__TEST_FIRESTORE:async(path,init={})=>{
-    if(path===':runQuery')return boards.map(board=>({document:{fields:wire(board).mapValue.fields}}));
+    if(path===':runQuery')return boards.map(board=>({document:{name:'projects/test/databases/(default)/documents/0.6.2_s1_leaderboards_track/'+board.trackId,updateTime:'2026-10-18T00:00:00Z',fields:wire(board).mapValue.fields}}));
     if(path===':batchGet')return [{found:{name:'projects/test/databases/(default)/documents/0.6.2_s1_cosmetic_entitlements/window-grant',
       fields:wire({serverIssued:{beta:{id:'beta-tester',source:'open-beta-release',sourceRevision:11,issuedAt:postCutoff,cutoffAt:cutoff}}}).mapValue.fields,updateTime:'after-cutoff'}}];
     if(path===':commit'){commit=JSON.parse(init.body);return {};}
@@ -1920,7 +1923,7 @@ test('closing open beta excludes new racers but retains persisted server entitle
   const persisted={id:'beta-tester',source:'open-beta-release',sourceRevision:6,issuedAt:1700000000000,cutoffAt:0};
   let commit;
   const env={OPEN_BETA_ENABLED:'false',__TEST_FIRESTORE:async(path,init={})=>{
-    if(path===':runQuery')return boards.map(board=>({document:{fields:wire(board).mapValue.fields}}));
+    if(path===':runQuery')return boards.map(board=>({document:{name:'projects/test/databases/(default)/documents/0.6.2_s1_leaderboards_track/'+board.trackId,updateTime:'2026-10-18T00:00:00Z',fields:wire(board).mapValue.fields}}));
     if(path===':batchGet')return [{found:{name:'projects/test/databases/(default)/documents/0.6.2_s1_cosmetic_entitlements/retained-beta',
       fields:wire({serverIssued:{beta:persisted}}).mapValue.fields,updateTime:'2026-09-01T00:00:00Z'}}];
     if(path===':commit'){commit=JSON.parse(init.body);return {};}

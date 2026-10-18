@@ -36,7 +36,7 @@ test('local results and extra-track metadata allow 5000 rows and report truncati
  const report = buildDeveloperReport({ localResults: rows, extraTracks: rows });
  assert.equal(report.localResults.length, 5000);
  assert.equal(report.extraTracks.length, 5000);
- assert.deepEqual(report.truncation, { localResults: { omitted: 1 }, extraTracks: { omitted: 1 } });
+ assert.deepEqual(report.truncation, { localResults: { omitted: 1 }, extraTracks: { omitted: 1 }, localProfiles: { omitted: 0 }, localPersonalBests: { omitted: 0 }, localTracks: { omitted: 0 }, localPractice: { omitted: 0 } });
  assert.equal(report.extraTracks[0].trackId, '0');
  assert.equal(report.extraTracks[0].timeMs, undefined);
 });
@@ -53,4 +53,33 @@ test('unknown result placement remains unknown and sensitive fields never escape
  const result = buildDeveloperReport({ finishes: [{ rank: Infinity, fieldSize: Infinity, weight: null, connectionCode: 'secret' }] }).loadedResults[0];
  assert.equal(result.rank, null); assert.equal(result.fieldSize, null); assert.equal(result.placementKnown, false);
  assert.doesNotMatch(JSON.stringify(result), /secret|connectionCode/);
+});
+
+test('local profile data is explicit, whitelisted, ID-preserving, and gated by the existing checkbox consent', () => {
+ const localData = {
+  profiles: [{ publicId: 'racer_ID-0000000000000000000000000000000000000000000000000000000000000000', name: 'Racer', carColors: ['#112233', '#abcdef'], cosmetics: { body: 'sport', wheels: 'gold', authToken: 'secret', arbitrary: { password: 'secret' } }, playtimeMs: 1234, personalBests: [{ trackId: id, trackName: 'Track', timeMs: 456, frames: 28, achievedAt: 99, replay: 'secret' }], email: 'private@example.test', token: 'secret' }],
+  tracks: [{ trackId: 'opaque-track-identifier-that-must-not-be-cut', name: 'Track', author: 'Builder', source: 'local', official: false, connectionCode: 'secret' }],
+  practice: [{ trackId: id, trackName: 'Track', activeMs: 80, focusedMs: 20, pausedMs: 3, hiddenMs: 4, movingMs: 10, longestHuntMs: 6, biggestImprovementMs: 12, token: 'secret' }]
+ };
+ const optedOut = buildDeveloperReport({ localData });
+ assert.equal(optedOut.localData, null);
+ assert.deepEqual(optedOut.truncation.localProfiles, { omitted: 1 });
+ const report = buildDeveloperReport({ localData, includePublicId: true });
+ assert.equal(report.localData.profiles[0].publicId, localData.profiles[0].publicId);
+ assert.equal(report.localData.tracks[0].trackId, localData.tracks[0].trackId);
+ assert.equal(report.localData.profiles[0].personalBests[0].timeMs, 456);
+ assert.equal(report.localData.practice[0].focusedMs, 20);
+ assert.equal(report.localData.practice[0].biggestImprovementMs, 12);
+ assert.equal(report.privacy.includesLocalProfiles, true);
+ assert.doesNotMatch(JSON.stringify(report), /secret|private@example|authToken|connectionCode|replay/);
+ assert.match(report.privacy.limitations, /does not imply legacy playtime was tracked/);
+});
+
+test('local data truncation reports every omitted category', () => {
+ const profile = { publicId: 'racer', personalBests: Array.from({ length: 5001 }, (_, i) => ({ trackId: id, timeMs: i })) };
+ const report = buildDeveloperReport({ includePublicId: true, localData: { profiles: Array(501).fill(profile), tracks: Array(5001).fill({ trackId: 'track' }), practice: Array(501).fill({ trackId: id }) } });
+ assert.deepEqual(report.truncation.localProfiles, { omitted: 1 });
+ assert.deepEqual(report.truncation.localPersonalBests, { omitted: 5501 });
+ assert.deepEqual(report.truncation.localTracks, { omitted: 1 });
+ assert.deepEqual(report.truncation.localPractice, { omitted: 1 });
 });

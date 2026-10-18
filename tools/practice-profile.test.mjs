@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderPracticeProfile } from './practice-profile.mjs';
+import { renderPracticeProfile, installPracticeProfileControls } from './practice-profile.mjs';
 
 const row = (overrides = {}) => ({
   trackId: 'track-a', trackName: 'Summer Run', activeMs: 125000, attempts: 7,
-  finishes: 3, pbs: 1, bestMs: 47250, sincePbMs: 61000,
+  finishes: 3, pbs: 1, bestMs: 47250, trackedBestMs: 47250, sincePbMs: 61000,
   lastPlayedAt: Date.UTC(2026, 9, 17), ...overrides
 });
 
@@ -14,7 +14,7 @@ test('renders compact summary and per-track useful data with trusted preview mar
   assert.match(html, /2m/);
   assert.match(html, /TRACKS DRIVEN/);
   assert.match(html, /7 attempts/);
-  assert.match(html, /3 finishes/);
+  assert.match(html, /3 recorded finishes/);
   assert.match(html, /1 PB/);
   assert.match(html, /47\.25s/);
   assert.match(html, /1m 1s without a new PB/);
@@ -45,12 +45,42 @@ test('shows recent finishes only when known and keeps optional timing note escap
   assert.match(html, /clocks differed/);
 });
 
-test('caps useful track rows at eight and excludes non-observations', () => {
+test('renders the full searchable track history and excludes non-observations', () => {
   const rows = Array.from({ length: 12 }, (_, i) => row({ trackId: `t${i}`, trackName: `Track ${i}`, lastPlayedAt: i + 1 }));
   rows.push({ trackId: 'empty', trackName: 'Empty', activeMs: 0, attempts: 0, finishes: 0 });
   const html = renderPracticeProfile({ rows });
-  assert.equal((html.match(/class="pp-track"/g) || []).length, 8);
+  assert.equal((html.match(/class="pp-track"/g) || []).length, 12);
   assert.doesNotMatch(html, /Empty/);
+});
+
+test('separates known local/cloud PB evidence from tracked finish history and never invents rank', () => {
+  const html = renderPracticeProfile({ rows: [row()], results: [
+    { trackId: 'track-a', timeMs: 46000, local: true },
+    { trackId: 'track-a', timeMs: 45500, source: 'cloud', rank: 4, fieldSize: 20 }
+  ] });
+  assert.match(html, /Tracked history/);
+  assert.match(html, /Cloud PB evidence/);
+  assert.match(html, /45\.50s/);
+  assert.match(html, /Rank 4 of 20/);
+  const noProof = renderPracticeProfile({ rows: [row()] });
+  assert.doesNotMatch(noProof, /Known PB evidence|Rank /);
+});
+
+test('uses explicit coverage color and explanation for sparse, moderate, and adequate evidence', () => {
+  const view = fraction => renderPracticeProfile({ rows: [row()], coverage: { coverageFraction: fraction } });
+  assert.match(view(0.05), /pp-coverage-low[^>]*>5% visible-time coverage · limited history/);
+  assert.match(view(0.3), /pp-coverage-moderate/);
+  assert.match(view(0.85), /pp-coverage-adequate/);
+  assert.match(view(0.05), /not an error or a fraud signal/);
+});
+
+test('provides accessible search, sorting, view controls, and event handler export', () => {
+  const html = renderPracticeProfile({ rows: [row()] });
+  assert.match(html, /<label>Search tracks/);
+  assert.match(html, /value="improvement"/);
+  assert.match(html, /data-pp-view="list"/);
+  assert.equal(typeof installPracticeProfileControls, 'function');
+  assert.equal(installPracticeProfileControls(null) instanceof Function, true);
 });
 
 test('renders a single compact instruction for no meaningful observations', () => {
@@ -65,3 +95,5 @@ test('keeps clear-history action available in accessible native details', () => 
   assert.match(html, /<button type="button" data-clear-practice-history>/);
   assert.match(html, /Manage local history/);
 });
+
+test('baseline PB is never labelled an observed finish and invalid ranks are omitted',()=>{const html=renderPracticeProfile({rows:[row({bestMs:12345,trackedBestMs:0})],results:[{trackId:'track-a',timeMs:12345,local:true,rank:4,fieldSize:2}]});assert.doesNotMatch(html,/Tracked best|best 12.35s|Rank 4/);assert.match(html,/Known PB evidence/);});

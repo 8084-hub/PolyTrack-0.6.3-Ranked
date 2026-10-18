@@ -210,6 +210,7 @@ test('shared batch reader rejects invalid exact IDs before batchGet, never redir
       if (path === ':runQuery') {
         assert.equal(JSON.parse(init.body).structuredQuery.from[0].collectionId, '0.6.2_s1_leaderboards_track');
         return [{document: {name: base + '0.6.2_s1_leaderboards_track/' + track,
+          updateTime: '2026-10-18T00:00:00Z',
           fields: encode({trackId: track, entries: [row(accountId), row('other')].map(r => ({...r,
             integrityVerified: true, runVerified: true}))}).mapValue.fields}}];
       }

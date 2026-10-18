@@ -26,3 +26,5 @@ test('unchanged full page sets are reused without pretending source coverage is 
  const result=await completeRankedSnapshot(value,{saved,kind:'overall',endpoint:'https://worker.test',fetchImpl:()=>assert.fail('Unchanged pages requested')});
  assert.equal(result.entries.length,205);assert.equal(result.complete,false);assert.equal(result.sourceComplete,false);
 });
+
+for(const [kind,path] of [['event','/v1/events/d_20261018/snapshot/page'],['event-totals','/v1/events/totals/page']])test(kind+' assembles every public page and reuses matching saved generations',async()=>{const urls=[];const result=await completeRankedSnapshot(preview(),{kind,trackId:'d_20261018',endpoint:'https://worker.test',fetchImpl:async value=>{const url=new URL(value);urls.push(url);return Response.json(page(Number(url.searchParams.get('page'))));}});assert.equal(result.entries.length,205);assert.ok(urls.every(u=>u.pathname===path));const saved={...result,sourceRevision:7};await completeRankedSnapshot(preview(),{saved,kind,trackId:'d_20261018',endpoint:'https://worker.test',fetchImpl:()=>assert.fail('same generation fetched twice')});});

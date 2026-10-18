@@ -208,7 +208,7 @@ test('track identity carries group codes into overall computation and rebuilds p
     ['/0.6.2_s1_release_meta/current', document({dirty: true, revision: 8})]
   ]);
   const env = {__TEST_FIRESTORE: async (path, init = {}) => {
-    if (path === ':runQuery') return [{document: {name: `projects/test/databases/(default)/documents/0.6.2_s1_leaderboards_track/${TRACK}`, fields: encodeFields(board)}}];
+    if (path === ':runQuery') return [{document: {name: `projects/test/databases/(default)/documents/0.6.2_s1_leaderboards_track/${TRACK}`, updateTime:'2026-10-18T00:00:00Z', fields: encodeFields(board)}}];
     if (path === ':batchGet') {
       const documents = JSON.parse(init.body).documents;
       batchGets.push(documents);
