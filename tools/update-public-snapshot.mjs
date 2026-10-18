@@ -165,7 +165,7 @@ function reconstructOmittedBoards(index, hydrated) {
     decoded: Buffer.from(`${JSON.stringify(reconstructPagedBoard(board, hydrated))}\n`, 'utf8') }));
 }
 
-async function hydrateStaging(root, stagingDirectory) {
+export async function hydrateStaging(root, stagingDirectory) {
   const pointer = JSON.parse(await fs.readFile(path.join(root, 'snapshot-current.json'), 'utf8'));
   if (typeof pointer.currentdir !== 'string' || !/^public-snapshots[1-9]\d*$/.test(pointer.currentdir)) {
     throw new Error('Current snapshot pointer is invalid');

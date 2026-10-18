@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { gzip, gunzip } from 'node:zlib';
 import { promisify } from 'node:util';
-import { buildTrackSnapshotPaging, buildOverallSnapshotPaging, buildBoardPageManifest, buildSnapshotBootstrapIndex } from './track-snapshot-paging.mjs';
+import { buildTrackSnapshotPaging, buildOverallSnapshotPaging, buildBoardPageManifest, buildSnapshotBootstrapIndex, buildSnapshotFastIndex, isBootstrapSnapshotPath } from './track-snapshot-paging.mjs';
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
@@ -109,7 +109,7 @@ async function collectJsonFiles(directory) {
       if (entry.isDirectory()) await walk(fullPath, nextRelative);
       else if (entry.isFile() && entry.name.endsWith('.json') && entry.name !== 'export-progress.json' && nextRelative !== 'track-statistics.json' &&
           !/^(?:track-previews|track-pages|track-manifests|overall-pages)\//.test(nextRelative) &&
-          !['bootstrap-index.json', 'snapshot-paging.json', 'overall-manifest.json', 'overall-preview.json'].includes(nextRelative)) {
+          !['bootstrap-fast.json', 'bootstrap-index.json', 'snapshot-paging.json', 'overall-manifest.json', 'overall-preview.json'].includes(nextRelative)) {
         const logicalPath = safeRelativePath(nextRelative);
         const bytes = await fs.readFile(fullPath);
         const pageable = /^tracks\/[a-f0-9]{64}\.json$/.test(logicalPath) || logicalPath === 'overall.json';
@@ -181,7 +181,25 @@ async function readIndex(directory) {
   } catch { return null; }
 }
 
+
+export function buildSnapshotLookupShards(index) {
+  const shards = new Map();
+  for (const [logical, record] of Object.entries(index.files)) {
+    if (isBootstrapSnapshotPath(logical)) continue;
+    const bucket = sha256(Buffer.from(logical)).slice(0, 2);
+    if (!shards.has(bucket)) shards.set(bucket, { schemaVersion: 1, generation: index.generation,
+      encoding: index.encoding, lookupShardsVersion: 1, bucket, files: {} });
+    shards.get(bucket).files[logical] = record;
+  }
+  return shards;
+}
+async function writeSnapshotLookupShards(index, directory) {
+  const shards = buildSnapshotLookupShards(index);
+  if (shards.size) await fs.mkdir(path.join(directory, 'lookup-shards'), { recursive: true });
+  for (const [bucket, shard] of shards) await fs.writeFile(path.join(directory, 'lookup-shards', bucket + '.json'), JSON.stringify(shard) + '\n', { flag: 'wx' });
+}
 async function matchesPublished(entries, index, directory) {
+  if (index.lookupShardsVersion !== 1) return false;
   if (index.encoding !== 'gzip-xor-a7-v1' || Object.keys(index.files).length !== entries.length) return false;
   for (const { logicalPath, bytes } of entries) {
     const item = index.files[logicalPath];
@@ -196,8 +214,13 @@ async function matchesPublished(entries, index, directory) {
   if (entries.some(entry => entry.logicalPath === 'snapshot-paging.json')) {
     try {
       const bootstrap = await fs.readFile(path.join(directory, 'bootstrap-index.json'), 'utf8');
+      if (await fs.readFile(path.join(directory, 'bootstrap-fast.json'), 'utf8') !== JSON.stringify(buildSnapshotFastIndex(index)) + '\n') return false;
       if (bootstrap !== `${JSON.stringify(buildSnapshotBootstrapIndex(index))}\n`) return false;
     } catch { return false; }
+  }
+  for (const [bucket, shard] of buildSnapshotLookupShards(index)) {
+    try { if (await fs.readFile(path.join(directory, 'lookup-shards', bucket + '.json'), 'utf8') !== JSON.stringify(shard) + '\n') return false; }
+    catch { return false; }
   }
   return true;
 }
@@ -232,6 +255,7 @@ export async function restoreSnapshotArchive(archivePath, destinationDirectory) 
   if (contents.schemaVersion !== 1 || !contents.index?.files || typeof contents.index.files !== 'object') throw new Error('Invalid snapshot history archive');
   await fs.mkdir(destinationDirectory, { recursive: true });
   await fs.writeFile(path.join(destinationDirectory, 'index.json'), JSON.stringify(contents.index, null, 2));
+  if (contents.bootstrapIndex && contents.index.lookupShardsVersion === 1) await fs.writeFile(path.join(destinationDirectory, 'bootstrap-fast.json'), JSON.stringify(buildSnapshotFastIndex(contents.index)) + '\n', { flag: 'wx' });
   if (contents.bootstrapIndex) await fs.writeFile(path.join(destinationDirectory, 'bootstrap-index.json'), `${JSON.stringify(contents.bootstrapIndex)}\n`, { flag: 'wx' });
   for (const item of Object.values(contents.index.files)) {
     const name = path.basename(item.path);
@@ -240,6 +264,7 @@ export async function restoreSnapshotArchive(archivePath, destinationDirectory) 
     if (bytes.byteLength > MAX_FILE_BYTES) throw new RangeError(`${name} exceeds file limit`);
     await fs.writeFile(path.join(destinationDirectory, name), bytes, { flag: 'wx' });
   }
+  if (contents.index.lookupShardsVersion === 1) await writeSnapshotLookupShards(contents.index, destinationDirectory);
   return contents.index;
 }
 
@@ -282,14 +307,16 @@ export async function publishSnapshot({ root, stagingDirectory, historyDirectory
       await fs.rename(path.join(stagingPublish, payload), path.join(stagingPublish, payloadName));
       files[logicalPath] = { path: payloadName, sha256: payloadHash, decodedBytes: bytes.byteLength };
     }
-    const index = { schemaVersion: 1, generation, encoding: 'gzip-xor-a7-v1', files };
-    const indexBytes = Buffer.from(`${JSON.stringify(index, null, 2)}\n`, 'utf8');
+    const index = { schemaVersion: 1, generation, encoding: 'gzip-xor-a7-v1', lookupShardsVersion: 1, files };
+    await writeSnapshotLookupShards(index, stagingPublish);
+    const indexBytes = Buffer.from(`${JSON.stringify(index)}\n`, 'utf8');
     if (indexBytes.byteLength > MAX_FILE_BYTES) throw new RangeError(`index.json exceeds ${MAX_FILE_BYTES} bytes`);
     await fs.writeFile(path.join(stagingPublish, 'index.json'), indexBytes, { flag: 'wx' });
     if (entries.some(entry => entry.logicalPath === 'snapshot-paging.json')) {
       const bootstrapBytes = Buffer.from(`${JSON.stringify(buildSnapshotBootstrapIndex(index))}\n`, 'utf8');
       if (bootstrapBytes.byteLength > MAX_DECODED_BYTES) throw new RangeError('bootstrap-index.json exceeds compact index limit');
       await fs.writeFile(path.join(stagingPublish, 'bootstrap-index.json'), bootstrapBytes, { flag: 'wx' });
+      await fs.writeFile(path.join(stagingPublish, 'bootstrap-fast.json'), JSON.stringify(buildSnapshotFastIndex(index)) + '\n', { flag: 'wx' });
     }
 
     let archivePath = null;

@@ -105,6 +105,13 @@ export function isBootstrapSnapshotPath(logicalPath) {
 
 export function buildSnapshotBootstrapIndex(index) {
   return { schemaVersion: index.schemaVersion, generation: index.generation, encoding: index.encoding,
+    ...(index.lookupShardsVersion === 1 ? { lookupShardsVersion: 1 } : {}),
     partial: true, fallbackIndex: 'index.json',
     files: Object.fromEntries(Object.entries(index.files).filter(([logicalPath]) => isBootstrapSnapshotPath(logicalPath))) };
+}
+
+export function buildSnapshotFastIndex(index) {
+  const bootstrap=buildSnapshotBootstrapIndex(index);
+  return {...bootstrap,compactIndexVersion:1,files:Object.fromEntries(Object.entries(bootstrap.files)
+    .map(([logical,record])=>[logical,[record.sha256,record.decodedBytes]]))};
 }

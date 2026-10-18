@@ -1,7 +1,27 @@
 // Public, same-origin backups never replace the authoritative PB submission path.
-export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now,packed=false,bootstrap=false,onGenerationChange}){
-  const pending=new Map(),saved=new Map(),retryAt=new Map();let manifestValue=null;
-  let generation=0;
+export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now,packed=false,bootstrap=false,optimizedIndex=false,byteCache,onGenerationChange}){
+  const pending=new Map(),saved=new Map(),retryAt=new Map();
+  const lookupCache=new Map(),lookupPending=new Map(),lookupRetryAt=new Map();let manifestValue=null;
+
+  let byteCachePromise=null,byteCacheDisabled=false,byteCacheQueued=0,byteCacheWrites=Promise.resolve();
+  async function compressedCache(){
+    if(byteCacheDisabled)return null;
+    if(!byteCachePromise)byteCachePromise=(async()=>{try{return await (byteCache??globalThis.caches)?.open('polytrack-snapshot-bytes-v1')||null;}catch{byteCacheDisabled=true;return null;}})();
+    return byteCachePromise;
+  }
+  function rememberCompressed(key,bytes){
+    if(bytes.length>128*1024||byteCacheQueued>=4)return;byteCacheQueued++;
+    const copy=bytes.slice();
+    // Serialize eviction/put, otherwise concurrent fetches could exceed the cap.
+    byteCacheWrites=byteCacheWrites.catch(()=>{}).then(async()=>{
+      const store=await compressedCache();if(!store)return;
+      try{
+        const keys=await store.keys();for(const key of keys.slice(0,Math.max(0,keys.length-63)))await store.delete(key);
+        await store.put(key,new Response(copy,{headers:{'content-type':'application/octet-stream'}}));
+      }catch{byteCacheDisabled=true;}
+    }).finally(()=>{byteCacheQueued--;});
+  }
+  let generation=0,fastIndexDisabled=false;
   const generationChanged=Error('Snapshot generation changed');
   const transientFetchErrors=new WeakSet();
   const integrityErrors=new WeakSet(),badCacheUrls=new Set(),indexFailures=new Map();
@@ -32,13 +52,20 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     if(failure){if(now()<failure.retryAt)throw failure.error;indexFailures.delete(compact);}
     if(!(compact?bootstrapRequest:indexRequest)){
       const requestedBase=packageBase,requestedGeneration=generation;
-      const url=new URL(compact?'bootstrap-index.json':'index.json',requestedBase);
+      const url=new URL(compact&&optimizedIndex&&!fastIndexDisabled?'bootstrap-fast.json':compact?'bootstrap-index.json':'index.json',requestedBase);
       const request=retryIntegrity(url,'default',async cache=>{
-        const response=await fetchSnapshot(url,{credentials:'omit',cache,signal:AbortSignal.timeout(5000)});
+        let response=await fetchSnapshot(url,{credentials:'omit',cache,signal:AbortSignal.timeout(5000)});
+        if(compact&&optimizedIndex&&!fastIndexDisabled&&(response.status===404||response.status===410))response=await fetchSnapshot(new URL('bootstrap-index.json',requestedBase),{credentials:'omit',cache,signal:AbortSignal.timeout(5000)});
         if(compact&&(response.status===404||response.status===410))return null;
         if(!response.ok){const error=Error('Snapshot index unavailable');error.status=response.status;error.base=requestedBase.href;throw error;}
         const text=await responseBody(response,'text');if(text.length>(compact?2:20)*1024*1024)throw integrityError('Snapshot index too large');
         let index;try{index=JSON.parse(text);}catch{throw integrityError('Invalid snapshot index JSON');}
+        if(index?.compactIndexVersion===1){
+          const expected=/public-snapshots([1-9]\d*)\/$/.exec(requestedBase.pathname);
+          if(expected&&index.generation!==Number(expected[1]))throw integrityError('Snapshot index generation mismatch');
+          if(!compact||!optimizedIndex||!index.files||typeof index.files!=='object'||Array.isArray(index.files)||Object.values(index.files).some(row=>!Array.isArray(row)||row.length!==2||typeof row[0]!=='string'||!/^[a-f0-9]{64}$/.test(row[0])||!Number.isSafeInteger(row[1])||row[1]<1||row[1]>2*1024*1024))throw integrityError('Invalid compact snapshot index');
+          index.files=Object.fromEntries(Object.entries(index.files).map(([logical,[hash,size]])=>[logical,{path:hash+'.bin',sha256:hash,decodedBytes:size}]));
+        }
         if(!index||typeof index!=='object'||Array.isArray(index)||index.schemaVersion!==1||index.encoding!=='gzip-xor-a7-v1'||!index.files||typeof index.files!=='object'||Array.isArray(index.files)||
           compact&&(index.partial!==true||index.fallbackIndex!=='index.json'))throw integrityError('Unsupported snapshot encoding');
         if(Object.values(index.files).some(record=>!record||typeof record!=='object'||!/^[a-f0-9]{64}\.bin$/.test(record.path)||
@@ -48,6 +75,7 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
       let tracked;
       tracked=request.catch(error=>{
         if(compact){if(bootstrapRequest===tracked)bootstrapRequest=null;}else if(indexRequest===tracked)indexRequest=null;
+        if(compact&&optimizedIndex&&!fastIndexDisabled&&requestedGeneration===generation){fastIndexDisabled=true;return loadPackageIndex(true);}
         if(requestedGeneration===generation&&isTransientFailure(error))indexFailures.set(compact,{error,retryAt:now()+SHORT_RETRY_MS});
         throw error;
       });
@@ -55,10 +83,46 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     }
     return compact?bootstrapRequest:indexRequest;
   }
+
+  async function lookupIndex(pack,logical){
+    const bytes=new TextEncoder().encode(logical);
+    const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));
+    const bucket=Array.from(digest.slice(0,1),byte=>byte.toString(16).padStart(2,'0')).join('');
+    if(pack.generation!==generation)throw generationChanged;
+    const cached=lookupCache.get(bucket);
+    if(cached){lookupCache.delete(bucket);lookupCache.set(bucket,cached);return cached;}
+    if(now()<(lookupRetryAt.get(bucket)||0))return loadPackageIndex(false);
+    if(lookupPending.has(bucket))return lookupPending.get(bucket);
+    const request=(async()=>{
+      try{
+        const response=await fetchSnapshot(new URL('lookup-shards/'+bucket+'.json',pack.base),{credentials:'omit',cache:'force-cache',signal:AbortSignal.timeout(5000)});
+        if(!response.ok)throw Error('Snapshot lookup unavailable');
+        const text=await responseBody(response,'text');if(text.length>256*1024)throw Error('Snapshot lookup too large');
+        const index=JSON.parse(text);
+        if(index.schemaVersion!==1||index.lookupShardsVersion!==1||index.encoding!=='gzip-xor-a7-v1'||index.generation!==pack.index.generation||index.bucket!==bucket||
+          !index.files||typeof index.files!=='object'||Array.isArray(index.files)||Object.keys(index.files).length>1024||
+          Object.entries(index.files).some(([logical,record])=>bootstrapPath(logical)||!record||record.path!==record.sha256+'.bin'||!/^[a-f0-9]{64}$/.test(record.sha256)||!Number.isSafeInteger(record.decodedBytes)||record.decodedBytes<1||record.decodedBytes>2*1024*1024))throw Error('Invalid snapshot lookup');
+        if(pack.generation!==generation)throw generationChanged;
+        const result={index,base:pack.base,generation:pack.generation};
+        lookupCache.set(bucket,result);while(lookupCache.size>32)lookupCache.delete(lookupCache.keys().next().value);
+        return result;
+      }catch(error){
+        if(pack.generation!==generation)throw generationChanged;
+        lookupRetryAt.set(bucket,now()+SHORT_RETRY_MS);while(lookupRetryAt.size>64)lookupRetryAt.delete(lookupRetryAt.keys().next().value);
+        return loadPackageIndex(false);
+      }
+    })();
+    lookupPending.set(bucket,request);
+    request.finally(()=>{if(lookupPending.get(bucket)===request)lookupPending.delete(bucket);}).catch(()=>{});
+    return request;
+  }
   async function packageIndex(logical){
-    if(preferBootstrap&&bootstrapPath(logical)){
+    if(preferBootstrap){
       const compact=await loadPackageIndex(true);
-      if(compact)return compact;
+      if(compact){
+        if(bootstrapPath(logical))return compact;
+        if(compact.index.lookupShardsVersion===1)return lookupIndex(compact,logical);
+      }
     }
     return loadPackageIndex(false);
   }
@@ -86,9 +150,9 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
         if(nextBase.href===packageBase.href)return false;
         const previousBaseUrl=packageBase.href;
         packageBase=nextBase;
-        generation++;
+        generation++;fastIndexDisabled=false;
         indexRequest=null;bootstrapRequest=null;
-        indexFailures.clear();badCacheUrls.clear();
+        indexFailures.clear();badCacheUrls.clear();lookupCache.clear();lookupPending.clear();lookupRetryAt.clear();
         // Retired requests may finish later, but their epoch cannot write these caches.
         pending.clear();saved.clear();retryAt.clear();manifestValue=null;
         // Notify once after invalidation. Do not await callbacks that may read the new package.
@@ -107,12 +171,18 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     if(!record)return null;
     if(!/^[a-f0-9]{64}\.bin$/.test(record.path)||!Number.isSafeInteger(record.decodedBytes)||record.decodedBytes<1||record.decodedBytes>2*1024*1024)throw Error('Invalid snapshot record');
     const url=new URL(record.path,pack.base);
+    // Content hash, not generation: unchanged payloads survive snapshot updates.
+    const diskKey=new URL('../__polytrack_snapshot_cache__/'+record.sha256+'.bin',pack.base).href;
     return retryIntegrity(url,'force-cache',async cache=>{
-    const response=await fetchSnapshot(url,{credentials:'omit',cache,signal:AbortSignal.timeout(5000)});
+    let response=null,fromDisk=false;
+    const disk=await compressedCache();
+    if(disk&&cache!=='reload')try{response=await disk.match(diskKey);fromDisk=Boolean(response);}catch{byteCacheDisabled=true;}
+    if(!response)response=await fetchSnapshot(url,{credentials:'omit',cache,signal:AbortSignal.timeout(5000)});
     if(!response.ok){const error=Error('Snapshot unavailable');error.status=response.status;error.base=pack.base.href;throw error;}
     const bytes=new Uint8Array(await responseBody(response,'arrayBuffer'));if(bytes.length>2*1024*1024)throw integrityError('Snapshot payload too large');
     const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
-    if(hash!==record.sha256)throw integrityError('Snapshot checksum mismatch');
+    if(hash!==record.sha256){if(fromDisk)await disk.delete(diskKey).catch(()=>{});throw integrityError('Snapshot checksum mismatch');}
+    const originalBytes=disk&&!fromDisk&&bytes.length<=128*1024?bytes.slice():null;
     for(let i=0;i<bytes.length;i++)bytes[i]^=0xa7;
     const reader=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip')).getReader();
     const chunks=[];let total=0;
@@ -121,6 +191,7 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     finally{await reader.cancel().catch(()=>{});}
     if(total!==record.decodedBytes)throw integrityError('Snapshot length mismatch');
     const output=new Uint8Array(total);let offset=0;for(const chunk of chunks){output.set(chunk,offset);offset+=chunk.length;}
+    if(originalBytes)rememberCompressed(diskKey,originalBytes);
     return new TextDecoder().decode(output);
     });
   }
