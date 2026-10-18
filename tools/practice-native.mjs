@@ -1,6 +1,6 @@
 // Observes native callbacks only. No engine assets, inputs, replay data or messages are changed.
 const installed=new WeakMap();
-export function installPracticeObserver({require,history,accountId,bestMs=()=>0,visible=()=>true,onTrack=()=>{},schedule=setInterval,cancel=clearInterval,clock=()=>performance.now()}){
+export function installPracticeObserver({require,history,accountId,bestMs=()=>0,visible=()=>true,onTrack=()=>{},onLeave=()=>{},schedule=setInterval,cancel=clearInterval,clock=()=>performance.now()}){
  const Physics=require(5220)?.A,Car=require(641)?.A;
  if(!Physics?.prototype||!Car?.prototype)throw Error('practice_native_unavailable');
  const pp=Physics.prototype,cp=Car.prototype;
@@ -40,7 +40,8 @@ export function installPracticeObserver({require,history,accountId,bestMs=()=>0,
      originalFinish.call(car,()=>report(()=>{if(current===state)sample();attempt?.finish(Number(car.getFinishTime?.()?.numberOfFrames??car.getTime()?.numberOfFrames),{reliable:state.reliable});state.finished=true;}));
      const dispose=car.dispose;
      car.dispose=function(...args){
-      if(current===state){report(sample);current=null;if(!state.finished){pending=state;queueMicrotask(()=>{if(pending===state){pending=null;attempt?.leave();}});}}
+      if(current===state){report(sample);current=null;if(!state.finished){pending=state;queueMicrotask(()=>{if(pending===state){pending=null;attempt?.leave();}});}
+       queueMicrotask(()=>{if(!stopped&&current===null)report(()=>onLeave(state.trackId));});}
       return dispose.apply(this,args);
      };
     });

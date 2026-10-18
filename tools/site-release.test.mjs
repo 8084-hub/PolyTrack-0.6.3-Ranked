@@ -68,3 +68,7 @@ test('practice modules follow the client cache revision',()=>{
  const result=stampClientRelease(input,index,154);
  assert.match(result.patch,/practice-history\.mjs\?v=154/);assert.match(result.patch,/practice-native\.mjs\?v=154/);
 });
+
+test('local insights and embedded practice use the release cache key',()=>{const result=stampClientRelease(patch+"import('./tools/local-insights.mjs?v=155');import('./tools/practice-profile.mjs?v=155');",index,156);assert.match(result.patch,/local-insights\.mjs\?v=156/);assert.match(result.patch,/practice-profile\.mjs\?v=156/);});
+
+test('future releases advance local observed revision tracking',()=>{const result=stampClientRelease(patch+'createLocalInsights({storage,revision:156});',index,157);assert.match(result.patch,/createLocalInsights\(\{storage,revision:157\}\)/);});

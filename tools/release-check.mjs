@@ -26,10 +26,10 @@ try {
   }
 } catch (error) { failures.push('Snapshot integrity: ' + error.message); }
 
-const required = ['tools/developer-diagnostics.mjs', 'tools/practice-history.mjs', 'tools/practice-native.mjs', 'index.html', 'manifest.json', 'robots.txt', 'sitemap.xml', 'main.bundle.js', 'polytrack_062_patch.js', 'polytrack_physics.wasm', 'simulation_worker.bundle.js', 'events/client.mjs', 'events/session.mjs', 'events/native-binding.mjs', 'events/native-finish.mjs', 'events/weekly-native.mjs', 'events/events.css'];
+const required = ['tools/local-insights.mjs', 'tools/practice-profile.mjs', 'tools/developer-diagnostics.mjs', 'tools/practice-history.mjs', 'tools/practice-native.mjs', 'index.html', 'manifest.json', 'robots.txt', 'sitemap.xml', 'main.bundle.js', 'polytrack_062_patch.js', 'polytrack_physics.wasm', 'simulation_worker.bundle.js', 'events/client.mjs', 'events/session.mjs', 'events/native-binding.mjs', 'events/native-finish.mjs', 'events/weekly-native.mjs', 'events/events.css'];
 for (const file of required) if (!existsSync(join(root, file))) failures.push(`Missing required file: ${file}`);
 
-for (const file of ['tools/developer-diagnostics.mjs', 'tools/practice-history.mjs', 'tools/practice-native.mjs', 'polytrack_062_patch.js', 'main.bundle.js', 'simulation_worker.bundle.js', 'events/client.mjs', 'events/session.mjs', 'events/native-binding.mjs', 'events/native-finish.mjs', 'events/weekly-native.mjs']) {
+for (const file of ['tools/local-insights.mjs', 'tools/practice-profile.mjs', 'tools/developer-diagnostics.mjs', 'tools/practice-history.mjs', 'tools/practice-native.mjs', 'polytrack_062_patch.js', 'main.bundle.js', 'simulation_worker.bundle.js', 'events/client.mjs', 'events/session.mjs', 'events/native-binding.mjs', 'events/native-finish.mjs', 'events/weekly-native.mjs']) {
   if (!existsSync(join(root, file))) continue;
   const check = spawnSync(process.execPath, ['--check', join(root, file)], { encoding: 'utf8' });
   if (check.status !== 0) failures.push(`JavaScript syntax failed for ${file}: ${check.stderr.trim()}`);

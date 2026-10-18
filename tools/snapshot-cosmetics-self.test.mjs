@@ -53,7 +53,7 @@ test('Extra Track profile previews use the catalog thumbnail, not a community pa
 test('Extra Track profile links call the native importer on the selected Custom tab',async()=>{
   const entry={trackId:'extra'};let imported=null,left=0,closed=0;
   const tab={classList:{contains:()=>true},click:()=>{throw Error('Already selected tab should not be clicked');}};
-  const context=vm.createContext({eventUi:{leave:()=>left++},trackInfo:()=>({type:'extra'}),loadExtraTracksCatalog:async()=>[entry],document:{getElementById:()=>({}),querySelectorAll:()=>[],querySelector:()=>tab},closeOverallPanel:()=>closed++,importExtraTrack:async row=>{imported=row;},isElementVisible:()=>true});
+  const context=vm.createContext({localInsights:null,warmPracticeTrack:()=>{},eventUi:{leave:()=>left++},trackInfo:()=>({type:'extra'}),loadExtraTracksCatalog:async()=>[entry],document:{getElementById:()=>({}),querySelectorAll:()=>[],querySelector:()=>tab},closeOverallPanel:()=>closed++,importExtraTrack:async row=>{imported=row;},isElementVisible:()=>true});
   const start=source.indexOf('  async function focusTrackFromRanked('),end=source.indexOf('    const tabIndex=',start);
   vm.runInContext(source.slice(start,end)+'  }',context);
   await context.focusTrackFromRanked('extra');

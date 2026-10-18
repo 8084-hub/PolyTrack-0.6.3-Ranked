@@ -37,11 +37,11 @@ test('practice is only a bounded hint and sparse data never claims a track is im
  const away=practiceAdvice({attempts:10,activeMs:60000,lastPlayedAt:0},8*86400000);assert.equal(away.factor,1.1);
  const plateau=practiceAdvice({attempts:20,activeMs:1000000,sincePbMs:900000,restartsSincePb:12,restarts:12,lastPlayedAt:10000},10000);assert.equal(plateau.factor,.9);assert.doesNotMatch(plateau.text,/impossible|never|bad player/);
 });
-function nativeFixture(){
+function nativeFixture(onLeave=()=>{}){
  class Physics{createCar(_a,_b,_c,track,recording){return {id:1,carState:{frames:0},track,recording};}}
  class Car{constructor(state){this.state=state;this.reset=[];this.finish=[];this.started=true;this.paused=false;this.finished=false;}addResetCallback(fn){this.reset.push(fn);}addFinishCallback(fn){this.finish.push(fn);}getCarState(){return this.state;}getTime(){return {numberOfFrames:this.state.frames};}hasStarted(){return this.started;}hasFinished(){return this.finished;}get isPaused(){return this.paused;}getNextCheckpointIndex(){return 2;}dispose(){return 'native-disposed';}}
  let tick,shown=true,clock=0;const h=setup(),physics=new Physics(),require=id=>({A:id===5220?Physics:Car});
- const observer=installPracticeObserver({require,history:h.history,accountId:()=>account,visible:()=>shown,clock:()=>clock,schedule:fn=>{tick=fn;return 1;},cancel(){}});
+ const observer=installPracticeObserver({require,history:h.history,accountId:()=>account,onLeave,visible:()=>shown,clock:()=>clock,schedule:fn=>{tick=fn;return 1;},cancel(){}});
  const car=(recording=null)=>{const result=physics.createCar(null,null,null,{getId:()=>track},recording);const value=new Car(result.carState);value.addResetCallback(()=>{});return value;};
  return {h,physics,Car,Physics,require,observer,car,tick:()=>{clock+=1000;tick();},hide:()=>shown=false,show:()=>shown=true};
 }
@@ -76,3 +76,7 @@ test('opening and leaving a track without driving is not a practice attempt',()=
  const h=setup();h.history.begin(account,track).leave();
  const row=h.history.get(account,track);assert.equal(row.attempts,0);assert.equal(row.lastPlayedAt,0);
 });
+
+test('return hint uses observed improvements on other tracks without changing points',()=>{const at=1000000000,row={trackId:track,attempts:8,activeMs:600000,lastPlayedAt:at-4*86400000};const advice=practiceAdvice(row,at,{otherTracks:['c','d','e'].map(id=>({trackId:id.repeat(64),improvedMs:100,lastPbAt:at-1000}))});assert.equal(advice.factor,1.1);assert.match(advice.text,/3 other tracks improved/);});
+
+test('native leave callback ignores repeated disposal and synchronous replacement',async()=>{let leaves=0;const f=nativeFixture(()=>leaves++);try{const first=f.car();first.dispose();f.car();await Promise.resolve();assert.equal(leaves,0);first.dispose();await Promise.resolve();assert.equal(leaves,0);const last=f.car();last.dispose();await Promise.resolve();assert.equal(leaves,1);last.dispose();await Promise.resolve();assert.equal(leaves,1);}finally{f.observer.stop();}});

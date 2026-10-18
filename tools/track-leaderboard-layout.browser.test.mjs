@@ -48,16 +48,10 @@ test('compact snapshot panel keeps age and countdown visible across resolutions'
   }finally{await browser.close();}
 });
 
-test('owned mobile layout explicitly places all native footer controls', () => {
-  assert.match(homeCss, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(112px,\s*1\.15fr\)\s+minmax\(64px,\s*0\.9fr\)\s+44px\s*!important;/);
-  assert.match(homeCss, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(112px,\s*1\.25fr\)\s+44px\s*!important;/);
-  assert.match(homeCss, /font-size:\s*11px\s*!important;/);
-  assert.match(homeCss, /> \.only-verified\s*\{[^}]*grid-column:\s*3;[^}]*grid-row:\s*1;/s);
-  assert.match(homeCss, /> \.icon-button\.first\s*\{[^}]*grid-column:\s*4;[^}]*grid-row:\s*1;/s);
-  assert.match(homeCss, /> \.back\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*1;/s);
-  assert.match(homeCss, /> \[data-personal-filter-button\]\s*\{[^}]*grid-column:\s*2;[^}]*grid-row:\s*1;/s);
-  assert.match(homeCss, /> \.icon-button\.first\s*\{[^}]*grid-column:\s*3;[^}]*grid-row:\s*1;/s);
-  assert.match(homeCss, /> \.only-verified\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;[^}]*grid-row:\s*2;/s);
+test('native footer reserves portrait rows before filters arrive',()=>{
+ assert.match(homeCss,/min-height:94px!important/);
+ assert.match(homeCss,/grid-template-rows:minmax\(44px,auto\) minmax\(44px,auto\)/);
+ assert.match(homeCss,/grid-column:1 \/ -1;grid-row:2/);
 });
 
 function bounds(element) {
@@ -179,6 +173,11 @@ test('native track footer, Ranked Find me/filter, and event filters render withi
       }
     }
 
+    for(const [width,height] of [[390,844],[1920,1080]]){
+      await page.setViewportSize({width,height});
+      const movement=await page.evaluate(()=>{const wrapper=document.querySelector('.track-info-ui .button-wrapper'),filter=wrapper.querySelector('[data-personal-filter-button]');const measure=()=>['.back','.only-verified','.icon-button.first'].map(selector=>{const r=wrapper.querySelector(selector).getBoundingClientRect();return [r.x,r.y,r.width,r.height];});const withFilter=measure();filter.remove();const withoutFilter=measure();wrapper.querySelector('.back').after(filter);return {withFilter,withoutFilter};});
+      assert.ok(movement.withFilter.every((r,i)=>r.every((v,j)=>Math.abs(v-movement.withoutFilter[i][j])<=1)),'native footer slots do not jump when the filter arrives at '+width);
+    }
     await page.evaluate(()=>{
       document.querySelector('#gameRoot').id='ui';document.body.classList.add('sq-event-active');
       const board=document.querySelector('.leaderboard-ui');board.classList.add('sq-event-board');board.style.setProperty('display','flex','important');

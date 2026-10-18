@@ -63,9 +63,11 @@ export function createPracticeHistory({storage,now=Date.now,onChange=()=>{}}={})
  function coverage(accountId){const row=data.coverage[accountId];return row?{...row,version:2,coverageFraction:row.knownPlaytimeMs>0?Math.min(1,row.observedVisibleMs/row.knownPlaytimeMs):0}:null;}
  return {begin,flush,list,coverage,observeCoverage,get revision(){return revision;},get(accountId,trackId){const row=data.accounts?.[accountId]?.[trackId];return row?{...row,restartBuckets:[...(row.restartBuckets||[])],recentFinishes:JSON.parse(JSON.stringify(row.recentFinishes||[]))}:null;},clear(accountId){if(Object.hasOwn(data.accounts,accountId)||Object.hasOwn(data.coverage,accountId)){delete data.accounts[accountId];delete data.coverage[accountId];changed();flush(true);}}};
 }
-export function practiceAdvice(row,at=Date.now()){
+export function practiceAdvice(row,at=Date.now(),{otherTracks=[]}={}){
  if(!row||row.attempts<3||row.activeMs<60000)return {factor:1,text:''};
  const age=Math.max(0,at-row.lastPlayedAt),days=Math.floor(age/86400000);
+ const improvedElsewhere=otherTracks.filter(other=>other.trackId!==row.trackId&&other.improvedMs>0&&other.lastPbAt>row.lastPlayedAt).length;
+ if(days>=3&&improvedElsewhere>=3)return {factor:1.1,text:`${improvedElsewhere} other tracks improved since your last visit; worth revisiting`};
  if(days>=7)return {factor:1.1,text:`Last practised ${days} days ago`};
  const recent=(row.recentFinishes||[]).filter(run=>run.timeMs>0&&run.at>at-7*86400000).slice(-8);
  if(recent.length===8){const average=rows=>rows.reduce((sum,run)=>sum+run.timeMs,0)/rows.length;const first=average(recent.slice(0,4)),last=average(recent.slice(4));if(last<first*.99)return {factor:1.08,text:'Recent finishes are improving (8 local finishes)'};}
