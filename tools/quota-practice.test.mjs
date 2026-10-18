@@ -47,3 +47,6 @@ test('confirmed duplicate upload returns before overwriting its saved recording 
  assert.ok(body.indexOf('recordingUploadAlreadyConfirmed(')<body.indexOf('writeRecordingStore('));
  assert.ok(body.indexOf('recordingUploadAlreadyConfirmed(')<body.indexOf('await db()'));
 });
+
+test('practice focus favors played revisits and manageable gaps ahead of RP gain',()=>{const context=vm.createContext({});vm.runInContext(extract('orderedPlannerRoutes'),context);const rows=[{trackId:'new',value:500,currentRank:0,practice:{factor:1}},{trackId:'revisit',value:10,currentRank:4,practice:{factor:1.1},ease:{effortScore:2}},{trackId:'easier',value:100,currentRank:6,practice:{factor:1},ease:{effortScore:1}}];assert.deepEqual(Array.from(context.orderedPlannerRoutes([],rows,8,'training'),r=>r.trackId),['revisit','easier','new']);assert.deepEqual(rows.map(r=>r.value),[500,10,100]);});
+test('playing a track never speculatively downloads its full leaderboard',()=>{assert.doesNotMatch(extract('warmPlayedTrack'),/readPublicSnapshotBackup\('track',/);});

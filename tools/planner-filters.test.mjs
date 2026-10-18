@@ -4,13 +4,13 @@ const rhr='fb769ac2ea77e8f19a21a9dd3071742f2342bd49c41e4748d7e8c7903d4f0778';
 function harness(current,official){
  const tracks=new Map([['official',{type:'official',id:'official',name:'Official'}],['new',{type:'official',id:'new',name:'New'}],['community',{type:'community',id:'community',name:'Community'}],[rhr,{type:'community',id:rhr,name:'RHR'}]]),baselineSizes=[];
  const context=vm.createContext({Map,Set,Date,Number,Math,Array,Object,Promise,setTimeout,plannerMetric:'overall',plannerSort:'impact',plannerCurrentTracksOnly:current,plannerOfficialOnly:official,PLANNER_METRICS:{overall:'Overall RP'},
- trackInfo:id=>tracks.get(id),TRACK_CATALOG:tracks,personalFilterRuntime:null,overallTrackSummariesCache:[...tracks.values()].map(t=>({trackId:t.id,fieldSize:20,weight:3})),overallLoadState:{},
+ trackInfo:id=>tracks.get(id),TRACK_CATALOG:tracks,personalFilterRuntime:null,practiceHistory:null,practiceAdviceFor:()=>({factor:1,text:''}),overallTrackSummariesCache:[...tracks.values()].map(t=>({trackId:t.id,fieldSize:20,weight:3})),overallLoadState:{},
  eventPlannerRoutes:()=>Object.assign([],{dataAvailable:false}),trackSnapshotStore:()=>({}),maximumKnownTrackWeight:()=>10,worthwhileStart:()=>true,
  recommendationAction:(finish,kind,entry,baseline)=>{baselineSizes.push(baseline.length);return{...finish,kind,currentRank:finish.rank,targetRank:1,minimumHelpfulRank:1,value:1,weight:3};},
  orderedPlannerRoutes:(_r,p)=>p,plannerEase:()=>1,plannerDefenseAllowed:()=>false,guideTrackCard:action=>'<button data-route="'+action.trackId+'">Route</button>',
  trackThumbnailMarkup:()=>'',safeDisplayName:x=>x,escapeHtml:x=>x,plannerCategoryAvailability:()=>({overall:true}),ageLabel:()=>'',
  });
- const helperStart=source.indexOf('  function plannerTrackAllowed('),helperEnd=source.indexOf('  try{if(localStorage.getItem',helperStart);
+ const helperStart=source.indexOf('  function plannerTrackAllowed('),helperEnd=source.indexOf('  function eventPlannerRoutes(',helperStart);
  vm.runInContext(source.slice(helperStart,helperEnd),context);
  const start=source.indexOf('  async function profileGuideMarkup('),end=source.indexOf('  function openRankedProfile(',start);
  vm.runInContext(source.slice(start,end),context);

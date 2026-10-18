@@ -231,7 +231,9 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     if(now()<(retryAt.get(path)||0))return cached?.value||null;
     const request=(async()=>{
       // Fetch capture metadata alongside the board instead of adding another round trip.
-      const trackManifest=kind==='track'?readAtGeneration('manifest','','',requestedGeneration):null;
+        const knownTrack=kind==='track'?saved.get('track-statistics.json')?.value?.tracks?.[id]:null;
+        const knownCapture=Date.parse(knownTrack?.capturedAt||'');
+        const trackManifest=kind==='track'&&!Number.isFinite(knownCapture)?readAtGeneration('manifest','','',requestedGeneration):null;
       try{
         let body,materialized=null;
         if(packed){
@@ -268,8 +270,10 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
         const result={...value,_publicBackup:true,_dataSource:'snapshot'};
         if((materialized||['track-preview','track-page','track-manifest','overall-preview','overall-page','overall-manifest'].includes(kind))&&typeof value.capturedAt==='string')result._snapshotCapturedAt=Date.parse(value.capturedAt);
         if(kind==='track'){
-          const manifest=await trackManifest;
-          const checkedAt=manifest?.tracks?.[id]?.checkedAt;
+          // Reuse this generation's validated statistics instead of fetching a global manifest solely for capture age.
+          const knownMatches=Number.isFinite(knownCapture)&&knownCapture>0&&knownTrack.revision===value.revision&&knownTrack.updatedAt===value.updatedAt&&knownTrack.complete===value.complete&&knownTrack.count===value.entries?.length;
+          const manifest=knownMatches?null:await (trackManifest||readAtGeneration('manifest','','',requestedGeneration));
+          const checkedAt=knownMatches?knownCapture:manifest?.tracks?.[id]?.checkedAt;
           if(Number.isSafeInteger(checkedAt)&&checkedAt>0)result._snapshotCapturedAt=checkedAt;
         }
         if(requestedGeneration!==generation)return null;
