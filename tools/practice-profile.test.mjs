@@ -97,3 +97,13 @@ test('keeps clear-history action available in accessible native details', () => 
 });
 
 test('baseline PB is never labelled an observed finish and invalid ranks are omitted',()=>{const html=renderPracticeProfile({rows:[row({bestMs:12345,trackedBestMs:0})],results:[{trackId:'track-a',timeMs:12345,local:true,rank:4,fieldSize:2}]});assert.doesNotMatch(html,/Tracked best|best 12.35s|Rank 4/);assert.match(html,/Known PB evidence/);});
+
+test('sparse cards keep evidence readable without inventing session measurements',()=>{
+ const html=renderPracticeProfile({rows:[row({finishes:0,trackedBestMs:0,observationVersion:1,pausedMs:0,focusedMs:0})],results:[{trackId:'track-a',timeMs:47000,source:'snapshot'}]});
+ assert.match(html,/Snapshot PB/);assert.match(html,/Placement not available/);assert.match(html,/No finish recorded yet/);
+ assert.doesNotMatch(html,/pp-session-details|>Paused<|>Stationary</);
+});
+test('observed session details are optional and known PBs remain separate from driven finishes',()=>{
+ const html=renderPracticeProfile({rows:[row({observationVersion:1,focusedMs:90000,pausedMs:12000,movingMs:70000,motionObservedMs:80000,longestHuntMs:60000,biggestPbImprovementMs:350})],results:[{trackId:'track-a',timeMs:45000,source:'snapshot',rank:4,fieldSize:20}]});
+ assert.match(html,/<details class="pp-session-details">/);assert.match(html,/Session details/);assert.match(html,/Largest driven PB gain/);assert.match(html,/Rank 4 of 20/);assert.match(html,/best 47.25s/);
+});

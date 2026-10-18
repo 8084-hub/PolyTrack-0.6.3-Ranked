@@ -59,7 +59,7 @@ test('opening Ranked and entering a locally loaded event do not crawl profiles o
 });
 test('public event requests share one fetch and reuse their bounded cache',async()=>{
   let loads=0;const ctx={Map,Date,eventCloudCache:new Map(),eventCloudRequests:new Map(),eventCloudRetryAt:new Map(),noteFirebaseQuota:()=>{},loadEventCloudRead:async()=>{loads++;return {updatedAt:1,entries:[]};}};
-  vm.createContext(ctx);vm.runInContext(extract('eventCloudRead'),ctx);
+  vm.createContext(ctx);vm.runInContext(extract('chooseEventReadValue'),ctx);vm.runInContext(extract('eventCloudRead'),ctx);
   const [a,b]=await Promise.all([ctx.eventCloudRead('/snapshot','public','id'),ctx.eventCloudRead('/snapshot','public','id')]);
   assert.equal(loads,1);assert.equal(a,b);await ctx.eventCloudRead('/snapshot','public','id');assert.equal(loads,1);
 });
@@ -68,10 +68,11 @@ test('assignment cache expires at the actual event reset and local assignment is
   const at=Date.now(),cache=new Map();
   const ctx={Map,Date,eventCloudCache:cache,eventCloudRequests:new Map(),eventCloudRetryAt:new Map(),noteFirebaseQuota:()=>{},
     loadEventCloudRead:async()=>({periods:[{endsAt:at+20000},{endsAt:at+100000}]})};
-  vm.createContext(ctx);vm.runInContext(extract('eventCloudRead'),ctx);
+  vm.createContext(ctx);vm.runInContext(extract('chooseEventReadValue'),ctx);vm.runInContext(extract('eventCloudRead'),ctx);
   await ctx.eventCloudRead('/v1/events/catalog','public','catalog');
   assert.ok(Math.abs(cache.get('/v1/events/catalog').until-(at+20000))<10);
-  const body=extract('loadEventCloudRead');assert.ok(body.indexOf('localEventCatalog()')<body.indexOf('rankedEdgeAvailable()'));
+  const body=extract('loadEventCloudRead'),localIndex=body.indexOf('localEventCatalog()'),liveFetchIndex=body.indexOf('fetch(rankedBrokerUrl()');
+  assert.ok(localIndex>=0&&liveFetchIndex>=0&&localIndex<liveFetchIndex);
 });
 test('best result fallback excludes fields with fewer than five racers',()=>{
   const ctx={MIN_MEANINGFUL_FINISH_WEIGHT:0.2,normalizedFinishSamples:()=>[],knownFinishWeight:()=>1,rankedPlacementCost:()=>0};
