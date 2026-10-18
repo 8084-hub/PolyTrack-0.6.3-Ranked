@@ -58,6 +58,7 @@ test('native Kodub spotlight merges snapshot racers and local PB without enterin
   const assertNormal=async()=>{
    await page.waitForFunction(count=>document.querySelectorAll('.track-info-ui .leaderboard-ui .container button.main').length===count,expected,{timeout:30000});
    assert.equal(await page.locator('.sq-event-board').count(),0);
+   assert.equal(await page.locator('#polytrackTrackFreshness').count(),0,'Kodub PB views do not show the normal-track infocard');
    assert.match(await page.locator('.track-info-ui .side-panel .personal-best').innerText(),/00:16\.027/);
    assert.equal(await page.locator('.track-info-ui .leaderboard-ui button.main.self').count(),1);
    await page.waitForFunction(()=>document.querySelector('.track-info-ui .leaderboard-ui button.main.self')?.textContent.includes('LOCAL PB'),null,{timeout:10000});

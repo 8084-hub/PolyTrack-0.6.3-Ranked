@@ -770,6 +770,7 @@ export function installEvents(bridge){
       const archiveMode=session.archive===true,nativeBack=original.querySelector('button.back'),nativeDisplay={value:original.style.getPropertyValue('display'),priority:original.style.getPropertyPriority('display')},nativeTitle=original.getAttribute('title');
       const nativeMarkup=document.createDocumentFragment();while(original.firstChild)nativeMarkup.append(original.firstChild);
       const board=original;board.classList.add('sq-event-board');
+      document.getElementById('polytrackTrackFreshness')?.remove();
       board.title=archiveMode?'Frozen archived standings. Practice runs are not submitted.':'A number toggles one event ghost. T then a number selects the top group. Hold two numbers for a range. C clears ghosts.';
       board.style.setProperty('display','flex','important');
       board.append(nativeMarkup.cloneNode(true));

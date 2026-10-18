@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=149',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=150',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='149';
+  const extraCatalogRevision='150';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -63,7 +63,7 @@
     return kodubHistoryLoad;
   }
   async function nativeWeeklyFeed(){
-    kodubAdapter=await import(new URL('./kodub-weekly.mjs?v=149',eventsModuleUrl).href);
+    kodubAdapter=await import(new URL('./kodub-weekly.mjs?v=150',eventsModuleUrl).href);
     await ensureEventUi();
     const response=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
     nativeWeeklySelection=response.current;
@@ -90,7 +90,7 @@
     if(localWeeklyCatalogRequest||Date.now()<localWeeklyCatalogUntil)return localWeeklyCatalogRequest;
     localWeeklyCatalogUntil=Date.now()+60000;
     const request=(async()=>{
-      kodubAdapter ||= await import(new URL('./kodub-weekly.mjs?v=149',eventsModuleUrl).href);
+      kodubAdapter ||= await import(new URL('./kodub-weekly.mjs?v=150',eventsModuleUrl).href);
       const feed=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
       const current=feed.current,end=Date.parse(current?.endTime||'');
       localWeeklyCatalogUntil=current&&end>Date.now()?end:Date.now()+60000;
@@ -2847,7 +2847,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=149',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=150',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -3840,7 +3840,9 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     document.body.appendChild(panel);
     panel.querySelector('.overall-columns')?.insertAdjacentHTML('beforebegin','<div id="overallDataNotice" role="status" hidden></div>');
     void ensureRankedFiltersUi();
+    panel.addEventListener('input',handleOverallPageInput);
     panel.addEventListener('keydown',(event)=>{
+      if(handleOverallPageInput(event))return;
       if(event.key!=='Enter'||event.target?.id!=='overallPageJump')return;
       const page=Number(event.target.value);
       if(jumpOverallPage(page)){event.preventDefault();event.stopPropagation();}
@@ -4353,8 +4355,9 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       if(stale&&!trackEntryRequests.has(id)&&Date.now()-Number(trackCacheBackgroundRefreshAt.get(id)||0)>=60000){
         trackCacheBackgroundRefreshAt.set(id,Date.now());
         const owner={selection};
-        const refresh=loadTrackEntries(id,10000,false,owner);
+        const refresh=loadTrackEntries(id,10000,true,owner);
         refresh.ptSelectionOwner=owner;
+        refresh.ptForceCloud=true;
         trackEntryRequests.set(id,refresh);
         refresh.then(()=>{
           const latest=readTrackSnapshotCache(id);
@@ -5161,7 +5164,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=149',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=150',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -5181,8 +5184,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=149',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=149',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=149',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=150',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=150',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=150',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -5634,6 +5637,26 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const next=Math.max(0,Math.min(totalPages-1,overallPage + Number(direction || 0)));
     if(next===overallPage)return;
     overallPage=next;renderEntries();if(typeof flashOverallPage==='function')flashOverallPage();
+  }
+  function handleOverallPageInput(event){
+    const input=event.target;
+    if(input?.id!=='overallPageJump')return false;
+    if(event.type==='keydown'){
+      if(event.key!=='ArrowUp'&&event.key!=='ArrowDown')return false;
+      event.preventDefault();event.stopPropagation();
+      const direction=event.key==='ArrowUp'?1:-1;
+      const page=Number(input.value);
+      const pending=input.value!==''&&Number.isSafeInteger(page)?page-overallPage-1:0;
+      changeOverallPage(pending+direction);
+      input.value=String(overallPage+1);
+      return true;
+    }
+    // Spinner buttons emit input without waiting for blur or Enter.
+    if(event.type==='input'&&event.inputType==null){
+      jumpOverallPage(Number(input.value));
+      return true;
+    }
+    return false;
   }
   function jumpOverallPage(page){
     const totalPages=Math.max(1,Math.ceil(currentLeaderboardCount()/OVERALL_PAGE_SIZE));
@@ -6881,8 +6904,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   let snapshotTrackStatistics = {};
   let metadataRecovery=null;
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=149').then(async module=>{
-      const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=149');
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=150').then(async module=>{
+      const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=150');
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]')),bootstrap:true,onGenerationChange:()=>{
         metadataRecovery.reset();
         snapshotTrackStatistics={};snapshotCosmeticEntries={};snapshotRacerDirectoryEntries={};publicSnapshotCapturedAt=0;
@@ -6918,11 +6941,11 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     }catch{return null;}
   }
   async function fetchRankedSnapshot(kind,trackId='',{refresh=false}={}){
-    if(snapshotOnlyForNewAccount())return readPublicSnapshotBackup(kind,trackId);
-    if(!refresh){const saved=await readPublicSnapshotBackup(kind,trackId);if(saved)return saved;}
+    const saved=await readPublicSnapshotBackup(kind,trackId);
+    if(snapshotOnlyForNewAccount()||(!refresh&&saved))return saved;
     const endpoint=rankedBrokerUrl();
-    if(Date.now()<publicSnapshotRetryAt)return readPublicSnapshotBackup(kind,trackId);
-    if(!endpoint||!rankedEdgeAvailable())return readPublicSnapshotBackup(kind,trackId);
+    if(Date.now()<publicSnapshotRetryAt)return saved;
+    if(!endpoint||!rankedEdgeAvailable())return saved;
     const path=kind==='overall'?'/v1/snapshot/overall':`/v1/snapshot/track?trackId=${encodeURIComponent(String(trackId||'').slice(0,80))}`;
     try{
       const response=await withTimeout(fetch(`${endpoint}${path}`,{
@@ -6931,21 +6954,32 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         credentials:'omit',
         referrerPolicy:'no-referrer'
       }),5000,'Ranked snapshot timed out');
-      if(response.status===404)return readPublicSnapshotBackup(kind,trackId);
+      if(response.status===404)return saved;
       if(response.status===429){
         const seconds=Number(response.headers.get('Retry-After'));
         publicSnapshotRetryAt=Date.now()+Math.max(60,Math.min(900,Number.isFinite(seconds)?seconds:60))*1000;
-        return readPublicSnapshotBackup(kind,trackId);
+        return saved;
       }
       const contentType=String(response.headers.get('Content-Type')||'').toLowerCase();
       if(!response.ok)throw new Error(`Ranked snapshot failed (${response.status})`);
       if(!contentType.includes('application/json'))throw new Error('Ranked edge was replaced by a network filter');
-      const payload=await response.json();
+      let payload=await response.json();
+      if(payload?.pagination){
+        const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=150');
+        payload=await completeRankedSnapshot(payload,{saved,kind,trackId,endpoint});
+      }
       clearRankedEdgeFailure();
-      return payload&&typeof payload==='object'?payload:null;
+      if(!payload||typeof payload!=='object'||!Array.isArray(payload.entries))throw Error('Invalid ranked snapshot');
+      if(payload.complete===false&&!payload.entries.length&&saved?.entries?.length)return saved;
+      // A complete newer baseline must not regress to an older edge revision.
+      if(saved&&saved.algorithmVersion===payload.algorithmVersion&&Number(saved.revision)>0&&Number(payload.revision)>0&&Number(payload.revision)<Number(saved.revision))return saved;
+      return payload;
     }catch(error){
-      markRankedEdgeUnavailable(String(error&&(error.message||error)));
-      return readPublicSnapshotBackup(kind,trackId);
+      if(error?.status===429){
+        const seconds=Number(error.retryAfter);
+        publicSnapshotRetryAt=Date.now()+Math.max(60,Math.min(900,Number.isFinite(seconds)?seconds:60))*1000;
+      }else markRankedEdgeUnavailable(String(error&&(error.message||error)));
+      return saved;
     }
   }
 
@@ -8755,7 +8789,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function updateTrackFreshnessBanner(){
     const nativeLeaderboard=document.querySelector('.leaderboard-ui');
     let banner=document.getElementById('polytrackTrackFreshness');
-    if(!nativeLeaderboard||!isElementVisible(nativeLeaderboard)||!currentTrackLoadState){if(banner)banner.remove();return;}
+    if(!nativeLeaderboard||nativeLeaderboard.classList.contains('sq-event-board')||!isElementVisible(nativeLeaderboard)||!currentTrackLoadState||eventUi?.isEntered(currentTrackLoadState.trackId)||currentTrackLoadState.trackId===nativeWeeklySelection?.trackId||kodubTrackHistory.has(currentTrackLoadState.trackId)){if(banner)banner.remove();return;}
     if(!banner){banner=document.createElement('div');banner.id='polytrackTrackFreshness';banner.className='polytrack-track-freshness';document.body.appendChild(banner);}
     if(banner.parentElement!==document.body)document.body.appendChild(banner);
     const state=currentTrackLoadState;
@@ -8930,7 +8964,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=149',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:149,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=150',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:150,document,
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       endpoint:new URL('../site-version.json',eventsModuleUrl).href})).catch(()=>{}),5000);

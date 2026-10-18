@@ -72,7 +72,7 @@
     "release:check": "node tools/release-check.mjs",
     "test:events": "node --test events/*.test.mjs",
     "test:migration": "node --test workers/ranked/test/migration-063.test.js events/weekly-native.test.mjs",
-    "test:client": "node --test tools/stabilization.test.cjs tools/event-ranked.test.cjs events/*.test.mjs",
+    "test:client": "node --test tools/stabilization.test.cjs tools/event-ranked.test.cjs tools/overall-page-offset.test.cjs tools/snapshot-rate-limit.test.cjs tools/public-snapshot-routing.test.mjs tools/ranked-live-snapshot.test.mjs tools/event-track-info.test.cjs tools/site-release.test.mjs events/*.test.mjs",
     "test:ranked": "npm run check --prefix workers/ranked",
     "test:verifier": "npm test --prefix tools/verifier && node --test tools/verifier/events.test.mjs"
   }

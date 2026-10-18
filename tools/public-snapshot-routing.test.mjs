@@ -333,3 +333,14 @@ test('a complete package hydrates a same-revision truncated cache without a time
  assert.equal(context.trackSnapshotMetadataIsNewer('track',{complete:true,entries:Array(650),serverUpdatedAt:500,revision:3}),false);
  assert.equal(context.trackSnapshotMetadataIsNewer('track',{complete:false,entries:Array(500),serverUpdatedAt:600,revision:4}),false);
 });
+
+test('expired cached boards check live in background and manual refresh joins that request',async()=>{
+ let release,calls=0;const cached={entries:[{userId:'a'.repeat(64)}],fetchedAt:0};
+ const context=vm.createContext({Date:{now:()=>100000},unrankedExtraTrackIds:new Set(),readTrackSnapshotCache:()=>cached,TRACK_REFRESH_MS:100,
+   trackSnapshotMetadataIsNewer:()=>false,trackEntryRequests:new Map(),trackCacheBackgroundRefreshAt:new Map(),
+   loadTrackEntries:(_id,_limit,refresh)=>{assert.equal(refresh,true);calls++;return new Promise(done=>release=()=>done(cached.entries));}});
+ vm.runInContext(section('  async function getTrackEntries(', '  function trackSnapshotMetadataIsNewer('),context);
+ assert.equal((await context.getTrackEntries('track',10)).length,1);
+ assert.equal(context.trackEntryRequests.get('track').ptForceCloud,true);
+ const manual=context.getTrackEntries('track',10,true);release();await manual;assert.equal(calls,1);
+});

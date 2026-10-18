@@ -44,3 +44,21 @@ test('keyup and window blur are wired to modifier-mode cleanup',()=>{
  assert.match(source,/addEventListener\('keyup',handleOverallLeaderboardModifierRelease\)/);
  assert.match(source,/addEventListener\('blur',resetOverallPageOffset\)/);
 });
+
+function pageFieldFixture(){
+ const pages=[];const context=vm.createContext({overallPage:4,changeOverallPage(delta){context.overallPage=Math.max(0,Math.min(9,context.overallPage+delta));pages.push(context.overallPage+1);},jumpOverallPage(page){if(!Number.isSafeInteger(page)||page<1||page>10)return false;context.overallPage=page-1;pages.push(page);return true;}});
+ vm.runInContext(source.slice(source.indexOf('  function handleOverallPageInput('),source.indexOf('  function jumpOverallPage(')),context);
+ const input={id:'overallPageJump',value:'5'};
+ return {context,input,pages,event(type,key,inputType){return {type,key,inputType,target:input,preventDefault(){this.prevented=true;},stopPropagation(){}};}};
+}
+test('footer up/down arrows change pages immediately and clamp at ends',()=>{
+ const f=pageFieldFixture();const up=f.event('keydown','ArrowUp');assert.equal(f.context.handleOverallPageInput(up),true);assert.equal(up.prevented,true);assert.equal(f.input.value,'6');
+ f.context.handleOverallPageInput(f.event('keydown','ArrowDown'));assert.deepEqual(f.pages,[6,5]);f.context.overallPage=0;f.input.value='1';f.context.handleOverallPageInput(f.event('keydown','ArrowDown'));assert.equal(f.input.value,'1');
+});
+test('footer spinner switches immediately while text entry waits for Enter',()=>{
+ const f=pageFieldFixture();f.input.value='7';f.context.handleOverallPageInput(f.event('input'));assert.deepEqual(f.pages,[7]);
+ f.input.value='1';assert.equal(f.context.handleOverallPageInput(f.event('input',null,'insertText')),false);assert.deepEqual(f.pages,[7]);
+ assert.match(source,/addEventListener\('input',handleOverallPageInput\)/);
+});
+
+test('page-field arrows step from an edited page number rather than losing the edit',()=>{const f=pageFieldFixture();f.input.value='7';f.context.handleOverallPageInput(f.event('keydown','ArrowUp'));assert.equal(f.input.value,'8');assert.deepEqual(f.pages,[8]);});

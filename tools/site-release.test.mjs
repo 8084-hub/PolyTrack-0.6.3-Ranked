@@ -57,3 +57,8 @@ test('native bundle catalog updates receive the same versioned client cache key'
  assert.match(result.index,/main\.bundle\.js\?v=148/);
  assert.match(stampClientRelease(result.patch,result.index,149).index,/main\.bundle\.js\?v=149/);
 });
+
+test('live snapshot page helper follows future release cache keys',()=>{
+ const input=patch+"import('./tools/ranked-live-snapshot.mjs?v=149');";
+ assert.match(stampClientRelease(input,index,150).patch,/ranked-live-snapshot\.mjs\?v=150/);
+});
