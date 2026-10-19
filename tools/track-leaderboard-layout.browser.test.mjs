@@ -131,7 +131,7 @@ test('native track footer, Ranked Find me/filter, and event filters render withi
     <div id="gameRoot"><div class="menu-ui"><main class="track-info-ui">
       <section class="side-panel"><h2>Track info</h2><div class="thumbnail"></div><button class="button play">Play</button></section>
       <section class="leaderboard-ui"><h2>Leaderboard</h2><h3>Best times</h3><div class="total-players">12 racers</div>
-        <div class="container"><button class="main">Racer row</button></div><div class="pages"><button class="page selected">1</button></div>
+        <div class="container"><button class="main">Racer row</button></div><div class="pages"><button class="button page selected" type="button" aria-current="page">1</button><button class="button page" type="button">2</button></div>
         <div class="button-wrapper"><button class="button back">Back</button>
           <button class="button personal-filter-toggle" data-personal-filter-button>Filters</button>
           <button class="button icon-button first" aria-label="Find me"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8' fill='%23fff'/%3E%3C/svg%3E"></button>
@@ -143,7 +143,7 @@ test('native track footer, Ranked Find me/filter, and event filters render withi
     await page.addStyleTag({ content: homeCss });
 
     for (const [width, height] of viewports) {
-      for (const filterLabel of ['Filters-Active', 'Filters-Inactive']) {
+      for (const filterLabel of ['Filters +', 'Filters']) {
         await page.locator('.track-info-ui [data-personal-filter-button]').evaluate((button, label) => { button.textContent = label; }, filterLabel);
         const result = await checkViewport(width, height, [
           '.track-info-ui .button-wrapper > .back',
@@ -153,6 +153,20 @@ test('native track footer, Ranked Find me/filter, and event filters render withi
         ], '.track-info-ui .leaderboard-ui > .button-wrapper', `track footer ${filterLabel}`);
         assert.ok(result.boundary.left >= 0 && result.boundary.right <= width + 1,
           `footer itself is within the viewport at ${width}x${height}`);
+        const pageControl = await page.locator('.track-info-ui .leaderboard-ui > .pages').evaluate(element => {
+          const box = element.getBoundingClientRect();
+          const selected = element.querySelector('[aria-current="page"]');
+          const active = selected.getBoundingClientRect();
+          return {left: box.left, right: box.right, center: (box.left + box.right) / 2,
+            containerCenter: (box.left + box.right) / 2, activeColor: getComputedStyle(selected).backgroundColor,
+            width: active.width, height: active.height};
+        });
+        assert.ok(Math.abs(pageControl.center - (result.boundary.left + result.boundary.right) / 2) < 1,
+          `page strip is centered at ${width}x${height}: ${JSON.stringify(pageControl)}`);
+        assert.equal(pageControl.activeColor, 'rgb(126, 231, 255)',
+          `current page uses the active cyan style at ${width}x${height}`);
+        assert.ok(pageControl.width >= 44 && pageControl.height >= 44,
+          `page control remains touch-sized at ${width}x${height}`);
         const rows = await page.locator('.track-info-ui .button-wrapper > button').evaluateAll(nodes => nodes.map(node => ({
           label: node.getAttribute('aria-label') || node.textContent.trim(), top: node.getBoundingClientRect().top,
           left: node.getBoundingClientRect().left, right: node.getBoundingClientRect().right,

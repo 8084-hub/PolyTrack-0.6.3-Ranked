@@ -77,6 +77,8 @@ test('mount is hidden until open, paginates exact counts and restores focus', ()
   assert.equal(cls(root, 'sq-extra-overlay')[0].hidden, false);
   assert.equal(document.activeElement.tagName, 'INPUT');
   assert.equal(cls(root, 'sq-extra-count')[0].textContent, '15 of 15 tracks');
+  assert.equal(tag(cls(root, 'sq-extra-controls')[0], 'input')[0].getAttribute('aria-describedby'), cls(root, 'sq-extra-count')[0].id);
+  assert.equal(tag(cls(root, 'sq-extra-controls')[0], 'input')[0].getAttribute('aria-controls'), cls(root, 'sq-extra-grid')[0].id);
   assert.equal(cls(root, 'sq-extra-card').length, 12);
   click(tag(cls(root, 'sq-extra-pagination')[0], 'button')[1]);
   assert.equal(cls(root, 'sq-extra-card').length, 3);
@@ -439,8 +441,9 @@ test('sort, callbacks and attribution use the original entry and safe links', as
   assert.doesNotMatch(sort.textContent, /Most chosen/);
   sort.value = 'plays'; sort.dispatch('change');
   assert.match(cls(root, 'sq-extra-card')[0].textContent, /Track 02/);
+  assert.equal(cls(root, 'sq-extra-visual').length, 1, 'cards without usable art omit the oversized preview panel');
   assert.equal(cls(root, 'sq-extra-visual')[0].children.filter(node => node.tagName === 'IMG').length, 1);
-  assert.equal(cls(root, 'sq-extra-visual')[1].children.filter(node => node.tagName === 'IMG').length, 0);
+  assert.equal(cls(root, 'sq-extra-category')[0].textContent, 'Custom track', 'missing art keeps its category as a compact label');
   assert.match(cls(root, 'sq-extra-card')[1].textContent, /<script>bad<\/script>/);
   assert.equal(cls(root, 'sq-extra-source').length, 0);
   const submit = cls(root, 'sq-extra-submit')[0];
@@ -799,9 +802,28 @@ test('empty entries still mount and show an accurate zero count', () => {
   api.open();
   assert.equal(cls(root, 'sq-extra-count')[0].textContent, '0 of 0 tracks');
   assert.equal(cls(root, 'sq-extra-card').length, 0);
-  assert.match(cls(root, 'sq-extra-empty')[0].textContent, /No extra tracks/);
+  assert.match(tag(cls(root, 'sq-extra-empty')[0], 'h3')[0].textContent, /No extra tracks/);
+  assert.equal(cls(root, 'sq-extra-empty')[0].getAttribute('aria-live'), 'polite');
   api.refresh();
   assert.equal(cls(root, 'sq-extra-count')[0].textContent, '0 of 0 tracks');
+});
+
+test('art previews are compact, and failed thumbnails collapse to a category label', async () => {
+  const { root, api } = fixture([
+    entry(1, { thumbnailUrl: '/preview.png', category: 'Community track' }),
+    entry(2, { category: 'Custom track' })
+  ]);
+  api.open();
+  const card = cls(root, 'sq-extra-card')[0];
+  const visual = cls(card, 'sq-extra-visual')[0];
+  assert.match(visual.getAttribute('style'), /height:clamp\(76px,14vw,132px\)/);
+  assert.equal(cls(root, 'sq-extra-visual').length, 1, 'no preview frame is reserved when no thumbnail exists');
+  assert.equal(cls(root, 'sq-extra-category').find(node => node.parent === cls(root, 'sq-extra-card')[1].children.at(-1)).hidden, false);
+  await tag(visual, 'img')[0].dispatch('error');
+  assert.equal(cls(root, 'sq-extra-visual').length, 0, 'broken art removes its panel instead of leaving a blank frame');
+  assert.equal(cls(root, 'sq-extra-category')[0].hidden, false);
+  assert.equal(cls(root, 'sq-extra-category')[0].textContent, 'Community track');
+  api.destroy();
 });
 
 test('advanced filter count tracks active groups and excludes search', async () => {

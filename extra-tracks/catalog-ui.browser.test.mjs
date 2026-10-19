@@ -790,7 +790,7 @@ test('real catalog previews stay uncropped in desktop and portrait game layouts'
   }
 });
 
-test('native leaderboard inactive filter label stays on one line', {skip: browserSkip}, async () => {
+test('native leaderboard filter label stays on one line', {skip: browserSkip}, async () => {
   const browser = await chromium.launch({headless: true});
   try {
     const page = await browser.newPage();
@@ -803,7 +803,7 @@ test('native leaderboard inactive filter label stays on one line', {skip: browse
       .leaderboard-ui>.button-wrapper>.back{margin:10px}.leaderboard-ui>.button-wrapper>.icon-button{width:44px}
       .leaderboard-ui>.button-wrapper>.only-verified{white-space:nowrap}
     </style><div id="gameRoot"><main class="track-info-ui"><section class="side-panel"></section><section class="leaderboard-ui"><div class="button-wrapper">
-      <button class="button back">Back</button><button class="button" data-personal-filter-button>Filters-Inactive</button>
+      <button class="button back">Back</button><button class="button" data-personal-filter-button>Filters</button>
       <button class="button icon-button first" aria-label="Find me">◎</button><button class="button only-verified">Only verified</button>
     </div></section></main></div>`);
     await page.addStyleTag({content: rankedCss});
@@ -817,7 +817,7 @@ test('native leaderboard inactive filter label stays on one line', {skip: browse
         const box = button.getBoundingClientRect();
         return {lines: rects.length, box: [box.x, box.y, box.width, box.height], text: button.textContent};
       });
-      assert.equal(label.lines, 1, `Filters-Inactive stays on one line at ${width}x${height}: ${JSON.stringify(label)}`);
+      assert.equal(label.lines, 1, `Filters stays on one line at ${width}x${height}: ${JSON.stringify(label)}`);
     }
   } finally {
     await browser.close();

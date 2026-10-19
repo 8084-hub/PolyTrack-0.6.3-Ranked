@@ -149,7 +149,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   }
   header.append(closeButton);
   dialog.append(header);
-  const invitation = make('p', 'sq-extra-invite', 'Made a track? Direct submissions get priority review for this collection. Inclusion and featured placement are not guaranteed.');
+  const invitation = make('p', 'sq-extra-invite', 'Share a track with the community. Direct submissions get priority review; featuring is not guaranteed.');
   const inviteRow = make('div', 'sq-extra-invite-row');
   const submit = button('Submit a track', 'sq-extra-submit', () => {
     submissionReturnFocus = document.activeElement;
@@ -221,8 +221,10 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
 
   const summary = make('div', 'sq-extra-summary');
   const count = make('p', 'sq-extra-count');
+  count.id = `sq-extra-count-${mountNumber}`;
   count.setAttribute('role', 'status');
   count.setAttribute('aria-live', 'polite');
+  search.setAttribute('aria-describedby', count.id);
   summary.append(count);
   dialog.append(summary);
   const submissionModal = make('div', 'sq-extra-submission-modal');
@@ -308,6 +310,8 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   submissionStatus.hidden = true;
   submission.append(submissionStatus);
   const list = make('div', 'sq-extra-grid');
+  list.id = `sq-extra-results-${mountNumber}`;
+  search.setAttribute('aria-controls', list.id);
   dialog.append(list);
   const pagination = make('nav', 'sq-extra-pagination');
   pagination.setAttribute('aria-label', 'Track pages');
@@ -453,11 +457,15 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     if (text(entry.tier).toLowerCase() === 'curated') article.className += ' sq-extra-card-featured';
     if (entry.featuredSubmission === true) article.className += ' sq-extra-card-submitted';
     if (entry.ranked === false) article.className += ' sq-extra-card-unranked';
-    const visual = make('div', 'sq-extra-visual');
-    const placeholder = make('span', 'sq-extra-placeholder', text(entry.category, 'Custom track').toUpperCase());
-    visual.append(placeholder);
     const imageUrl = safeUrl(document, entry.thumbnailUrl);
+    const categoryFallback = make('span', 'sq-extra-tier sq-extra-category', text(entry.category, 'Custom track'));
+    categoryFallback.hidden = Boolean(imageUrl);
+    let visual = null;
     if (imageUrl) {
+      visual = make('div', 'sq-extra-visual');
+      visual.setAttribute('style', 'height:clamp(76px,14vw,132px);min-height:0;max-height:none;aspect-ratio:auto');
+      const placeholder = make('span', 'sq-extra-placeholder', text(entry.category, 'Custom track').toUpperCase());
+      visual.append(placeholder);
       const image = make('img');
       image.alt = '';
       const thumbnailPath = new URL(imageUrl, document.baseURI || 'https://polytrack.local/').pathname;
@@ -468,12 +476,17 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       image.decoding = 'async';
       image.fetchPriority = 'low';
       image.addEventListener('load', () => { placeholder.hidden = true; });
-      image.addEventListener('error', () => { image.remove(); placeholder.hidden = false; });
+      image.addEventListener('error', () => {
+        image.remove();
+        visual.remove();
+        categoryFallback.hidden = false;
+      });
       image.src = imageUrl;
       visual.append(image);
+      article.append(visual);
     }
-    article.append(visual);
     const body = make('div', 'sq-extra-card-body');
+    body.append(categoryFallback);
     const tier = text(entry.tier);
     if (tier.toLowerCase() === 'curated') body.append(make('span', 'sq-extra-tier', 'Featured'));
     if (entry.featuredSubmission === true) body.append(make('span', 'sq-extra-tier sq-extra-tier-submitted', 'New from players'));
@@ -929,7 +942,13 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     list.replaceChildren();
     const visible = records.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
     if (!visible.length) {
-      const empty = make('div', 'sq-extra-empty', all.length ? 'No tracks match these filters.' : 'No extra tracks are available yet.');
+      const empty = make('div', 'sq-extra-empty');
+      empty.setAttribute('role', 'status');
+      empty.setAttribute('aria-live', 'polite');
+      empty.append(make('h3', '', all.length ? 'No matching tracks' : 'No extra tracks are available'));
+      empty.append(make('p', '', all.length
+        ? 'Try a different search or adjust your filters.'
+        : 'The catalog is empty right now. Check back later.'));
       if (all.length) empty.append(button('Clear filters', 'sq-extra-clear', clearFilters));
       list.append(empty);
     }

@@ -68,7 +68,7 @@ test('separates known local/cloud PB evidence from tracked finish history and ne
 
 test('uses explicit coverage color and explanation for sparse, moderate, and adequate evidence', () => {
   const view = fraction => renderPracticeProfile({ rows: [row()], coverage: { coverageFraction: fraction } });
-  assert.match(view(0.05), /pp-coverage-low[^>]*>5% visible-time coverage · limited history/);
+  assert.match(view(0.05), /pp-coverage-low[^>]*>[\s\S]*5% visible-time coverage · limited history[\s\S]*Sparse evidence: less than 10% of visible time is covered/);
   assert.match(view(0.3), /pp-coverage-moderate/);
   assert.match(view(0.85), /pp-coverage-adequate/);
   assert.match(view(0.05), /not an error or a fraud signal/);

@@ -20,12 +20,44 @@ test('category movements survive repeat views and reset only with changed standi
 });
 
 test('filter labels, notices, and profile actions keep explicit personal context', () => {
-  assert.match(source, /active\?'Filters-Active':'Filters-Inactive'/);
+  assert.match(source, /const label=active\?'Filters \+':'Filters'/);
   assert.doesNotMatch(source, /\['Only this racer'/);
   assert.match(source, /Racer profile · Filtered Results/);
   assert.match(source, /showNotice===false/);
   assert.match(source, /getRuleCounts:\(rows,filter\)/);
   assert.match(source, /groupScoreIncomplete\)return '<p class="profile-guide-empty">Not enough saved group results/);
+});
+
+test('native filter button exposes active and inactive states accessibly', () => {
+  const start = source.indexOf('  function refreshPersonalFilterButtons(){');
+  const end = source.indexOf('  function personalFilterButton(', start);
+  assert.ok(start >= 0 && end > start);
+  let active = true;
+  let filter = {color:'#123456', colorLevel:'everywhere'};
+  const button = {textContent:'Filters', title:'', attributes:{}, classes:{},
+    setAttribute(name,value){this.attributes[name]=value;},
+    classList:{toggle(name,value){button.classes[name]=value;}}};
+  const body = {variables:{}, classes:{}, style:{setProperty(name,value){body.variables[name]=value;}},
+    classList:{toggle(name,value){body.classes[name]=value;}}};
+  const context = vm.createContext({personalFilterRuntime:{active:()=>active,getFilter:()=>filter},
+    document:{querySelectorAll:()=>[button],body}});
+  vm.runInContext(source.slice(start,end),context);
+  context.refreshPersonalFilterButtons();
+  assert.equal(button.textContent,'Filters +');
+  assert.equal(button.attributes['aria-label'],'Edit active personal filters');
+  assert.equal(button.attributes['aria-pressed'],'true');
+  assert.equal(button.classes.selected,true);
+  assert.equal(body.variables['--personal-filter-color'],'#123456');
+  assert.equal(body.classes['personal-filters-active'],true);
+  assert.equal(body.classes['personal-filters-colored'],true);
+
+  active=false;filter=null;context.refreshPersonalFilterButtons();
+  assert.equal(button.textContent,'Filters');
+  assert.equal(button.attributes['aria-label'],'Edit personal filters');
+  assert.equal(button.attributes['aria-pressed'],'false');
+  assert.equal(button.classes.selected,false);
+  assert.equal(body.classes['personal-filters-active'],false);
+  assert.equal(body.classes['personal-filters-colored'],false);
 });
 
 test('the website update notice and entry-point cache revision match the published release', () => {

@@ -5295,7 +5295,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function refreshPersonalFilterButtons(){
     const active=personalFilterRuntime?.active(),filter=personalFilterRuntime?.getFilter();
     for(const button of document.querySelectorAll('[data-personal-filter-button]')){
-      const label=button.parentElement?.classList.contains('button-wrapper')?'Filters'+(active?' +':''):active?'Filters-Active':'Filters-Inactive';
+      const label=active?'Filters +':'Filters';
       button.setAttribute('aria-label',active?'Edit active personal filters':'Edit personal filters');
       if(button.textContent!==label)button.textContent=label;
       button.classList.toggle('selected',Boolean(active));button.setAttribute('aria-pressed',String(Boolean(active)));
