@@ -23,6 +23,12 @@ test('renders compact summary and per-track useful data with trusted preview mar
   assert.doesNotMatch(html, />PT</);
 });
 
+test('invalid epoch-scale activity timestamps are reported as unavailable', () => {
+  const html = renderPracticeProfile({ rows: [row({ lastPlayedAt: 2 })] });
+  assert.match(html, /Last played date not recorded/);
+  assert.doesNotMatch(html, /Dec 31, 1969|Jan 1, 1970/);
+});
+
 test('escapes names and uses fallback art if callback fails or returns no markup', () => {
   const html = renderPracticeProfile({ rows: [row({ trackName: '<img src=x onerror=1>' })], trackPreview: () => '<script>bad()</script>' });
   assert.match(html, /&lt;img src=x onerror=1&gt;/);
@@ -71,7 +77,19 @@ test('uses explicit coverage color and explanation for sparse, moderate, and ade
   assert.match(view(0.05), /pp-coverage-low[^>]*>[\s\S]*5% visible-time coverage · limited history[\s\S]*Sparse evidence: less than 10% of visible time is covered/);
   assert.match(view(0.3), /pp-coverage-moderate/);
   assert.match(view(0.85), /pp-coverage-adequate/);
-  assert.match(view(0.05), /not an error or a fraud signal/);
+  assert.match(view(0.05), /Sparse evidence: less than 10% of visible time is covered\. Information is limited\./);
+});
+
+test('shows PB age only from a PB timestamp, never from snapshot capture age', () => {
+  const recent = renderPracticeProfile({ rows: [row()], results: [
+    { trackId: 'track-a', timeMs: 46000, source: 'snapshot', snapshotCapturedAt: Date.now() - 20 * 86400000,
+      pbAt: Date.now() - 2 * 86400000 }
+  ] });
+  assert.match(recent, /PB recorded 2d ago/);
+  const captureOnly = renderPracticeProfile({ rows: [row()], results: [
+    { trackId: 'track-a', timeMs: 46000, source: 'snapshot', snapshotCapturedAt: Date.now() - 20 * 86400000 }
+  ] });
+  assert.doesNotMatch(captureOnly, /PB recorded/);
 });
 
 test('provides accessible search, sorting, view controls, and event handler export', () => {

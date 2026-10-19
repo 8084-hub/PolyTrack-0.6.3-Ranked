@@ -23,11 +23,24 @@ function active(value) {
 
 function date(value) {
   const timestamp = num(value);
-  if (!timestamp) return '';
+  if (timestamp < Date.UTC(2020, 0, 1)) return '';
   const parsed = new Date(timestamp);
   return Number.isNaN(parsed.valueOf())
     ? ''
     : parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function pbAge(value) {
+  const timestamp = num(value);
+  if (timestamp < Date.UTC(2020, 0, 1)) return '';
+  const elapsed = Date.now() - timestamp;
+  if (elapsed < 0) return '';
+  if (elapsed < 60_000) return 'just now';
+  if (elapsed < 3_600_000) return Math.floor(elapsed / 60_000) + 'm ago';
+  if (elapsed < 86_400_000) return Math.floor(elapsed / 3_600_000) + 'h ago';
+  if (elapsed < 30 * 86_400_000) return Math.floor(elapsed / 86_400_000) + 'd ago';
+  if (elapsed < 365 * 86_400_000) return Math.floor(elapsed / (30 * 86_400_000)) + 'mo ago';
+  return Math.floor(elapsed / (365 * 86_400_000)) + 'y ago';
 }
 
 function nameOf(row, lookup) {
@@ -94,10 +107,13 @@ function rankLabel(record) {
 function evidenceMarkup(evidence) {
   const { source, record } = evidence;
   const rank = rankLabel(record);
+  const age = pbAge(record.pbAt);
   return '<p class="pp-evidence pp-evidence-known pp-evidence-' + source + '">' +
     '<strong>' + esc(evidenceLabel(source)) + '</strong>' +
     '<b>' + time(record.timeMs) + '</b>' +
-    '<span>' + esc(rank) + '</span></p>';
+    '<span>' + esc(rank) + '</span>' +
+    (age ? '<small class="pp-pb-age" title="Based on the PB timestamp in the saved result">PB recorded ' + esc(age) + '</small>' : '') +
+    '</p>';
 }
 
 function sessionDetailsMarkup(rows, lookup) {
@@ -200,7 +216,7 @@ function coverageMarkup(coverage) {
   const percent = Math.round(Math.max(0, Math.min(1, coverage.coverageFraction)) * 100);
   const level = percent < 10 ? 'low' : percent < 60 ? 'moderate' : 'adequate';
   const description = percent < 10
-    ? 'Sparse evidence: less than 10% of visible time is covered. This is not an error or a fraud signal.'
+    ? 'Sparse evidence: less than 10% of visible time is covered. Information is limited.'
     : percent < 60
       ? 'Partial evidence: some visible time is covered.'
       : 'Good evidence: most visible time is covered.';

@@ -184,6 +184,19 @@ html body #polytrackTrackFreshness.polytrack-track-freshness {
   clip-path: none !important;
   box-shadow: 0 0.4em 1.2em rgba(0, 0, 0, .3) !important;
 }
+/* Keep snapshot context in the board flow so it can never cover racer rows. */
+html body .track-info-ui .leaderboard-ui #polytrackTrackFreshness.polytrack-track-freshness {
+  position: relative !important;
+  inset: auto !important;
+  z-index: 1;
+  width: 100% !important;
+  max-width: 100% !important;
+  max-height: none !important;
+  margin: 6px 0 !important;
+  overflow: visible !important;
+  pointer-events: none;
+  font-size: max(15px, calc(16px * var(--sq-ui-scale, 1))) !important;
+}
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-source="snapshot"],
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-source="mixed"],
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-source="cache"],
@@ -539,8 +552,8 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
 }
 .polytrack-practice-profile .pp-summary > span { display: grid; grid-column: span 2; gap: 1px; min-width: 0; }
 .polytrack-practice-profile .pp-summary > span:nth-child(-n+2) { grid-column: span 1; }
-.polytrack-practice-profile .pp-summary small { color: #c6d8ef; font-size: 12px; line-height: 1.3; letter-spacing: .02em; }
-.polytrack-practice-profile .pp-summary strong { color: #fff; font-size: 20px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.polytrack-practice-profile .pp-summary small { color: #d2e1f4; font-size: 14px; line-height: 1.35; letter-spacing: .02em; }
+.polytrack-practice-profile .pp-summary strong { color: #fff; font-size: 23px; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .polytrack-practice-profile .pp-summary .pp-coverage {
   grid-column: span 2;
   max-width: none;
@@ -551,7 +564,7 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
   font-size: 13px;
   line-height: 1.35;
 }
-.polytrack-practice-profile .pp-coverage-note { font-size: 11px; line-height: 1.3; }
+.polytrack-practice-profile .pp-coverage-note { font-size: 14px; line-height: 1.4; }
 .polytrack-practice-profile .pp-coverage-low { color: #ff626b !important; }
 .polytrack-practice-profile .pp-coverage-moderate { color: #ffd28b !important; }
 .polytrack-practice-profile .pp-coverage-adequate { color: var(--pp-cyan) !important; }
@@ -563,7 +576,7 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
   margin: 0;
   padding: 0;
 }
-.polytrack-practice-profile .pp-toolbar label { display: grid; gap: 4px; min-width: 0; color: #c7d9f0; font-size: 13px; }
+.polytrack-practice-profile .pp-toolbar label { display: grid; gap: 5px; min-width: 0; color: #d5e3f5; font-size: 15px; }
 .polytrack-practice-profile .pp-toolbar input,
 .polytrack-practice-profile .pp-toolbar select {
   width: 100%;
@@ -591,12 +604,12 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
   cursor: pointer;
 }
 .polytrack-practice-profile button[aria-pressed="true"] { border-color: #a9efff; background: var(--pp-cyan); color: #11294e; }
-.polytrack-practice-profile [data-pp-count] { grid-column: 1 / -1; margin: 0; color: #c3d7ef; font-size: 13px; text-align: right; }
+.polytrack-practice-profile [data-pp-count] { grid-column: 1 / -1; margin: 0; color: #d0def0; font-size: 15px; text-align: right; }
 .polytrack-practice-profile .pp-tracks { min-width: 0; }
-.polytrack-practice-profile .pp-tracks h2 { margin: 0 0 7px; color: var(--pp-blue); font-size: 15px; font-weight: normal; letter-spacing: .03em; }
+.polytrack-practice-profile .pp-tracks h2 { margin: 0 0 9px; color: var(--pp-blue); font-size: 18px; font-weight: normal; letter-spacing: .03em; }
 .polytrack-practice-profile .pp-tracks ul {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr));
   align-items: start;
   gap: 8px;
   margin: 0;
@@ -642,9 +655,9 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
 .polytrack-practice-profile .pp-art .profile-track-image-frame svg { width: 100% !important; height: 100% !important; object-fit: contain !important; }
 .polytrack-practice-profile .pp-preview-unknown { color: #a7cce9; font-size: 22px; }
 .polytrack-practice-profile .pp-track-main { flex: 1; min-width: 0; }
-.polytrack-practice-profile .pp-track h3 { margin: 0; color: #fff; font-size: 19px; font-weight: normal; line-height: 1.2; overflow-wrap: anywhere; }
-.polytrack-practice-profile .pp-last-played { margin: 3px 0 0; color: #c0d2eb; font-size: 13px; line-height: 1.3; }
-.polytrack-practice-profile .pp-active { margin: 2px 0 0; color: var(--pp-cyan); font-size: 14px; line-height: 1.3; }
+.polytrack-practice-profile .pp-track h3 { margin: 0; color: #fff; font-size: 21px; font-weight: normal; line-height: 1.25; overflow-wrap: anywhere; }
+.polytrack-practice-profile .pp-last-played { margin: 4px 0 0; color: #d0def0; font-size: 15px; line-height: 1.4; }
+.polytrack-practice-profile .pp-active { margin: 3px 0 0; color: var(--pp-cyan); font-size: 16px; line-height: 1.4; }
 .polytrack-practice-profile .pp-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 6px; }
 .polytrack-practice-profile .pp-evidence {
   display: flex;
@@ -661,16 +674,18 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
-.polytrack-practice-profile .pp-evidence strong { color: var(--pp-cyan); font-size: 11px; font-weight: normal; letter-spacing: .025em; text-transform: uppercase; }
-.polytrack-practice-profile .pp-evidence > b { color: #fff; font-size: 19px; font-weight: normal; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.polytrack-practice-profile .pp-evidence strong { color: var(--pp-cyan); font-size: 13px; font-weight: normal; letter-spacing: .025em; text-transform: uppercase; }
+.polytrack-practice-profile .pp-evidence > b { color: #fff; font-size: 22px; font-weight: normal; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.polytrack-practice-profile .pp-evidence > span,
+.polytrack-practice-profile .pp-pb-age { color: #e0eaf8; font-size: 14px; line-height: 1.35; }
 .polytrack-practice-profile .pp-evidence-tracked { border-color: var(--pp-amber); }
 .polytrack-practice-profile .pp-evidence-tracked strong { color: var(--pp-amber); }
 .polytrack-practice-profile .pp-evidence-unavailable { border-left-color: #91a6c4; background: #20365f; }
 .polytrack-practice-profile .pp-evidence-unavailable strong { color: #cfddf0; }
 .polytrack-practice-profile .pp-no-finish { background: #20365f; color: #cbd9ec; }
-.polytrack-practice-profile .pp-track-data { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; color: #e1ebf9; font-size: 12px; }
-.polytrack-practice-profile .pp-track-data > span { padding: 3px 6px; background: #304d80; }
-.polytrack-practice-profile .pp-since-pb { margin: 0; color: #d0def0; font-size: 13px; }
+.polytrack-practice-profile .pp-track-data { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; color: #e1ebf9; font-size: 14px; }
+.polytrack-practice-profile .pp-track-data > span { padding: 4px 7px; background: #304d80; }
+.polytrack-practice-profile .pp-since-pb { margin: 0; color: #d0def0; font-size: 15px; }
 .polytrack-practice-profile .pp-session-details { border-top: 1px solid #4a6792; }
 .polytrack-practice-profile .pp-session-details > summary { display: flex; align-items: center; min-height: 44px; padding: 6px 0 0; color: var(--pp-blue); font-size: 13px; }
 .polytrack-practice-profile .pp-session-details > summary::after { content: ' +'; color: var(--pp-cyan); }
@@ -705,16 +720,17 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
   .polytrack-practice-profile .pp-summary > span { min-width: 76px; }
   .polytrack-practice-profile .pp-summary > span:nth-child(-n+2) { grid-column: span 1; }
   .polytrack-practice-profile .pp-summary > span:nth-child(n+4) { grid-column: span 1; }
-  .polytrack-practice-profile .pp-summary strong { font-size: 18px; }
+  .polytrack-practice-profile .pp-summary strong { font-size: 20px; }
   .polytrack-practice-profile .pp-summary .pp-coverage { grid-column: 1 / -1; }
-  .polytrack-practice-profile .pp-toolbar { grid-template-columns: minmax(0, 1fr) minmax(110px, .8fr); gap: 7px; }
-  .polytrack-practice-profile .pp-toolbar > label:first-child { grid-column: 1 / -1; }
-  .polytrack-practice-profile .pp-toolbar [role="group"] { justify-self: start; }
-  .polytrack-practice-profile [data-pp-count] { align-self: center; }
+  .polytrack-practice-profile .pp-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 5px; }
+  .polytrack-practice-profile .pp-toolbar > label:first-child { grid-column: 1; grid-row: 1; }
+  .polytrack-practice-profile .pp-toolbar > label:nth-child(2) { grid-column: 2; grid-row: 1; }
+  .polytrack-practice-profile .pp-toolbar [role="group"] { grid-column: 1; grid-row: 2; justify-self: start; }
+  .polytrack-practice-profile [data-pp-count] { grid-column: 2; grid-row: 2; align-self: center; }
   .polytrack-practice-profile .pp-tracks ul { grid-template-columns: minmax(0, 1fr); gap: 7px; }
   .polytrack-practice-profile .pp-track { gap: 7px; padding: 8px; }
   .polytrack-practice-profile .pp-art { flex-basis: 76px; width: 76px; }
-  .polytrack-practice-profile .pp-track h3 { font-size: 18px; }
+  .polytrack-practice-profile .pp-track h3 { font-size: 20px; }
   .polytrack-practice-profile .pp-view-list .pp-track { grid-template-columns: minmax(0, 1fr); }
   .polytrack-practice-profile .pp-view-list .pp-track-top,
   .polytrack-practice-profile .pp-view-list .pp-results,
@@ -725,10 +741,10 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
 @media (max-width: 380px) {
   .polytrack-practice-profile .pp-summary { gap: 6px 8px; }
   .polytrack-practice-profile .pp-summary > span { min-width: 68px; }
-  .polytrack-practice-profile .pp-art { flex-basis: 64px; width: 64px; }
-  .polytrack-practice-profile .pp-results { gap: 4px; }
-  .polytrack-practice-profile .pp-evidence { padding: 6px; font-size: 12px; }
-  .polytrack-practice-profile .pp-evidence > b { font-size: 17px; }
+  .polytrack-practice-profile .pp-art { flex-basis: 68px; width: 68px; }
+  .polytrack-practice-profile .pp-results { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .polytrack-practice-profile .pp-evidence { padding: 7px; font-size: 14px; }
+  .polytrack-practice-profile .pp-evidence > b { font-size: 20px; }
 }
 
 /* Native track leaderboard actions share one stable row; portrait stacks verification below. */
@@ -778,40 +794,6 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
   max-height: 22px !important;
   margin: 0 !important;
   object-fit: contain;
-}
-.track-info-ui .leaderboard-ui:not(.sq-event-board) > .pages {
-  display: flex !important;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  min-height: 48px;
-  height: auto !important;
-  padding: 4px 0;
-  box-sizing: border-box;
-  flex: 0 0 auto !important;
-}
-.track-info-ui .leaderboard-ui:not(.sq-event-board) > .pages > button,
-.track-info-ui .leaderboard-ui:not(.sq-event-board) > .pages > input,
-.track-info-ui .leaderboard-ui:not(.sq-event-board) > .pages > select {
-  min-width: 44px !important;
-  min-height: 44px !important;
-  margin: 0 !important;
-  padding: 6px 9px !important;
-  box-sizing: border-box;
-  border: 1px solid #7899c4 !important;
-  border-radius: 0 !important;
-  background: #263f78 !important;
-  color: #f6f7ff !important;
-  color-scheme: dark;
-  font: inherit;
-  text-align: center;
-}
-.track-info-ui .leaderboard-ui:not(.sq-event-board) > .pages > .selected,
-.track-info-ui .leaderboard-ui:not(.sq-event-board) > .pages > [aria-current="page"] {
-  border-color: #a9efff !important;
-  background: #7ee7ff !important;
-  color: #11294e !important;
 }
 @media (max-width: 650px) and (orientation: landscape) {
   .track-info-ui .leaderboard-ui:not(.sq-event-board) > .button-wrapper {

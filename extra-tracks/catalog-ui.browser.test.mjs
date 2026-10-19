@@ -15,6 +15,7 @@ const catalog = JSON.parse(fs.readFileSync(new URL('./catalog.json', import.meta
 const homeCss = fs.readFileSync(new URL('../home-ui.css', import.meta.url), 'utf8');
 const eventsCss = fs.readFileSync(new URL('../events/events.css', import.meta.url), 'utf8');
 const rankedSource = fs.readFileSync(new URL('../polytrack_062_patch.js', import.meta.url), 'utf8');
+const forcedSquareFont = fs.readFileSync(new URL('../forced_square.woff2', import.meta.url)).toString('base64');
 const rankedCssFragments = [...rankedSource.matchAll(/(?:style|rankedPolish)\.textContent\s*(?:\+=|=)\s*("(?:\\.|[^"\\\\])*?")/g)];
 const rankedCss = rankedCssFragments.map(fragment => JSON.parse(fragment[1])).join('\n');
 
@@ -650,6 +651,7 @@ test('real catalog previews stay uncropped in desktop and portrait game layouts'
       }
     });
     await page.goto('http://extra-tracks.test/');
+    await page.addStyleTag({content: `@font-face{font-family:ForcedSquare;src:url(data:font/woff2;base64,${forcedSquareFont}) format("woff2")}`});
     await page.addStyleTag({content: eventsCss});
     await page.addStyleTag({content: homeCss});
     await page.addStyleTag({content: rankedCss});

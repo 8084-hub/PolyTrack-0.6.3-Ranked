@@ -198,15 +198,10 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   const progressLabels = {all: 'All tracks', activity: 'Has my activity', untouched: 'No activity yet', completed: 'Completed', uncompleted: 'Not completed', loaded: 'Imported, not completed'};
   const completionField = selectField('Progress', Object.entries(progressLabels));
   const reviewField = selectField('Review status', [['all', 'All tracks'], ['edited', 'Locally edited'], ['not-edited', 'Not edited']]);
-  const sortChoices = [['recommended', 'Recommended'], ['name', 'Name A-Z'], ['author', 'Author A-Z']];
-  if (Array.isArray(entries) && entries.some(entry => Number.isSafeInteger(entry?.sizeBytes) && entry.sizeBytes >= 0)) sortChoices.push(['size-largest', 'Largest track'], ['size-smallest', 'Smallest track']);
-  if (Array.isArray(entries) && entries.some(entry => Number.isSafeInteger(entry?.sourceCopies) && entry.sourceCopies >= 0 || Number.isSafeInteger(entry?.sourcePlays) && entry.sourcePlays >= 0)) sortChoices.push(['plays', 'Most plays']);
-  if (Array.isArray(entries) && entries.some(entry => forumActivity(entry) !== null)) sortChoices.push(['forum', 'Forum activity']);
-  if (typeof getLocalRating === 'function') sortChoices.push(['my-rating', 'My ratings']);
-  sortChoices.push(['edited-first', 'Locally edited first'], ['unedited-first', 'Not edited first']);
-  if (Array.isArray(entries) && entries.some(entry => Number.isFinite(Date.parse(entry?.submittedAt || entry?.codeModifiedAt)))) sortChoices.push(['date-newest', 'Newest Track'], ['date-oldest', 'Oldest Track']);
-  const sortField = selectField('Sort', sortChoices);
+  const baseSortChoices = [['recommended', 'Recommended'], ['name', 'Name A-Z'], ['author', 'Author A-Z']];
+  const sortField = selectField('Sort', baseSortChoices);
   sortField.count.remove();
+  let sortCapabilityKey = '';
   const curatedLabel = make('label', 'sq-extra-check');
   const curated = make('input');
   curated.type = 'checkbox';
@@ -335,6 +330,30 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   function filterCount(field, value) {
     field.count.textContent = value === null ? '' : typeof value === 'number' ? value.toLocaleString() : value;
     field.count.hidden = value === null;
+  }
+
+  function syncSortChoices(all) {
+    const choices = [...baseSortChoices];
+    if (all.some(entry => Number.isSafeInteger(entry.sizeBytes) && entry.sizeBytes >= 0)) choices.push(['size-largest', 'Largest track'], ['size-smallest', 'Smallest track']);
+    if (all.some(entry => Number.isSafeInteger(entry.sourceCopies) && entry.sourceCopies >= 0 || Number.isSafeInteger(entry.sourcePlays) && entry.sourcePlays >= 0)) choices.push(['plays', 'Most plays']);
+    if (all.some(entry => forumActivity(entry) !== null)) choices.push(['forum', 'Forum activity']);
+    if (typeof getLocalRating === 'function') choices.push(['my-rating', 'My ratings']);
+    choices.push(['edited-first', 'Locally edited first'], ['unedited-first', 'Not edited first']);
+    if (all.some(entry => Number.isFinite(Date.parse(entry.submittedAt || entry.codeModifiedAt)))) choices.push(['date-newest', 'Newest Track'], ['date-oldest', 'Oldest Track']);
+
+    const capabilityKey = choices.map(([value]) => value).join('|');
+    if (capabilityKey === sortCapabilityKey) return;
+
+    const selected = choices.some(([value]) => value === state.sort) ? state.sort : 'recommended';
+    sortField.select.replaceChildren();
+    for (const [value, label] of choices) {
+      const option = make('option', '', label);
+      option.value = value;
+      sortField.select.append(option);
+    }
+    sortField.select.value = selected;
+    state.sort = selected;
+    sortCapabilityKey = capabilityKey;
   }
 
   function showStatus(message, error = false) {
@@ -803,6 +822,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   function render() {
     if (destroyed) return;
     const all = currentEntries();
+    syncSortChoices(all);
     const sourceCounts = new Map(), difficultyCounts = new Map();
     for (const entry of all) if (text(entry.source)) sourceCounts.set(entry.source, (sourceCounts.get(entry.source) || 0) + 1);
     for (const entry of all) { const level = difficulty(entry); if (level !== null) difficultyCounts.set(String(level), (difficultyCounts.get(String(level)) || 0) + 1); }

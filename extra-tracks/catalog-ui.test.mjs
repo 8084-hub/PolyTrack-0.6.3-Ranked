@@ -513,6 +513,37 @@ test('size sorting is omitted when code byte sizes are unavailable', () => {
   api.destroy();
 });
 
+test('refresh updates data-dependent sort choices and falls back when selected data disappears', () => {
+  const entries = [
+    { id: 'track-a', name: 'Alpha', author: 'Tester' },
+    { id: 'track-b', name: 'Bravo', author: 'Tester' }
+  ];
+  const { root, api } = fixture(entries);
+  api.open();
+  const sort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  assert.doesNotMatch(sort.textContent, /Largest track|Most plays|Forum activity|Newest Track/);
+
+  entries[0].sizeBytes = 30;
+  entries[1].sizeBytes = 10;
+  entries[0].sourcePlays = 8;
+  entries[0].sourceUpvotes = 2;
+  entries[0].submittedAt = '2026-10-18T12:00:00Z';
+  api.refresh();
+  assert.match(sort.textContent, /Largest track/);
+  assert.match(sort.textContent, /Most plays/);
+  assert.match(sort.textContent, /Forum activity/);
+  assert.match(sort.textContent, /Newest Track/);
+
+  sort.value = 'size-largest'; sort.dispatch('change');
+  assert.deepEqual(cls(root, 'sq-extra-card').map(card => tag(card, 'h3')[0].textContent), ['Alpha', 'Bravo']);
+  entries[0].sizeBytes = undefined;
+  entries[1].sizeBytes = undefined;
+  api.refresh();
+  assert.doesNotMatch(sort.textContent, /Largest track|Smallest track/);
+  assert.equal(sort.value, 'recommended', 'a removed sort capability does not leave a stale selected sort');
+  api.destroy();
+});
+
 test('forum activity stays distinct from plays and missing signals sort last', () => {
   const entries = [
     entry(1, { name: 'Unrated', sourcePlays: null }),

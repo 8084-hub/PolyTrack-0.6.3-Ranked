@@ -48,10 +48,14 @@ test('compact snapshot panel keeps age and countdown visible across resolutions'
   }finally{await browser.close();}
 });
 
-test('native footer reserves portrait rows before filters arrive',()=>{
+test('native footer reserves portrait rows before filters arrive and leaves page controls to PolyTrack',()=>{
  assert.match(homeCss,/min-height:94px!important/);
  assert.match(homeCss,/grid-template-rows:minmax\(44px,auto\) minmax\(44px,auto\)/);
  assert.match(homeCss,/grid-column:1 \/ -1;grid-row:2/);
+ assert.doesNotMatch(homeCss,/leaderboard-ui:not\(\.sq-event-board\)\s*>\s*\.pages/);
+ const patch=fs.readFileSync(new URL('../polytrack_062_patch.js',import.meta.url),'utf8');
+ assert.doesNotMatch(patch,/\.track-info-ui\s+\.leaderboard-ui\s+\.pages(?:\s|\{)/,
+  'normal PolyTrack pagination is not restyled by the ranked patch');
 });
 
 function bounds(element) {
@@ -161,12 +165,8 @@ test('native track footer, Ranked Find me/filter, and event filters render withi
             containerCenter: (box.left + box.right) / 2, activeColor: getComputedStyle(selected).backgroundColor,
             width: active.width, height: active.height};
         });
-        assert.ok(Math.abs(pageControl.center - (result.boundary.left + result.boundary.right) / 2) < 1,
-          `page strip is centered at ${width}x${height}: ${JSON.stringify(pageControl)}`);
-        assert.equal(pageControl.activeColor, 'rgb(126, 231, 255)',
-          `current page uses the active cyan style at ${width}x${height}`);
-        assert.ok(pageControl.width >= 44 && pageControl.height >= 44,
-          `page control remains touch-sized at ${width}x${height}`);
+        assert.ok(pageControl.width > 0 && pageControl.height > 0,
+          `native page selector remains visible at ${width}x${height}`);
         const rows = await page.locator('.track-info-ui .button-wrapper > button').evaluateAll(nodes => nodes.map(node => ({
           label: node.getAttribute('aria-label') || node.textContent.trim(), top: node.getBoundingClientRect().top,
           left: node.getBoundingClientRect().left, right: node.getBoundingClientRect().right,
