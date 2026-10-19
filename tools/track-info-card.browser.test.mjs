@@ -81,7 +81,7 @@ test('responsive card harness uses production CSS, font, markup and placement', 
   assert.match(homeCss, /font-size:\s*1\.05em\s*!important/);
 });
 
-test('production card avoids native footer and scrollbar with no clipped content', {
+test('production snapshot card sits at the board bottom-left without covering controls or rows', {
   skip: !chromium && 'Set PLAYWRIGHT_MODULE to run the offline browser check.', timeout: 65000,
 }, async () => {
   const browser = await chromium.launch({ headless: true, timeout: 15000,
@@ -137,7 +137,8 @@ test('production card avoids native footer and scrollbar with no clipped content
               card: cardRect, footer: rect(footer), pages: rect(pages), controls: [...footer.children].map(rect),
               viewport: {left:0,top:0,right:innerWidth,bottom:innerHeight}, nativeScale, uiScale: getComputedStyle(card).getPropertyValue('--sq-ui-scale').trim(),
               overlapsFooter: intersects(cardRect, rect(footer)), overlapsPages: intersects(cardRect, rect(pages)), overlapsScrollbar: intersects(cardRect, scrollbar),
-              outsideScroll: card.parentElement === document.body && !scroll.contains(card), stableBottom: bottom === card.style.bottom,
+              belowFooter: card.parentElement === board && footer.nextElementSibling === card && cardRect.top >= rect(footer).bottom - 1,
+              outsideScroll: card.parentElement === board && !scroll.contains(card), stableBottom: bottom === card.style.bottom,
               position: style.position, fontFamily: style.fontFamily, fontSize: parseFloat(style.fontSize), titleRatio: parseFloat(title.fontSize) / parseFloat(style.fontSize), detailRatio: parseFloat(details.fontSize) / parseFloat(style.fontSize),
               titleDirection: title.flexDirection, layout: card.dataset.layout || '', background: style.backgroundColor,
               overflow: [card, footer, ...footer.children, document.documentElement].map(node => ({className:node.className, clientWidth:node.clientWidth, scrollWidth:node.scrollWidth, clientHeight:node.clientHeight, scrollHeight:node.scrollHeight})),
@@ -152,8 +153,9 @@ test('production card avoids native footer and scrollbar with no clipped content
           assertInside(result.card, result.viewport, `${label} card`);
           assertInside(result.footer, result.viewport, `${label} footer`);
           assertInside(result.pages, result.viewport, `${label} pagination`);
-          assert.equal(result.position, 'fixed', label);
-          assert.equal(result.outsideScroll, true, `${label}: body-owned sidecar`);
+          assert.equal(result.position, 'relative', label);
+          assert.equal(result.outsideScroll, true, `${label}: card remains outside the racer scroll area`);
+          assert.equal(result.belowFooter, true, `${label}: card follows the native footer at bottom-left`);
           assert.equal(result.overlapsFooter, false, `${label}: native footer collision`);
           assert.equal(result.overlapsPages, false, `${label}: pagination collision`);
           assert.equal(result.overlapsScrollbar, false, `${label}: scrollbar collision`);

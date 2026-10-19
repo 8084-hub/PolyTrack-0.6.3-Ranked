@@ -8974,8 +8974,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
 
   function positionTrackFreshnessBanner(banner,leaderboard){
-    const list=leaderboard.querySelector(':scope > .container');
-    if(list&&banner.parentElement!==leaderboard)leaderboard.insertBefore(banner,list);
+    const footer=leaderboard.querySelector(':scope > .button-wrapper');
+    if(footer&&footer.nextElementSibling!==banner)footer.after(banner);
     banner.style.removeProperty('width');
     banner.style.removeProperty('bottom');
     banner.style.removeProperty('--sq-track-data-room');
@@ -8988,8 +8988,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(!nativeLeaderboard||nativeLeaderboard.classList.contains('sq-event-board')||!isElementVisible(nativeLeaderboard)||!currentTrackLoadState||eventUi?.isEntered(currentTrackLoadState.trackId)||currentTrackLoadState.trackId===nativeWeeklySelection?.trackId||kodubTrackHistory.has(currentTrackLoadState.trackId)){if(banner)banner.remove();return;}
     if(!banner){banner=document.createElement('div');banner.id='polytrackTrackFreshness';banner.className='polytrack-track-freshness';}
     if(banner.parentElement!==nativeLeaderboard){
-      const list=nativeLeaderboard.querySelector(':scope > .container');
-      if(list)nativeLeaderboard.insertBefore(banner,list);
+      const footer=nativeLeaderboard.querySelector(':scope > .button-wrapper');
+      if(footer)footer.after(banner);
       else nativeLeaderboard.appendChild(banner);
     }
     const state=currentTrackLoadState;

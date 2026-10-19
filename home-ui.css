@@ -158,7 +158,7 @@
 #overallFilterPanel .ranked-filter-presets{margin-top:12px;padding:12px 0;border-top:1px solid #6283a9}
 @media(max-width:650px){#overallFilterPanel .ranked-filter-content{left:0!important;right:auto;transform:none!important;width:min(92vw,840px)!important;padding:16px!important}}
 
-/* Keep track freshness outside the native leaderboard and its scroll area. */
+/* Fallback placement when the native footer has not mounted yet. */
 html body #polytrackTrackFreshness.polytrack-track-freshness {
   --sq-track-data-bg: #253a75;
   position: fixed !important;
@@ -184,15 +184,18 @@ html body #polytrackTrackFreshness.polytrack-track-freshness {
   clip-path: none !important;
   box-shadow: 0 0.4em 1.2em rgba(0, 0, 0, .3) !important;
 }
-/* Keep snapshot context in the board flow so it can never cover racer rows. */
+/* Snapshot status sits below the native controls at the board's bottom-left. */
 html body .track-info-ui .leaderboard-ui #polytrackTrackFreshness.polytrack-track-freshness {
   position: relative !important;
   inset: auto !important;
   z-index: 1;
-  width: 100% !important;
+  width: fit-content !important;
   max-width: 100% !important;
   max-height: none !important;
-  margin: 6px 0 !important;
+  align-self: flex-start !important;
+  margin: 4px 0 0 !important;
+  padding: 0.35em 0.55em !important;
+  gap: 0.15em !important;
   overflow: visible !important;
   pointer-events: none;
   font-size: max(15px, calc(16px * var(--sq-ui-scale, 1))) !important;
