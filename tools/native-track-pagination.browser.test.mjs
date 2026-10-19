@@ -27,12 +27,12 @@ test('native Summer 1 pagination and verified filter work from local snapshots o
   const board=page.locator('.track-info-ui .leaderboard-ui');
   const rows=board.locator('.container button.main');
   await page.waitForFunction(()=>document.querySelectorAll('.track-info-ui .leaderboard-ui .container button.main').length===20,null,{timeout:30000});
-  const freshness=board.locator('#polytrackTrackFreshness');
-  assert.equal(await freshness.evaluate(element=>element.parentElement===element.closest('.leaderboard-ui')),
-   true,'freshness context participates in the native board layout');
+  const freshness=page.locator('#polytrackTrackFreshness');
+  assert.equal(await freshness.evaluate(element=>element.parentElement===document.body),
+   true,'freshness context is anchored outside the scaled native board');
   const overlaps=await freshness.evaluate(element=>{
    const a=element.getBoundingClientRect();
-   return [...element.closest('.leaderboard-ui').querySelectorAll(':scope > .container button.main')].some(row=>{
+   return [...document.querySelectorAll('.track-info-ui .leaderboard-ui > .container button.main')].some(row=>{
     const b=row.getBoundingClientRect();return a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;
    });
   });

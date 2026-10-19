@@ -31,10 +31,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=161',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=165',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='161';
+  const extraCatalogRevision='165';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -63,7 +63,7 @@
     return kodubHistoryLoad;
   }
   async function nativeWeeklyFeed(){
-    kodubAdapter=await import(new URL('./kodub-weekly.mjs?v=161',eventsModuleUrl).href);
+    kodubAdapter=await import(new URL('./kodub-weekly.mjs?v=165',eventsModuleUrl).href);
     await ensureEventUi();
     const response=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
     nativeWeeklySelection=response.current;
@@ -90,7 +90,7 @@
     if(localWeeklyCatalogRequest||Date.now()<localWeeklyCatalogUntil)return localWeeklyCatalogRequest;
     localWeeklyCatalogUntil=Date.now()+60000;
     const request=(async()=>{
-      kodubAdapter ||= await import(new URL('./kodub-weekly.mjs?v=161',eventsModuleUrl).href);
+      kodubAdapter ||= await import(new URL('./kodub-weekly.mjs?v=165',eventsModuleUrl).href);
       const feed=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
       const current=feed.current,end=Date.parse(current?.endTime||'');
       localWeeklyCatalogUntil=current&&end>Date.now()?end:Date.now()+60000;
@@ -197,7 +197,7 @@
         if(!response.headers.get('content-type')?.includes('application/json'))throw Error('Event service unavailable');
         if(!response.ok){const error=Error('Event service unavailable');error.serviceResponse=true;throw error;}
         let payload=await response.json();
-        if(payload?.pagination){const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=161');const saved=await readPublicSnapshotBackup(id==='totals'?'event-totals':'event',id);payload=await completeRankedSnapshot(payload,{saved,kind:id==='totals'?'event-totals':'event',trackId:id,endpoint:rankedBrokerUrl()});}
+        if(payload?.pagination){const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=165');const saved=await readPublicSnapshotBackup(id==='totals'?'event-totals':'event',id);payload=await completeRankedSnapshot(payload,{saved,kind:id==='totals'?'event-totals':'event',trackId:id,endpoint:rankedBrokerUrl()});}
         return {...payload,_eventLiveCheckedAt:Date.now()};
         }
       }catch(error){eventCloudRetryAt.set(path,Date.now()+5*60000);log('warn','[EVENT403] Event refresh failed; retaining saved standings',String(error?.message||error));}
@@ -527,10 +527,18 @@
     const label=document.createElement('p');label.textContent='Extra Tracks';title.append(label);
     const image=document.createElement('img');image.className='thumbnail';image.src='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="16 11 110 116"><g stroke-linejoin="round"><rect x="55" y="18" width="64" height="72" fill="#234468" stroke="#6db9e7" stroke-width="2"/><path d="M68 74V32h36v26H68" fill="none" stroke="#8edbff" stroke-width="7"/><rect x="39" y="34" width="64" height="72" fill="#1d365e" stroke="#8edbff" stroke-width="2"/><path d="M52 90V48h36v26H52" fill="none" stroke="#b7e7ff" stroke-width="7"/><rect x="23" y="50" width="64" height="72" fill="#112052" stroke="#b7e7ff" stroke-width="2"/><path d="M38 112V64h36v24H38" fill="none" stroke="#fff" stroke-width="9" stroke-linejoin="miter"/><rect x="33.5" y="102" width="9" height="10" fill="#43d978" stroke="none"/><rect x="38" y="83.5" width="10" height="9" fill="#e85353" stroke="none"/><rect x="57" y="59.5" width="5" height="9" fill="#f1c95c" stroke="none"/></g></svg>');image.alt='';image.decoding='async';
     const count=document.createElement('div');count.className='record';count.textContent='Explore tracks';
+    let idleLabel='Explore tracks',resetLabelTimer;
     button.append(title,image,count);card.append(button);
-    button.addEventListener('click',()=>{button.disabled=true;button.setAttribute('aria-busy','true');count.textContent='Loading tracks...';void openExtraTracks().catch(error=>{count.textContent=error.message||'Extra Tracks unavailable';setTimeout(()=>{count.textContent='Explore tracks';},4000);}).finally(()=>{button.disabled=false;button.removeAttribute('aria-busy');});});
+    button.addEventListener('click',()=>{
+      clearTimeout(resetLabelTimer);
+      button.disabled=true;button.setAttribute('aria-busy','true');count.textContent='Loading tracks...';
+      void openExtraTracks().then(()=>{count.textContent=idleLabel;}).catch(error=>{
+        count.textContent=error.message||'Extra Tracks unavailable';
+        resetLabelTimer=setTimeout(()=>{count.textContent=idleLabel;},4000);
+      }).finally(()=>{button.disabled=false;button.removeAttribute('aria-busy');});
+    });
     wrapper.prepend(card);
-    void loadExtraTracksCatalog().then(entries=>{count.textContent=`${entries.length} tracks`;}).catch(()=>{});
+    void loadExtraTracksCatalog().then(entries=>{idleLabel=`${entries.length} tracks`;if(!button.disabled)count.textContent=idleLabel;}).catch(()=>{});
   }
 
   function __pt062WebpackRequire(){
@@ -1614,8 +1622,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   async function openDeveloperInformation(practiceOnly=false,returnFocus=document.activeElement){
     await initializePracticeHistory();
-    const module=await import('./tools/developer-diagnostics.mjs?v=161');
-    const {collectLocalDiagnostics}=await import('./tools/local-diagnostics.mjs?v=161');
+    const module=await import('./tools/developer-diagnostics.mjs?v=165');
+    const {collectLocalDiagnostics}=await import('./tools/local-diagnostics.mjs?v=165');
     const localData=await collectLocalDiagnostics({storage:localStorage,hashToken:sha256Hex,localRows:readLocalRaceRows(),trackInfo,practiceRows:id=>practiceHistory?.list(id)||[],profileInfo:id=>overallEntriesCache.find(row=>cleanUserId(row.userId||row.accountId)===id)||{name:getLastKnownName(id)},activeId:activeRankedAccountId()});
     module.openDiagnostics({practiceOnly,returnFocus,report:includePublicId=>{
       const account=activeRankedAccountId(),entry=overallEntriesCache.find(row=>cleanUserId(row.userId||row.accountId)===account);
@@ -1649,12 +1657,12 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function initializePracticeHistory(){
     if(practiceInitPromise)return practiceInitPromise;
     practiceInitPromise=(async()=>{
-      const module=await import('./tools/practice-history.mjs?v=161');
+      const module=await import('./tools/practice-history.mjs?v=165');
       let storage;try{storage=window.localStorage;}catch{}
       practiceHistory=module.createPracticeHistory({storage});practiceAdviceFor=module.practiceAdvice;
-      const insightsModule=await import('./tools/local-insights.mjs?v=161');
-      localInsights=insightsModule.createLocalInsights({storage,revision:161});
-      const profileModule=await import('./tools/practice-profile.mjs?v=161');renderPracticeProfile=profileModule.renderPracticeProfile;installPracticeProfileControls=profileModule.installPracticeProfileControls;
+      const insightsModule=await import('./tools/local-insights.mjs?v=165');
+      localInsights=insightsModule.createLocalInsights({storage,revision:165});
+      const profileModule=await import('./tools/practice-profile.mjs?v=165');renderPracticeProfile=profileModule.renderPracticeProfile;installPracticeProfileControls=profileModule.installPracticeProfileControls;
       document.addEventListener('toggle',event=>{if(event.target.matches?.('.profile-guide')&&event.target.open)localInsights.action('planner-open');},true);
       window.addEventListener('error',()=>localInsights.action('runtime-error'));
       window.addEventListener('unhandledrejection',()=>localInsights.action('unhandled-rejection'));
@@ -1662,7 +1670,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible')localInsights.flush(true);});
       const account=activeRankedAccountId(),own=overallEntriesCache.find(row=>cleanUserId(row.userId||row.accountId)===account);
       practiceHistory.observeCoverage(account,Math.max(currentPlaytimeMs(),Number(own?.totalPlaytimeMs||0)));
-      const native=await import('./tools/practice-native.mjs?v=161');
+      const native=await import('./tools/practice-native.mjs?v=165');
       for(let attempt=0;attempt<10;attempt++){
         const require=__pt062WebpackRequire();
         if(require){
@@ -2991,7 +2999,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=161',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=165',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -5318,7 +5326,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=161',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=165',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -5338,8 +5346,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=161',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=161',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=161',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=165',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=165',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=165',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -7073,8 +7081,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   let snapshotTrackStatistics = {};
   let metadataRecovery=null;
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=161').then(async module=>{
-      const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=161');
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=165').then(async module=>{
+      const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=165');
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]')),bootstrap:true,optimizedIndex:true,onRead:metric=>noteDeveloperEvent('snapshot',String(metric.kind).toUpperCase(),metric.durationMs,metric.source==='failed'?0:200),onGenerationChange:()=>{
         metadataRecovery.reset();
         snapshotTrackStatistics={};snapshotCosmeticEntries={};snapshotRacerDirectoryEntries={};publicSnapshotCapturedAt=0;
@@ -7134,7 +7142,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       if(!contentType.includes('application/json'))throw new Error('Ranked edge was replaced by a network filter');
       let payload=await response.json();
       if(payload?.pagination){
-        const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=161');
+        const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=165');
         payload=await completeRankedSnapshot(payload,{saved,kind,trackId,endpoint});
       }
       clearRankedEdgeFailure();
@@ -8974,24 +8982,38 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
 
   function positionTrackFreshnessBanner(banner,leaderboard){
-    const footer=leaderboard.querySelector(':scope > .button-wrapper');
-    if(footer&&footer.nextElementSibling!==banner)footer.after(banner);
+    const menu=leaderboard?.closest('.track-info-ui');
+    const previous=positionTrackFreshnessBanner.menu;
+    if(previous&&previous!==menu)previous.style.removeProperty('--sq-track-status-reserve');
+    positionTrackFreshnessBanner.menu=menu;
+    if(!banner||!menu)return;
+    if(banner.parentElement!==document.body)document.body.appendChild(banner);
     banner.style.removeProperty('width');
     banner.style.removeProperty('bottom');
     banner.style.removeProperty('--sq-track-data-room');
     banner.style.removeProperty('--sq-track-data-width');
     delete banner.dataset.layout;
+    const card=banner.getBoundingClientRect(),bounds=menu.getBoundingClientRect();
+    const scale=menu.offsetHeight>0?bounds.height/menu.offsetHeight:1;
+    const crossesMenu=card.right>bounds.left&&card.left<bounds.right;
+    const reserve=crossesMenu?Math.ceil((window.innerHeight-card.top+8)/Math.max(.01,scale)):0;
+    const space=reserve+'px';
+    if(menu.style.getPropertyValue('--sq-track-status-reserve')!==space)menu.style.setProperty('--sq-track-status-reserve',space);
+    if(!positionTrackFreshnessBanner.resizeHandler){
+      positionTrackFreshnessBanner.resizeHandler=()=>{
+        const current=document.getElementById('polytrackTrackFreshness');
+        const board=positionTrackFreshnessBanner.menu?.querySelector('.leaderboard-ui');
+        if(current&&board)positionTrackFreshnessBanner(current,board);
+      };
+      window.addEventListener('resize',positionTrackFreshnessBanner.resizeHandler);
+    }
   }
   function updateTrackFreshnessBanner(){
     const nativeLeaderboard=document.querySelector('.leaderboard-ui');
     let banner=document.getElementById('polytrackTrackFreshness');
-    if(!nativeLeaderboard||nativeLeaderboard.classList.contains('sq-event-board')||!isElementVisible(nativeLeaderboard)||!currentTrackLoadState||eventUi?.isEntered(currentTrackLoadState.trackId)||currentTrackLoadState.trackId===nativeWeeklySelection?.trackId||kodubTrackHistory.has(currentTrackLoadState.trackId)){if(banner)banner.remove();return;}
+    if(!nativeLeaderboard||nativeLeaderboard.classList.contains('sq-event-board')||!isElementVisible(nativeLeaderboard)||!currentTrackLoadState||eventUi?.isEntered(currentTrackLoadState.trackId)||currentTrackLoadState.trackId===nativeWeeklySelection?.trackId||kodubTrackHistory.has(currentTrackLoadState.trackId)){if(banner)banner.remove();positionTrackFreshnessBanner(null,null);return;}
     if(!banner){banner=document.createElement('div');banner.id='polytrackTrackFreshness';banner.className='polytrack-track-freshness';}
-    if(banner.parentElement!==nativeLeaderboard){
-      const footer=nativeLeaderboard.querySelector(':scope > .button-wrapper');
-      if(footer)footer.after(banner);
-      else nativeLeaderboard.appendChild(banner);
-    }
+    if(banner.parentElement!==document.body)document.body.appendChild(banner);
     const state=currentTrackLoadState;
     banner.className=`polytrack-track-freshness ${state.status==='stale'?'is-stale':state.status==='loading'?'is-loading':''}`;
     const cached=readTrackSnapshotCache(state.trackId);
@@ -9171,7 +9193,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=161',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:161,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=165',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:165,document,
       onCompatibilityChange:state=>{compatibilityOnlineAllowed=state.onlineAllowed!==false;},
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
@@ -9224,7 +9246,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       if(event.target.closest?.('[data-open-practice]')){const section=document.querySelector('#overallProfileContent .polytrack-practice-profile');if(section){section.open=true;section.querySelector('summary')?.focus({preventScroll:true});section.scrollIntoView({block:'nearest'});}return;}
       const clear=event.target.closest?.('[data-clear-practice-history]');if(!clear)return;
       const account=activeRankedAccountId();
-      void import('./tools/developer-diagnostics.mjs?v=161').then(module=>module.openClearPracticeConfirmation({returnFocus:clear,onConfirm:()=>{if(activeRankedAccountId()!==account)throw Error('Racer changed; nothing cleared');practiceHistory?.clear(account);const section=document.querySelector('#overallProfileContent .polytrack-practice-profile');if(section)section.outerHTML=renderPracticeProfile({rows:[],coverage:practiceHistory?.coverage(account)});void refreshOpenProfilePlanner();}})).catch(()=>{if(clear.isConnected)clear.textContent='History controls unavailable - try again';});
+      void import('./tools/developer-diagnostics.mjs?v=165').then(module=>module.openClearPracticeConfirmation({returnFocus:clear,onConfirm:()=>{if(activeRankedAccountId()!==account)throw Error('Racer changed; nothing cleared');practiceHistory?.clear(account);const section=document.querySelector('#overallProfileContent .polytrack-practice-profile');if(section)section.outerHTML=renderPracticeProfile({rows:[],coverage:practiceHistory?.coverage(account)});void refreshOpenProfilePlanner();}})).catch(()=>{if(clear.isConnected)clear.textContent='History controls unavailable - try again';});
     });
     for(const type of ['pointerover','focusin'])document.addEventListener(type,event=>{const info=event.target.closest?.('.planner-explanation');if(info)info.open=true;});
     for(const type of ['pointerout','focusout'])document.addEventListener(type,event=>{const info=event.target.closest?.('.planner-explanation');if(info&&!info.contains(event.relatedTarget))info.open=false;});

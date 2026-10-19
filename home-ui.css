@@ -158,7 +158,7 @@
 #overallFilterPanel .ranked-filter-presets{margin-top:12px;padding:12px 0;border-top:1px solid #6283a9}
 @media(max-width:650px){#overallFilterPanel .ranked-filter-content{left:0!important;right:auto;transform:none!important;width:min(92vw,840px)!important;padding:16px!important}}
 
-/* Fallback placement when the native footer has not mounted yet. */
+/* Snapshot context stays anchored to the screen, outside the scaled native UI. */
 html body #polytrackTrackFreshness.polytrack-track-freshness {
   --sq-track-data-bg: #253a75;
   position: fixed !important;
@@ -184,21 +184,14 @@ html body #polytrackTrackFreshness.polytrack-track-freshness {
   clip-path: none !important;
   box-shadow: 0 0.4em 1.2em rgba(0, 0, 0, .3) !important;
 }
-/* Snapshot status sits below the native controls at the board's bottom-left. */
-html body .track-info-ui .leaderboard-ui #polytrackTrackFreshness.polytrack-track-freshness {
-  position: relative !important;
-  inset: auto !important;
-  z-index: 1;
-  width: fit-content !important;
-  max-width: 100% !important;
-  max-height: none !important;
-  align-self: flex-start !important;
-  margin: 4px 0 0 !important;
-  padding: 0.35em 0.55em !important;
-  gap: 0.15em !important;
-  overflow: visible !important;
-  pointer-events: none;
-  font-size: max(15px, calc(16px * var(--sq-ui-scale, 1))) !important;
+html body .menu-ui > .track-info-ui:not(.hidden):not([hidden]) {
+  box-sizing: border-box;
+  padding-bottom: var(--sq-track-status-reserve, 0px);
+}
+@media (max-width: 600px) and (orientation: portrait) {
+  html body .menu-ui > .track-info-ui:not(.hidden):not([hidden]) {
+    padding-bottom: max(54px, var(--sq-track-status-reserve, 0px)) !important;
+  }
 }
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-source="snapshot"],
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-source="mixed"],
@@ -832,6 +825,36 @@ html.sq-reduced-effects #overallLeaderboardPanel .overall-entry::after {width:10
   .track-info-ui .leaderboard-ui:not(.sq-event-board) > .button-wrapper > [data-personal-filter-button] { grid-column: 2; grid-row: 1; }
   .track-info-ui .leaderboard-ui:not(.sq-event-board) > .button-wrapper > .icon-button.first { grid-column: 3; grid-row: 1; }
   .track-info-ui .leaderboard-ui:not(.sq-event-board) > .button-wrapper > .only-verified { grid-column:1 / -1;grid-row:2; }
+}
+
+/* Keep a complete racer row available on short portrait screens. */
+@media (max-width: 600px) and (max-height: 650px) and (orientation: portrait) {
+  .track-info-ui .leaderboard-ui:not(.sq-event-board) > .button-wrapper {
+    grid-template-rows: 44px 44px !important;
+    min-height: 96px !important;
+    padding: 0 !important;
+  }
+  .track-info-ui .leaderboard-ui:not(.sq-event-board) > .button-wrapper > button {
+    min-height: 44px !important;
+    height: 44px !important;
+    padding-block: 4px !important;
+  }
+  html body #polytrackTrackFreshness.polytrack-track-freshness {
+    font-size: 14px !important;
+    padding-block: 0.2em !important;
+    gap: 0.1em !important;
+  }
+  html body #polytrackTrackFreshness > strong {
+    flex-direction: row !important;
+  }
+  html body #polytrackTrackFreshness > .track-data-update {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    clip-path: inset(50%) !important;
+    white-space: nowrap;
+  }
 }
 
 @media(max-width:1000px){#overallProfilePopup .planner-tooltip{position:fixed;left:50%;right:auto;top:50%;transform:translate(-50%,-50%);max-height:calc(100dvh - 70px);overflow:auto}}

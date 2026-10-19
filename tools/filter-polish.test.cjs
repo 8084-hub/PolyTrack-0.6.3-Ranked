@@ -4,6 +4,52 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../polytrack_062_patch.js'), 'utf8');
 
+test('Extra Tracks tile restores its label after loading and cancels an old error reset on retry', async () => {
+  const makeNode = () => ({
+    children: [], attributes: new Map(), listeners: new Map(),
+    append(...nodes) { this.children.push(...nodes); },
+    prepend(node) { this.children.unshift(node); },
+    querySelector() { return null; },
+    setAttribute(key, value) { this.attributes.set(key, value); },
+    removeAttribute(key) { this.attributes.delete(key); },
+    addEventListener(type, handler) { this.listeners.set(type, handler); }
+  });
+  const wrapper = makeNode(), timers = new Map();
+  let resolveOpen, rejectOpen, timerId = 0;
+  const context = vm.createContext({
+    document: { createElement: makeNode, querySelectorAll: () => [{querySelector: () => wrapper}] },
+    isElementVisible: () => true,
+    loadExtraTracksCatalog: async () => [{}, {}, {}],
+    openExtraTracks: () => new Promise((resolve, reject) => { resolveOpen = resolve; rejectOpen = reject; }),
+    setTimeout: callback => { timers.set(++timerId, callback); return timerId; },
+    clearTimeout: id => timers.delete(id)
+  });
+  const start = source.indexOf('  function ensureExtraTracksEntryContents(');
+  const end = source.indexOf('  function __pt062WebpackRequire(', start);
+  vm.runInContext(source.slice(start, end), context);
+  context.ensureExtraTracksEntryContents();
+  const button = wrapper.children[0].children[0], label = button.children[2];
+  const settle = () => new Promise(setImmediate);
+  await settle();
+  assert.equal(label.textContent, '3 tracks');
+  button.listeners.get('click')();
+  assert.equal(label.textContent, 'Loading tracks...');
+  assert.equal(button.attributes.get('aria-busy'), 'true');
+  resolveOpen(); await settle();
+  assert.equal(label.textContent, '3 tracks');
+  assert.equal(button.disabled, false);
+  assert.equal(button.attributes.has('aria-busy'), false);
+  button.listeners.get('click')();
+  rejectOpen(Error('Try again')); await settle();
+  assert.equal(label.textContent, 'Try again');
+  assert.equal(timers.size, 1);
+  button.listeners.get('click')();
+  assert.equal(timers.size, 0, 'the previous error cannot overwrite the pending retry');
+  assert.equal(label.textContent, 'Loading tracks...');
+  resolveOpen(); await settle();
+  assert.equal(label.textContent, '3 tracks');
+});
+
 test('category movements survive repeat views and reset only with changed standings', () => {
   const start = source.indexOf('  function annotateCategoryRanks(');
   const end = source.indexOf('  function sortedOverallEntries(', start);

@@ -55,7 +55,7 @@ const fixture = `<!doctype html><html><head><meta name="viewport" content="width
 <div class="leaderboard-ui"><h2>Leaderboard</h2><h3>Version 0.6</h3><div class="total-players fade-in">84 Players</div>
 <div class="container">${Array.from({length: 20}, (_, index) => `<button class="button main"><div class="image-container"></div><div class="left"><p class="position">${index + 1}<span> / 84</span></p><p>00:28.123</p></div><div class="right"><div class="name-container"><p class="name">Racer ${index + 1}</p></div><p class="verified-state verified">Verified</p></div></button>`).join('')}</div>
 <div class="pages">${Array.from({length: 5}, (_, index) => `<button class="button page${index ? '' : ' selected'}">${index + 1}</button>`).join('')}</div>
-<div class="button-wrapper"><button class="button back"><img class="button-icon" src="${asset('back')}"> Back</button><button class="button personal-filter-toggle" data-personal-filter-button>Filters-Inactive</button><button class="button icon-button first" aria-label="Find me"><img class="button-icon" src="${asset('pin')}"></button><button class="button only-verified">Only verified<img src="${asset('state_verified')}"></button></div></div>
+<div class="button-wrapper"><button class="button back"><img class="button-icon" src="${asset('back')}"> Back</button><button class="button personal-filter-toggle" data-personal-filter-button>Filters</button><button class="button icon-button first" aria-label="Find me"><img class="button-icon" src="${asset('pin')}"></button><button class="button only-verified">Only verified<img src="${asset('state_verified')}"></button></div></div>
 <div class="side-panel"><h2>01 - Summer</h2><div class="thumbnail"></div><p class="track-author">Kodub</p><p class="personal-best-title">Personal best</p><div class="personal-best"><p>00:28.123</p></div><p class="opponents-title">Opponents</p><div class="opponents-container no-opponents">No opponents selected</div><button class="button watch">Watch</button><button class="button play">Play</button></div>
 </div></div></div><div id="polytrackTrackFreshness" class="polytrack-track-freshness" data-source="snapshot"></div></body></html>`;
 
@@ -81,7 +81,7 @@ test('responsive card harness uses production CSS, font, markup and placement', 
   assert.match(homeCss, /font-size:\s*1\.05em\s*!important/);
 });
 
-test('production snapshot card sits at the board bottom-left without covering controls or rows', {
+test('production snapshot card stays at the screen bottom-left without covering native controls or rows', {
   skip: !chromium && 'Set PLAYWRIGHT_MODULE to run the offline browser check.', timeout: 65000,
 }, async () => {
   const browser = await chromium.launch({ headless: true, timeout: 15000,
@@ -137,8 +137,9 @@ test('production snapshot card sits at the board bottom-left without covering co
               card: cardRect, footer: rect(footer), pages: rect(pages), controls: [...footer.children].map(rect),
               viewport: {left:0,top:0,right:innerWidth,bottom:innerHeight}, nativeScale, uiScale: getComputedStyle(card).getPropertyValue('--sq-ui-scale').trim(),
               overlapsFooter: intersects(cardRect, rect(footer)), overlapsPages: intersects(cardRect, rect(pages)), overlapsScrollbar: intersects(cardRect, scrollbar),
-              belowFooter: card.parentElement === board && footer.nextElementSibling === card && cardRect.top >= rect(footer).bottom - 1,
-              outsideScroll: card.parentElement === board && !scroll.contains(card), stableBottom: bottom === card.style.bottom,
+              screenCorner: cardRect.left <= 32 && innerHeight - cardRect.bottom <= 32,
+              outsideScroll: card.parentElement === document.body && !scroll.contains(card), stableBottom: bottom === card.style.bottom,
+              completeRacerVisible: rect(scroll).height >= rect(scroll.querySelector('button.main')).height - 1,
               position: style.position, fontFamily: style.fontFamily, fontSize: parseFloat(style.fontSize), titleRatio: parseFloat(title.fontSize) / parseFloat(style.fontSize), detailRatio: parseFloat(details.fontSize) / parseFloat(style.fontSize),
               titleDirection: title.flexDirection, layout: card.dataset.layout || '', background: style.backgroundColor,
               overflow: [card, footer, ...footer.children, document.documentElement].map(node => ({className:node.className, clientWidth:node.clientWidth, scrollWidth:node.scrollWidth, clientHeight:node.clientHeight, scrollHeight:node.scrollHeight})),
@@ -153,20 +154,27 @@ test('production snapshot card sits at the board bottom-left without covering co
           assertInside(result.card, result.viewport, `${label} card`);
           assertInside(result.footer, result.viewport, `${label} footer`);
           assertInside(result.pages, result.viewport, `${label} pagination`);
-          assert.equal(result.position, 'relative', label);
+          assert.equal(result.position, 'fixed', label);
           assert.equal(result.outsideScroll, true, `${label}: card remains outside the racer scroll area`);
-          assert.equal(result.belowFooter, true, `${label}: card follows the native footer at bottom-left`);
+          assert.equal(result.screenCorner, true, `${label}: card is anchored to the screen bottom-left`);
           assert.equal(result.overlapsFooter, false, `${label}: native footer collision`);
           assert.equal(result.overlapsPages, false, `${label}: pagination collision`);
           assert.equal(result.overlapsScrollbar, false, `${label}: scrollbar collision`);
+          assert.equal(result.completeRacerVisible, true, `${label}: footer leaves room for a complete racer row`);
           assert.equal(result.stableBottom, true, `${label}: repeated placement is stable`);
           assert.equal(result.uiScale, String(scale), `${label}: browser zoom is not UI scale`);
           assert.match(result.fontFamily, /ForcedSquare/, label);
-          assert.ok(result.fontSize >= (viewport.height <= 320 ? 6 : 15), `${label}: font follows native scale only at extreme zoom`);
-          assert.ok(Math.abs(result.titleRatio - 1.2) < 0.01 && Math.abs(result.detailRatio - 1.05) < 0.01, `${label}: proportional text`);
-          if (viewport.width === 390 || result.layout === 'vertical') assert.equal(result.titleDirection, 'column', `${label}: compact title stacks`);
+          const shortPortrait = viewport.width <= 600 && viewport.height <= 650 && viewport.height > viewport.width;
+          const compact = viewport.width <= 600 || viewport.height <= 500;
+          assert.ok(result.fontSize >= (viewport.height <= 320 ? 6 : shortPortrait ? 14 : compact ? 12 : 15), `${label}: readable text at the native scale`);
+          assert.ok(Math.abs(result.titleRatio - (compact ? 1.05 : 1.2)) < 0.01 && Math.abs(result.detailRatio - (compact ? 1 : 1.05)) < 0.01, `${label}: proportional text`);
+          if (shortPortrait) assert.equal(result.titleDirection, 'row', `${label}: compact title shares a row`);
+          else if (viewport.width === 390 || result.layout === 'vertical') assert.equal(result.titleDirection, 'column', `${label}: title stacks when space allows`);
           assert.notEqual(result.background, 'rgba(0, 0, 0, 0)', label);
-          for (const line of result.lines) assertInside(line, result.card, `${label} status line`);
+          for (const [index, line] of result.lines.entries()) {
+            if (shortPortrait && index === 2) continue; // Supplementary timestamp stays available to screen readers.
+            assertInside(line, result.card, `${label} status line`);
+          }
           for (const overflow of result.overflow) assert.ok(overflow.scrollWidth <= overflow.clientWidth + 1, `${label}: horizontal overflow ${JSON.stringify(overflow)}`);
           assert.ok(result.overflow[0].scrollHeight <= result.overflow[0].clientHeight + 1, `${label}: card clips status text`);
           for (const control of result.controls) assertInside(control, result.footer, `${label} footer control`);
