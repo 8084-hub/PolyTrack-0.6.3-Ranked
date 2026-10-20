@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { renderPracticeProfile, installPracticeProfileControls } from './practice-profile.mjs';
 
 const row = (overrides = {}) => ({
@@ -72,12 +74,14 @@ test('separates known local/cloud PB evidence from tracked finish history and ne
   assert.doesNotMatch(noProof, /Known PB evidence|Rank /);
 });
 
-test('uses explicit coverage color and explanation for sparse, moderate, and adequate evidence', () => {
+test('keeps coverage explanation accessible in a closed disclosure, not a persistent warning', () => {
   const view = fraction => renderPracticeProfile({ rows: [row()], coverage: { coverageFraction: fraction } });
-  assert.match(view(0.05), /pp-coverage-low[^>]*>[\s\S]*5% visible-time coverage · limited history[\s\S]*Sparse evidence: less than 10% of visible time is covered/);
-  assert.match(view(0.3), /pp-coverage-moderate/);
-  assert.match(view(0.85), /pp-coverage-adequate/);
-  assert.match(view(0.05), /Sparse evidence: less than 10% of visible time is covered\. Information is limited\./);
+  assert.match(view(0.05), /<details class="pp-coverage-details"><summary>About history coverage<\/summary>/);
+  assert.match(view(0.05), /5% visible-time coverage\. Less than 10%/);
+  assert.match(view(0.3), /30% visible-time coverage\. Partial evidence/);
+  assert.match(view(0.85), /85% visible-time coverage\. Good evidence/);
+  assert.doesNotMatch(view(0.05), /Sparse evidence|limited history|pp-coverage-low/);
+  assert.doesNotMatch(view(NaN), /pp-coverage-details/);
 });
 
 test('shows PB age only from a PB timestamp, never from snapshot capture age', () => {
@@ -95,7 +99,9 @@ test('shows PB age only from a PB timestamp, never from snapshot capture age', (
 test('provides accessible search, sorting, view controls, and event handler export', () => {
   const html = renderPracticeProfile({ rows: [row()] });
   assert.match(html, /<label>Search tracks/);
-  assert.match(html, /value="improvement"/);
+  assert.match(html, /data-pp-direction/);
+  assert.match(html, /value="asc">Ascending/);
+  assert.match(html, /value="desc">Descending/);
   assert.match(html, /data-pp-view="list"/);
   assert.equal(typeof installPracticeProfileControls, 'function');
   assert.equal(installPracticeProfileControls(null) instanceof Function, true);
@@ -118,8 +124,159 @@ test('baseline PB is never labelled an observed finish and invalid ranks are omi
 
 test('sparse cards keep evidence readable without inventing session measurements',()=>{
  const html=renderPracticeProfile({rows:[row({finishes:0,trackedBestMs:0,observationVersion:1,pausedMs:0,focusedMs:0})],results:[{trackId:'track-a',timeMs:47000,source:'snapshot'}]});
- assert.match(html,/Snapshot PB/);assert.match(html,/Placement not available/);assert.match(html,/No finish recorded yet/);
+ assert.match(html,/Snapshot PB/);assert.match(html,/Placement not available/);assert.match(html,/7 attempts/);
+ assert.doesNotMatch(html,/No finish recorded yet|pp-evidence-tracked|pp-evidence-unavailable/);
  assert.doesNotMatch(html,/pp-session-details|>Paused<|>Stationary</);
+});
+
+test('attempt-only tracks omit empty evidence panels and retain meaningful time and counts', () => {
+  const rows = Array.from({ length: 15 }, (_, i) => row({
+    trackId: 'attempt-' + i, finishes: 0, trackedBestMs: 0, pbs: 0, sincePbMs: 0
+  }));
+  const before = structuredClone(rows);
+  const html = renderPracticeProfile({ rows });
+  assert.equal((html.match(/7 attempts/g) || []).length, 15);
+  assert.equal((html.match(/2m 5s active/g) || []).length, 15);
+  assert.doesNotMatch(html, /pp-results|No finish|Saved PB|Not available|recommend/i);
+  assert.doesNotMatch(html, /value="improvement"/);
+  assert.match(renderPracticeProfile({ rows: [row({ improvedMs: 100 })] }), /value="improvement"/);
+  assert.deepEqual(rows, before);
+});
+
+test('finish count without a tracked best does not invent a best time', () => {
+  const html = renderPracticeProfile({ rows: [row({ trackedBestMs: 0 })] });
+  assert.match(html, /3 recorded finishes/);
+  assert.doesNotMatch(html, /<b>best |No finish recorded|pp-evidence-unavailable/);
+});
+
+const require = createRequire(new URL('./verifier/package.json', import.meta.url));
+let chromium;
+try { ({ chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')); } catch {}
+
+test('practice identity and controls survive injected popup CSS in narrow grid and list layouts', { skip: !chromium }, async () => {
+  const module = await fs.readFile(new URL('./practice-profile.mjs', import.meta.url), 'utf8');
+  const patch = await fs.readFile(new URL('../polytrack_062_patch.js', import.meta.url), 'utf8');
+  const injectedCss = [...patch.matchAll(/(?:style|rankedPolish)\.textContent\s*(?:\+=|=)\s*("(?:\\.|[^"\\])*?")/g)]
+    .map(match => JSON.parse(match[1])).join('\n');
+  assert.ok(injectedCss.includes('#overallProfilePopup') && injectedCss.includes('!important'));
+  const font = (await fs.readFile(new URL('../forced_square.woff2', import.meta.url))).toString('base64');
+  const css = await fs.readFile(new URL('../home-ui.css', import.meta.url), 'utf8') + '\n' +
+    await fs.readFile(new URL('../practice-responsive.css', import.meta.url), 'utf8');
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    // Fulfil every request locally: this regression never contacts the game or Firebase.
+    await page.route('**/*', route => route.fulfill({
+      contentType: route.request().url().endsWith('practice.mjs') ? 'text/javascript' : 'text/html',
+      body: route.request().url().endsWith('practice.mjs') ? module :
+        '<!doctype html><html lang="en"><title>Practice regression</title>' +
+        '<main id="overallProfilePopup" style="display:flex"><article class="overall-profile-card">' +
+        '<div id="overallProfileContent"></div></article></main></html>'
+    }));
+    await page.goto('http://localhost/');
+    await page.addStyleTag({ content: '@font-face{font-family:ForcedSquare;src:url(data:font/woff2;base64,' + font + ')}' +
+      css + '\nbody{margin:0}' });
+    // The real patch appends styles at runtime, after the linked stylesheets.
+    await page.addStyleTag({ content: injectedCss });
+    await page.evaluate(async () => {
+      const { renderPracticeProfile, installPracticeProfileControls } = await import('/practice.mjs');
+      document.querySelector('#overallProfileContent').innerHTML =
+        '<section class="profile-guide"><div class="profile-guide-body"><button class="profile-guide-track">Route planner</button></div></section>' +
+        renderPracticeProfile({
+        coverage: { coverageFraction: .02 },
+        rows: [
+          { trackId: 'a', trackName: 'Alpha with a very long track name', activeMs: 1000, attempts: 3, lastPlayedAt: 100, improvementMs: 50 },
+          { trackId: 'b', trackName: 'Beta', activeMs: 9000, attempts: 1, lastPlayedAt: 200 },
+          { trackId: 'c', trackName: 'C'.repeat(100), activeMs: 9000, attempts: 2, lastPlayedAt: 300, finishes: 1, trackedBestMs: 10200 }
+        ],
+        results: [{ trackId: 'a', source: 'snapshot', timeMs: 9800, snapshotCapturedAt: Date.now() }]
+      });
+      const root = document.querySelector('.polytrack-practice-profile');
+      root.open = true;
+      window.disposePractice = installPracticeProfileControls(root);
+      await document.fonts.ready;
+    });
+    const ids = () => page.locator('.pp-track:not([hidden])').evaluateAll(items => items.map(item => item.dataset.trackId));
+    assert.deepEqual(await ids(), ['c', 'b', 'a']);
+    for (const [key, descending, ascending] of [
+      ['recent', ['c', 'b', 'a'], ['a', 'b', 'c']],
+      ['active', ['b', 'c', 'a'], ['a', 'b', 'c']],
+      ['attempts', ['a', 'c', 'b'], ['b', 'c', 'a']],
+      ['improvement', ['a', 'b', 'c'], ['b', 'c', 'a']],
+      ['name', ['c', 'b', 'a'], ['a', 'b', 'c']]
+    ]) {
+      await page.locator('[data-pp-sort]').selectOption(key);
+      await page.locator('[data-pp-direction]').selectOption('desc');
+      assert.deepEqual(await ids(), descending);
+      await page.locator('[data-pp-direction]').selectOption('asc');
+      assert.deepEqual(await ids(), ascending);
+    }
+    await page.locator('[data-pp-search]').fill('missing');
+    assert.equal(await page.locator('.pp-no-results').isVisible(), true);
+    await page.locator('[data-pp-search]').fill('Beta');
+    assert.deepEqual(await ids(), ['b']);
+    await page.locator('[data-pp-search]').fill('');
+    for (const [width, height] of [[320, 568], [568, 320], [844, 390], [1024, 768]]) {
+      await page.setViewportSize({ width, height });
+      for (const view of ['grid', 'list']) {
+        await page.locator('[data-pp-view="' + view + '"]').click();
+        assert.equal(await page.locator('[data-pp-view="' + view + '"]').getAttribute('aria-pressed'), 'true');
+        const overflowing = await page.locator('.polytrack-practice-profile, .pp-toolbar, .pp-track, .pp-results').evaluateAll(items =>
+          items.filter(item => item.scrollWidth > item.clientWidth + 1).map(item => item.className));
+        assert.deepEqual(overflowing, [], width + ' ' + view + ' fits');
+        const controlsFit = await page.locator('.pp-toolbar input, .pp-toolbar select, .pp-toolbar button').evaluateAll(items =>
+          items.every(item => { const r = item.getBoundingClientRect(); return r.width >= 44 && r.height >= 44 && r.left >= 0 && r.right <= innerWidth; }));
+        assert.equal(controlsFit, true, 'touch controls fit ' + width);
+        const palette = await page.evaluate(() => {
+          const style = selector => getComputedStyle(document.querySelector(selector));
+          return {
+            track: style('.pp-track').backgroundColor,
+            trackAccent: style('.pp-track').borderLeftColor,
+            headingAccent: style('.pp-heading').borderLeftColor,
+            heading: style('.pp-heading').backgroundImage,
+            input: style('[data-pp-search]').backgroundColor,
+            select: style('[data-pp-direction]').backgroundColor,
+            pressed: style('[data-pp-view][aria-pressed="true"]').backgroundColor,
+            tracked: style('.pp-evidence-tracked').backgroundColor,
+            trackedLabel: style('.pp-evidence-tracked strong').color,
+            planner: style('.profile-guide-track').backgroundColor
+          };
+        });
+        assert.deepEqual(palette, {
+          track: 'rgb(24, 59, 59)', trackAccent: 'rgb(140, 224, 202)',
+          headingAccent: 'rgb(239, 196, 129)',
+          heading: 'linear-gradient(110deg, rgb(33, 76, 70), rgb(38, 61, 53))',
+          input: 'rgb(17, 46, 44)', select: 'rgb(17, 46, 44)',
+          pressed: 'rgb(140, 224, 202)', tracked: 'rgb(48, 59, 45)',
+          trackedLabel: 'rgb(239, 196, 129)', planner: 'rgb(37, 62, 115)'
+        }, 'practice keeps teal/amber while planner stays blue at ' + width + ' ' + view);
+        const overlapping = await page.locator('.pp-toolbar input, .pp-toolbar select, .pp-toolbar button').evaluateAll(items => {
+          const boxes = items.map(item => item.getBoundingClientRect());
+          return boxes.some((a, i) => boxes.slice(i + 1).some(b =>
+            Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 &&
+            Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1));
+        });
+        assert.equal(overlapping, false, 'controls never overlap at ' + width);
+      }
+    }
+    assert.equal(await page.locator('.pp-coverage-note').isVisible(), false);
+    assert.equal(await page.locator('.pp-coverage-details').count(), 1);
+    assert.equal(await page.locator('.pp-coverage-low, .pp-no-finish, .pp-evidence-unavailable').count(), 0);
+    await page.locator('.pp-coverage-details > summary').focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('.pp-coverage-note').isVisible(), true);
+    assert.match(await page.locator('[data-track-id="a"] .pp-results').textContent(), /Snapshot PB.*9.80s/);
+    assert.equal(await page.locator('[data-track-id="a"] .pp-pb-age').count(), 0);
+    assert.equal(await page.locator('[data-track-id="b"] .pp-results').count(), 0);
+    assert.match(await page.locator('[data-track-id="c"] .pp-results').textContent(), /best 10.20s/);
+    await page.evaluate(() => window.disposePractice());
+    const before = await ids();
+    await page.locator('[data-pp-search]').fill('no event listener');
+    await page.locator('[data-pp-direction]').selectOption('desc');
+    assert.deepEqual(await ids(), before, 'cleanup removes search and direction listeners');
+  } finally {
+    await browser.close();
+  }
 });
 test('observed session details are optional and known PBs remain separate from driven finishes',()=>{
  const html=renderPracticeProfile({rows:[row({observationVersion:1,focusedMs:90000,pausedMs:12000,movingMs:70000,motionObservedMs:80000,longestHuntMs:60000,biggestPbImprovementMs:350})],results:[{trackId:'track-a',timeMs:45000,source:'snapshot',rank:4,fieldSize:20}]});

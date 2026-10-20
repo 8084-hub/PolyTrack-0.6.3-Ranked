@@ -360,7 +360,7 @@ test('search, source, tag, curated and completion filters combine and refresh re
   completion.value = 'completed'; completion.dispatch('change');
   assert.equal(cls(root, 'sq-extra-count')[0].textContent, '1 of 3 tracks');
   assert.match(cls(root, 'sq-extra-facts')[0].textContent, /Best 1:01.234/);
-  const curated = tag(cls(root, 'sq-extra-check')[0], 'input')[0];
+  const curated = tag(cls(root, 'sq-extra-check').find(label => label.textContent === 'Curated only'), 'input')[0];
   curated.checked = true; curated.dispatch('change');
   assert.equal(cls(root, 'sq-extra-card').length, 1);
   search.value = 'no such track'; search.dispatch('input');

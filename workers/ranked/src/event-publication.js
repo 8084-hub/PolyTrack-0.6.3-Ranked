@@ -24,15 +24,24 @@ export async function advanceEventPublication(runtime,periodId=null) {
  const root=decode(await runtime.request('/'+rootPath));
  if(!root||!root.publicationPending)return {idle:true};
  const priorCombined=periodId?null:decode(await runtime.request('/'+targetPath));
+ let rolling=null;
+ if(!periodId){
+   // Do not rescan finite totals while the required live component is unavailable.
+   try{rolling=await readPermanentRollingHills(runtime.request);}
+   catch{if(priorCombined)return {pending:true,deferred:true,reason:'permanent_source_unavailable',kind,id};}
+ }
  const p=periodId?decode(await runtime.request('/'+C.periods+'/'+periodId)):null;
  if(periodId&&!p)return {idle:true};
  const priorJob=decode(await runtime.request('/'+JOBS+'/'+jobId));
  let state=priorJob;
- if(!state||state.complete||runtime.now()-Date.parse(state.readTime)>50*60000){
+ // Rolling-only changes leave the finite revision unchanged. Persisted immutable
+ // parts remain usable; the final transaction still fences both live sources.
+ const reuseComplete=!periodId&&!state?.restartRequired&&state?.complete===true&&state.scanComplete===true&&state.sourceRevision===(root.revision||0);
+ if(!state||state.restartRequired||state.sourceRevision!==(root.revision||0)||(!reuseComplete&&(state.complete||runtime.now()-Date.parse(state.readTime)>50*60000))){
    state={kind,id,sourceRevision:root.revision||0,generation:await contentHash([kind,id,root.revision||0,runtime.now()]),
      readTime:'',afterName:'',parts:0,complete:false};
  }
- let ended=false;
+ let ended=state.scanComplete===true;
  for(let pass=0;pass<PAGES_PER_PASS&&!ended;pass++){
    const collection=periodId?C.pbs:C.totals;
    const structuredQuery={from:[{collectionId:collection}],limit:PAGE,orderBy:[{field:{fieldPath:'__name__'},direction:'ASCENDING'}],
@@ -46,7 +55,7 @@ export async function advanceEventPublication(runtime,periodId=null) {
    if(!readTime||!Number.isFinite(Date.parse(readTime)))throw Error('EVENT_PUBLICATION_SNAPSHOT_REQUIRED');
    const last=documents.at(-1)?.name;
    if(last===state.afterName&&documents.length)throw Error('EVENT_PUBLICATION_CURSOR_INVALID');
-   const next={...state,readTime,afterName:last||state.afterName,parts:state.parts+(documents.length?1:0)};
+   const next={...state,readTime,afterName:last||state.afterName,parts:state.parts+(documents.length?1:0),scanComplete:documents.length<PAGE};
    const entries=documents.map(decode);
    // Old authoritative PBs predate public identity fields. Keyed profile lookup, never a scan.
    const missing=entries.filter(row=>!row.name);
@@ -70,6 +79,15 @@ export async function advanceEventPublication(runtime,periodId=null) {
  if(!ended)return {pending:true,kind,id};
  const parts=await post(runtime,':batchGet',{documents:Array.from({length:state.parts},(_,i)=>base(runtime)+PARTS+'/'+state.generation+'_'+i)});
  const byId=new Map((parts||[]).filter(row=>row.found).map(row=>[row.found.name.split('/').pop(),decode(row.found)]));
+ if(Array.from({length:state.parts},(_,i)=>byId.get(state.generation+'_'+i)).some(part=>!Array.isArray(part?.entries))){
+   // A lost part must not strand durable work in a permanent reuse/failure loop.
+   await runtime.store.transaction(async tx=>{
+     const current=await tx.get(JOBS+'/'+jobId);
+     if(JSON.stringify(current)!==JSON.stringify(state))throw new EventError('event_publication_conflict',409);
+     await tx.set(JOBS+'/'+jobId,{...state,scanComplete:false,restartRequired:true});
+   });
+   return {pending:true,deferred:true,reason:'source_parts_missing',kind,id};
+ }
  let entries=[];
  for(let i=0;i<state.parts;i++){const part=byId.get(state.generation+'_'+i);if(!Array.isArray(part?.entries))throw Error('EVENT_PUBLICATION_PART_MISSING');entries.push(...part.entries);}
  let dynamic={},rollingSource=null;
@@ -78,7 +96,7 @@ export async function advanceEventPublication(runtime,periodId=null) {
    entries.sort((a,b)=>b.rp-a.rp||a.accountId.localeCompare(b.accountId));
    let rank=0;entries=entries.map((row,i)=>{if(!i||row.rp!==entries[i-1].rp)rank=i+1;return {...row,rank};});
    try{
-     const rolling=await readPermanentRollingHills(runtime.request);
+     if(!rolling)rolling=await readPermanentRollingHills(runtime.request);
      rollingSource={revision:rolling.sourceRevision,signature:rolling.sourceSignature};
      const merged=mergePermanentRollingIntoTotals({entries,totalEntries:entries.length,complete:true,updatedAt:root.updatedAt||0},rolling);
      entries=merged.entries;dynamic={dynamicComponents:merged.dynamicComponents,eventRpComplete:true};
@@ -100,11 +118,16 @@ export async function advanceEventPublication(runtime,periodId=null) {
    const workRoot=periodId?await tx.get(C.public+'/totals'):null;
    const manifestPath=PUBLIC_MANIFEST_COLLECTION+'/'+publicationManifestId(kind,id,paged.pagination.generation);await tx.get(manifestPath);
    if(JSON.stringify(job)!==JSON.stringify(state))throw new EventError('event_publication_conflict',409);
+   if(!current||(current.revision||0)!==state.sourceRevision){
+     await tx.set(JOBS+'/'+jobId,{...state,scanComplete:false,restartRequired:true});
+     if(current)await tx.patch(rootPath,{publicationPending:true});
+     return 'finite_source_changed';
+   }
    // Fence the source inside the publication transaction. A newer PB must not
    // publish an already obsolete combined generation or clear its durable work.
    if(rollingSource&&(rollingRevision(currentRolling)!==rollingSource.revision||
        currentRolling.signature!==rollingSource.signature||
-       (currentRolling.pagination?currentRolling.sourceComplete!==true:currentRolling.complete===false)))return false;
+       (currentRolling.pagination?currentRolling.sourceComplete!==true:currentRolling.complete===false)))return 'permanent_source_changed';
    const publication={...(periodId?(target||current):{}),entries:entries.slice(0,200),totalEntries:entries.length,publishedEntries:Math.min(entries.length,200),
      sourceComplete:true,complete:entries.length<=200,pagination:paged.pagination,...metadata,
      updatedAt:Date.parse(state.readTime),builtAt:runtime.now(),publicationPending:(current?.revision||0)!==state.sourceRevision,
@@ -116,7 +139,7 @@ export async function advanceEventPublication(runtime,periodId=null) {
    await tx.set(JOBS+'/'+jobId,{...state,complete:true});
    return true;
  });
- if(!committed)return {pending:true,deferred:true,reason:'permanent_source_changed',kind,id};
+ if(committed!==true)return {pending:true,deferred:true,reason:committed,kind,id};
  return {published:true,kind,id,totalEntries:entries.length};
 }
 

@@ -12,9 +12,21 @@ test('event fallback keeps newer loaded PBs and verification status without mixi
 test('failed event refresh neither disables normal Ranked nor repeatedly calls its edge during cooldown',async()=>{
  let now=1000000,calls=0,rankedFailures=0;const saved={period:{id:'daily',trackId:'track'},updatedAt:100,entries:[]};
  const c=vm.createContext({Date:{now:()=>now},eventCloudRetryAt:new Map(),snapshotOnlyForNewAccount:()=>false,readPublicSnapshotBackup:async()=>saved,rankedBrokerUrl:()=> 'https://example.test',AbortSignal,fetch:async()=>{calls++;throw Error('offline');},markRankedEdgeUnavailable:()=>rankedFailures++,log:()=>{},db:async()=>{throw Error('must not query Firebase');}});
+ c.eventRequestSignal=milliseconds=>AbortSignal.timeout(milliseconds);
  vm.runInContext(extract('loadEventCloudRead'),c);
  await c.loadEventCloudRead('/v1/events/daily/snapshot','0.6.2_event_public','daily');now+=61000;
  await c.loadEventCloudRead('/v1/events/daily/snapshot','0.6.2_event_public','daily');assert.equal(calls,1);assert.equal(rankedFailures,0);
+});
+
+test('successful event checks are shared for five minutes instead of polled every minute',async()=>{
+ let now=1000000,calls=0;
+ const c=vm.createContext({Date:{now:()=>now},eventCloudCache:new Map(),eventCloudRequests:new Map(),eventCloudRetryAt:new Map(),
+   loadEventCloudRead:async()=>{calls++;return {period:{id:'daily',trackId:'track'},entries:[],updatedAt:now};},noteFirebaseQuota:()=>{}});
+ vm.runInContext(extract('chooseEventReadValue')+extract('eventCloudRead'),c);
+ const read=()=>c.eventCloudRead('/v1/events/daily/snapshot','0.6.2_event_public','daily');
+ await Promise.all(Array.from({length:8},read));assert.equal(calls,1);
+ now+=61000;await read();assert.equal(calls,1,'reopening an event after a minute reuses its successful check');
+ now+=5*60000;await read();assert.equal(calls,2,'fresh checks resume after the bounded TTL');
 });
 test('direct recovery coalesces requests and retains its five-minute budget across reloads',async()=>{
  let at=1000000,calls=0;const storage=new Map();let resolve;const gate=new Promise(r=>resolve=r),snapshot={exists:true,data:()=>({entries:[]})};

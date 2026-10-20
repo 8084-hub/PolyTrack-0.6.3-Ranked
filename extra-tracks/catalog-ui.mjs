@@ -209,8 +209,13 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   const favoritesLabel = make('label', 'sq-extra-check');
   const favorites = make('input'); favorites.type = 'checkbox';
   favoritesLabel.append(favorites, make('span', '', 'My favorites'));
-  advancedControls.append(sourceField.label, tagField.label, difficultyField.label, completionField.label, reviewField.label, sortField.label, curatedLabel, favoritesLabel);
-  advancedControls.append(button('Reset filters', 'sq-extra-clear', clearFilters));
+  searchLabel.className += ' sq-extra-search-field';
+  reviewField.label.className += ' sq-extra-review-field';
+  const sortControls = make('div', 'sq-extra-sort-controls');
+  sortControls.append(sortField.label, button('Reset filters', 'sq-extra-clear', clearFilters));
+  const quickFilters = make('div', 'sq-extra-quick-filters');
+  quickFilters.append(favoritesLabel, curatedLabel);
+  advancedControls.append(sourceField.label, tagField.label, difficultyField.label, completionField.label, reviewField.label, sortControls, quickFilters);
   controls.append(searchLabel, advancedToggle, advancedControls);
   dialog.append(controls);
 
@@ -1007,6 +1012,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     const next = button('Next', '', () => changePage(1, true));
     next.disabled = page >= pages;
     pagination.append(previous, make('span', '', `Page ${page} of ${pages}`), next);
+    if (expandedCardMenu) scheduleCardMenuPosition();
   }
 
   function clearFilters() {
@@ -1206,8 +1212,11 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     if (event?.target && expandedCardMenu?.contains(event.target)) return;
     if (!expandedCardMenu || cardMenuPositionFrame !== null || !view?.requestAnimationFrame) return;
     cardMenuPositionFrame = view.requestAnimationFrame(() => {
-      cardMenuPositionFrame = null;
-      positionCardMenu(expandedCardTrigger?.isConnected !== false);
+      // Rebuilt cards may settle their content-visibility sizes after the first layout.
+      cardMenuPositionFrame = view.requestAnimationFrame(() => {
+        cardMenuPositionFrame = null;
+        positionCardMenu(Boolean(event) && expandedCardTrigger?.isConnected !== false);
+      });
     });
   }
 

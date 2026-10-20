@@ -13,7 +13,8 @@ export function stampClientRelease(patch, index, revision) {
   index = index.replace(/polytrack_062_patch\.js\?v=\d+/, `polytrack_062_patch.js?v=${revision}`)
     .replace(/(main\.bundle\.js)(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`)
     .replace(/(public-name-policy\.js)(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`)
-    .replace(/(home-ui\.css)(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`)
+    .replace(/((?:home-ui|responsive-ui|practice-responsive)\.css)(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`)
+    .replace(/(tools\/responsive-ui\.mjs)(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`)
     .replace(/(events\/(?:events\.css|client\.mjs))(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`);
   return {patch, index};
 }

@@ -360,6 +360,11 @@ test('track cards show full previews and keep feedback in an accessible three-do
     assert.deepEqual(await page.evaluate(() => window.feedback.addedTags), []);
     assert.equal(await menu.isVisible(), true, 'reset leaves review controls available');
     assert.equal(await more.getAttribute('aria-controls'), await menu.getAttribute('id'), 'refreshed trigger still controls the open dropdown');
+    await page.waitForFunction(() => {
+      const popup = document.querySelector('.sq-extra-more-menu:not([hidden])')?.getBoundingClientRect();
+      const trigger = document.querySelector('.sq-extra-more[aria-expanded=true]')?.getBoundingClientRect();
+      return popup && trigger && (popup.bottom <= trigger.top || popup.top >= trigger.bottom);
+    });
     await more.click();
     assert.equal(await more.getAttribute('aria-expanded'), 'false', 'three-dot button toggles closed even after review edits');
     await more.click();

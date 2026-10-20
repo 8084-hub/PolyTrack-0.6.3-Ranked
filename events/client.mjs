@@ -9,6 +9,15 @@ const STORE='polytrack-062-events-v1',QUEUE=STORE+'-queue',BEST=STORE+'-best';
 const REPLAYS=STORE+'-replays',PROFILE_CACHE='polytrack-0.6.2-s1-overall-snapshot-v5';
 const ROLLING_TRACK_ID='fb769ac2ea77e8f19a21a9dd3071742f2342bd49c41e4748d7e8c7903d4f0778';
 const PERMANENT_ROLLING=Object.freeze({id:'permanent-rolling-hills',kind:'permanent',trackId:ROLLING_TRACK_ID,trackName:'Rolling Hills Racer',maxRp:1001,permanent:true});
+export function eventResetLabel(period,locale){
+  if(!Number.isSafeInteger(period?.endsAt)||period.endsAt<=0||period.endsAt>8640000000000000)return 'Reset date unavailable';
+  return new Intl.DateTimeFormat(locale,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(period.endsAt)+' Local';
+}
+export function eventRewardLabel(period){
+  if(period?.scheduleOnly)return 'Practice available; event scoring not confirmed';
+  const cap=period?.maxRp;
+  return Number.isFinite(cap)&&cap>0?'Up to '+cap+' Event RP':'Event RP details unavailable';
+}
 export function eventRunDate(row,at=Date.now()){
   const stamp=[row?.submittedAt,row?.receivedAt,row?.pbAt].find(value=>Number.isSafeInteger(value)&&value>0&&value<=at);
   if(!stamp)return {label:'Date unavailable',title:'This saved result has no run date.'};
@@ -193,7 +202,7 @@ export function installEvents(bridge){
   const time=ms=>Number.isFinite(ms)&&ms>0?bridge.formatTime(ms):'No event time';
   const localBest=period=>bestRecords[period.id+'_'+bridge.accountId()];
   const displayName=row=>bridge.displayName?.(row.accountId,row.name,Number(row.identityUpdatedAt)||0)||row.name||'Racer';
-  const reset=p=>new Intl.DateTimeFormat(undefined,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(p.endsAt)+' Local';
+  const reset=eventResetLabel;
   function storeCatalog(value){if(!value||!Array.isArray(value.periods))throw Error('Event catalog is unavailable.');catalog=value;cacheWrite(STORE,value);catalogAt=now();catalogFreshUntil=eventCatalogFreshUntil(value.periods,catalogAt);
     clearTimeout(boundaryTimer);
     const boundary=Math.min(...value.periods.flatMap(p=>p.enabled===false||p.archived?[]:[p.startsAt,p.endsAt]).filter(t=>Number.isSafeInteger(t)&&t>catalogAt));
@@ -297,14 +306,14 @@ export function installEvents(bridge){
   async function openEvent({kind,trackId}={}){
     archiveIntent=null;sessions.leave();eventIntent=null;tick();
     shell();selectView('home');selected=null;const token=++requestId;
-    body('<p>Checking the live event assignment...</p>');
+    body('<p>Checking event availability...</p>');
     try{
       if(!['daily','weekly','kodub'].includes(kind)||!/^[a-f0-9]{64}$/.test(trackId||''))throw Error('Invalid event assignment.');
       await loadCatalog();if(!dialog||token!==requestId)return false;
       const matches=activePeriods().filter(p=>p.kind===kind&&p.trackId===trackId);
-      if(matches.length!==1){body('<p>No unique active '+escape(kind)+' event is assigned to this track. The featured track may differ from the live event.</p>');return false;}
+      if(matches.length!==1){body('<p>This '+escape(kind)+' event is unavailable for this track. No event race was opened.</p>');return false;}
       knownPeriods.set(matches[0].id,matches[0]);return await race(matches[0],{direct:true});
-    }catch{if(dialog&&token===requestId)body('<p>The live event assignment could not be checked. No event race was opened.</p>');return false;}
+    }catch{if(dialog&&token===requestId)body('<p>Event availability could not be checked. Try again from Events. No event race was opened.</p>');return false;}
   }
   function close(){entryRequest++;if(!dialog)return;dialog.remove();dialog=null;selected=null;requestId++;returnFocus?.isConnected&&returnFocus.focus({preventScroll:true});}
   function shell(){
@@ -321,15 +330,16 @@ export function installEvents(bridge){
     return settings.enabled&&own?eventRecordPlacement({board,period,accountId:bridge.accountId(),timeMs:own.timeMs,policy:settings.policy}):null;
   }
   function recordMarkup(period){
-    if(period?.scheduleOnly){const own=localBest(period);return own?'<time>'+time(own.timeMs)+'</time><small>Awaiting server status</small>':'<small>Awaiting server assignment</small>';}
+    if(period?.scheduleOnly){const own=localBest(period);return own?'<time>'+time(own.timeMs)+'</time><small>Saved on this device</small>':'No event time';}
     const {rows,board,filterResult,sourceOwn}=eventDisplayRows(period),shown=rows.find(row=>row.accountId===bridge.accountId()),own=shown||sourceOwn;
     if(!own)return 'No record';
     const presentation=shown?eventPlacementPresentation(displayedRecordPlacement(period,own,board,filterResult)):null;
     return '<time>'+time(own.timeMs)+'</time>'+(presentation?'<span class="'+presentation.className+'" title="'+presentation.title+'" aria-label="'+presentation.ariaLabel+'">'+presentation.text+'</span>':own.pending?' <small>Pending</small>':'');
   }
   function cardStandings(period){
+    if(period.scheduleOnly)return '';
     const board=cache.get(period.id)||read(STORE+'-'+period.id,null);
-    if(!board)return '<small class="sq-event-card-summary">Open for standings and replays</small>';
+    if(!board)return '<small class="sq-event-card-summary">View standings and replays</small>';
     const entries=Array.isArray(board.entries)?board.entries:[],pending=Array.isArray(board.pendingPlaybacks)?board.pendingPlaybacks:[];
     const loaded=new Set([...entries,...pending].map(row=>row.accountId)).size;
     const count=Number.isInteger(board.racerCount)?board.racerCount:Number.isInteger(board.entrantCount)?board.entrantCount:loaded;
@@ -338,12 +348,12 @@ export function installEvents(bridge){
     return '<small class="sq-event-card-summary">'+count+' '+(Number.isInteger(board.racerCount)||Number.isInteger(board.entrantCount)?'racers':'loaded racers')+' · '+entries.length+' verified'+pointTotal+'</small>'+
       (leader?'<small class="sq-event-card-leader">Leader: '+escape(displayName(leader))+' · '+time(leader.timeMs)+'</small>':'');
   }
-  function cards(periods,{details=false}={}){periods.forEach(p=>knownPeriods.set(p.id,p));return periods.map(p=>`<button type="button" class="sq-event-card" data-event-id="${escape(p.id)}" data-event-kind="${escape(p.kind)}"><span class="sq-event-thumb">${bridge.thumbnail(p.trackId)}</span><div class="sq-event-record">${recordMarkup(p)}</div><span><small>${escape(p.kind==='daily'?'DAILY EVENT':p.kind==='weekly'?'WEEKLY EVENT':p.kind==='kodub'?'KODUB WEEKLY':p.label||'EVENT')}</small><strong>${escape(periodName(p))}</strong>${Number.isFinite(p.maxRp)?`<span>Up to ${p.maxRp} ${p.kind==='kodub'?'Event RP (ERP)':'Event RP'}</span>`:p.kind==='kodub'?'<span>Event RP (ERP)</span>':''}${details?cardStandings(p):''}${p.scheduleOnly?'<small>Awaiting official server assignment</small>':''}${Number.isInteger(p.entrantLimit)?`<small>Up to ${p.entrantLimit} racers</small>`:''}<small>${now()<p.endsAt?'Ends':'Ended'} ${escape(reset(p))}</small></span></button>`).join('');}
+  function cards(periods,{details=false}={}){periods.forEach(p=>knownPeriods.set(p.id,p));return periods.map(p=>`<button type="button" class="sq-event-card" data-event-id="${escape(p.id)}" data-event-kind="${escape(p.kind)}"><span class="sq-event-thumb">${bridge.thumbnail(p.trackId)}</span><div class="sq-event-record">${recordMarkup(p)}</div><span><small>${escape(p.kind==='daily'?'DAILY EVENT':p.kind==='weekly'?'WEEKLY EVENT':p.kind==='kodub'?'KODUB WEEKLY':p.label||'EVENT')}</small><strong>${escape(periodName(p))}</strong><span class="sq-event-card-details"><span class="sq-event-reward">${escape(eventRewardLabel(p))}</span>${details?cardStandings(p):''}${p.scheduleOnly?'<small class="sq-event-assignment" title="Practice follows the saved schedule. The server has not confirmed this event or its scoring. Event RP is not guaranteed." aria-label="Event results unavailable. Practice follows the saved schedule. The server has not confirmed this event or its scoring. Event RP is not guaranteed.">Event results unavailable</small>':''}${Number.isInteger(p.entrantLimit)?`<small class="sq-event-capacity">Up to ${p.entrantLimit} racers</small>`:''}<small class="sq-event-reset">${now()<p.endsAt?'Resets':'Ended'} ${escape(reset(p))}</small></span></span></button>`).join('');}
   function permanentCard(loading=false){
     const counts=archivePeriodCounts(PERMANENT_ROLLING,permanent),own=counts.verifiedEntries.find(row=>row.accountId===bridge.accountId());
     const record=own?'<time>'+time(own.timeMs)+'</time>'+ (Number.isFinite(own.rp)?'<small>'+Math.round(own.rp)+' Event RP</small>':''):loading?'<small>Loading verified record...</small>':'No verified record';
     const count=counts.racers===null?'':`<small>${counts.racers} ${counts.racers===1?'racer':'racers'} · ${counts.verified} verified</small>`;
-    return `<button type="button" class="sq-event-card sq-event-permanent" data-event-permanent><span class="sq-event-thumb">${bridge.thumbnail(ROLLING_TRACK_ID)}</span><div class="sq-event-record">${record}</div><span><small>PERMANENT EVENT</small><strong>Rolling Hills Racer</strong><span>Normal RP + up to 1001 Event RP</span>${count}<small>No reset</small></span></button>`;
+    return `<button type="button" class="sq-event-card sq-event-permanent" data-event-permanent><span class="sq-event-thumb">${bridge.thumbnail(ROLLING_TRACK_ID)}</span><div class="sq-event-record">${record}</div><span><small>PERMANENT EVENT</small><strong>Rolling Hills Racer</strong><span class="sq-event-reward">Normal RP + up to 1001 Event RP</span>${count}<small>No reset</small></span></button>`;
   }
   function selectView(view){entryRequest++;message('');for(const button of dialog.querySelectorAll('nav button'))button.setAttribute('aria-pressed',String(button.hasAttribute('data-event-'+view)));}
   async function open(){shell();selectView('home');selected=null;const token=++requestId;body('<p>Loading events...</p>');try{await loadCatalog();if(!dialog||token!==requestId)return;body('<div class="sq-event-browser-heading"><h3>Live events</h3><p>Choose a track for standings, replays, or your next PB.</p></div><div class="sq-event-cards">'+cards(livePeriods(),{details:true})+permanentCard(true)+'</div>');message(['Event RP is separate from Overall RP.',bridge.dataNotice?.()||''].filter(Boolean).join(' '));void loadPermanent().then(()=>{if(!dialog||token!==requestId||!dialog.querySelector('[data-event-permanent]'))return;const active=document.activeElement;if(active?.closest('[data-event-permanent]'))return;const holder=document.createElement('div');holder.innerHTML=permanentCard(false);dialog.querySelector('[data-event-permanent]')?.replaceWith(holder.firstElementChild);}).catch(()=>{});}catch{if(token===requestId){body('<p>Events are unavailable. Normal racing and your saved PBs still work.</p>');}}}
@@ -795,7 +805,12 @@ export function installEvents(bridge){
         const findMe=buttonWrapper.querySelector('.sq-event-find-me');findMe.onclick=()=>{const index=eventDisplayRows(period).rows.filter(row=>!view.onlyVerified||!row.pending).findIndex(row=>row.accountId===accountId);if(index<0){message(view.onlyVerified?'Your run is not verified yet. Turn off Only verified to see it.':'Your event result is not in these loaded standings.');return;}view.page=Math.floor(index/20);view.signature='';view.quickSignature='';syncNativeBoard(session);const mine=board.querySelector('button.main.self');mine?.scrollIntoView({block:'nearest'});mine?.focus({preventScroll:true});};
         board.querySelector('.sq-event-refresh').onclick=async()=>{const button=board.querySelector('.sq-event-refresh');button.disabled=true;profilesAt=0;try{await snapshot(period,true);await readReceipt(period.id,accountId,true);if(nativeView!==view||bridge.accountId()!==accountId||sessions.current()!==session)return;view.signature='';syncNativeBoard(session);}catch{if(nativeView===view)message('Event standings could not refresh. Your saved event PB is unchanged.');}finally{button.disabled=false;}};
       }
-      board.querySelector('.back').onclick=()=>{entryRequest++;sessions.leave();eventIntent=null;if(view.archive)archiveIntent=null;tick();nativeBack?.click();refreshAfterNativeReturn();};
+      board.querySelector('.back').onclick=()=>{
+        if(nativeView!==view||!board.isConnected||bridge.accountId()!==view.accountId)return;
+        const request=++entryRequest;
+        sessions.leave();eventIntent=null;if(view.archive)archiveIntent=null;
+        tick();nativeBack?.click();restoreTrackSelectionAfterBack(request,view.accountId);
+      };
     }
     const view=nativeView;
     if(view.archive){syncNativeArchiveBoard(view);return;}
@@ -903,14 +918,16 @@ export function installEvents(bridge){
     for(const [kind,selector] of [['weekly','.weekly-cup'],['daily','.daily-card']]){
       const card=ranked?.querySelector(selector),button=card?.querySelector('.competition-feature-button');if(!button)continue;
       const matches=activePeriods().filter(p=>p.kind===kind),period=matches.length===1?matches[0]:null;
-      const signature=JSON.stringify([period?.id,period?.trackId,period?.endsAt,period?.maxRp]);if(button.dataset.eventBinding===signature)continue;button.dataset.eventBinding=signature;
+      const signature=JSON.stringify([period?.id,period?.trackId,period?.endsAt,period?.maxRp,period?.scheduleOnly]);if(button.dataset.eventBinding===signature)continue;button.dataset.eventBinding=signature;
       button.dataset.eventKind=kind;button.dataset.eventId=period?.id||'';button.removeAttribute('data-track-id');
       const kicker=kind==='weekly'?'WEEKLY EVENT':'DAILY EVENT';card.setAttribute('aria-label',kicker);button.setAttribute('aria-label',period?'Open '+kicker+': '+info(period.trackId).name:'Browse events: '+kicker+' unavailable');
       const put=(selector,text)=>{const node=button.querySelector(selector);if(node)node.textContent=text;};
-      put('.competition-kicker',kicker);put('.competition-track-name',period?info(period.trackId).name:'No active event');put('.competition-result',period?'Up to '+(Number(period.maxRp)||0)+' Event RP':'Browse Events for availability');
+      put('.competition-kicker',kicker);put('.competition-track-name',period?info(period.trackId).name:'No active event');put('.competition-result',period?eventRewardLabel(period):'Browse Events for availability');
+      const result=button.querySelector('.competition-result');if(result){result.title=period?.scheduleOnly?'Practice follows the saved schedule. The server has not confirmed this event or its scoring. Event RP is not guaranteed.':'';result.setAttribute('aria-label',result.textContent+(result.title?'. '+result.title:''));}
+      if(period?.scheduleOnly)button.setAttribute('aria-label','Practice '+kicker+': '+info(period.trackId).name+'. '+eventRewardLabel(period)+'. '+(result?.title||'Event RP is not guaranteed.'));
       const image=button.querySelector('.competition-feature-image');if(image)image.innerHTML=period?bridge.thumbnail(period.trackId):'';
       const note=card.querySelector(':scope > small');if(note){
-        if(period){const options={weekday:'short',hour:'2-digit',minute:'2-digit'},local=document.createElement('strong');local.textContent=new Intl.DateTimeFormat(undefined,options).format(period.endsAt);note.replaceChildren(document.createTextNode('Resets'),document.createElement('br'),local);note.title='Event ends '+new Intl.DateTimeFormat(undefined,{dateStyle:'full',timeStyle:'long'}).format(period.endsAt);}
+        if(period){const local=document.createElement('strong');local.textContent=reset(period);note.replaceChildren(document.createTextNode('Resets'),document.createElement('br'),local);note.title='Event ends '+new Intl.DateTimeFormat(undefined,{dateStyle:'full',timeStyle:'long'}).format(period.endsAt);}
         else note.textContent='Browse events for availability.';
       }
       button.removeAttribute('aria-disabled');if(period)knownPeriods.set(period.id,period);
@@ -923,17 +940,17 @@ export function installEvents(bridge){
       const infoNode=kodubCard.querySelector('.track-of-the-week-info');
       if(infoNode){
         let reward=infoNode.querySelector('.sq-kodub-reward');if(!reward){reward=document.createElement('small');reward.className='sq-kodub-reward';infoNode.append(reward);}
-        const text=p?'Normal leaderboard · up to 700 Event RP':'Normal leaderboard · event scoring unavailable';if(reward.textContent!==text)reward.textContent=text;
+        const text=p?eventRewardLabel(p):'Event results unavailable';if(reward.textContent!==text)reward.textContent=text;
+        const title=p?.scheduleOnly?'Practice follows the saved schedule. The server has not confirmed this event or its scoring. Event RP is not guaranteed.':p?'Event RP uses scored event results.':'Event results could not be checked. No Event RP reward is confirmed.';
+        if(reward.title!==title)reward.title=title;
+        const label=text+'. '+title;if(reward.getAttribute('aria-label')!==label)reward.setAttribute('aria-label',label);
         // Leave the native normal PB intact; an event PB is a different record.
       }
     }
     if(!cachedOnly&&group?.getClientRects().length){void loadCatalog().catch(()=>{});void loadPermanent();}
     const permanentNote=group?.querySelector('.sq-permanent-note');
     if(permanentNote){
-      const own=permanent?.entries?.find(row=>row.accountId===bridge.accountId());
-      const elapsed=own?.runAt?Math.max(0,now()-own.runAt):null;
-      const age=elapsed===null?'':elapsed<60000?' / just now':elapsed<3600000?' / '+Math.floor(elapsed/60000)+'m ago':elapsed<86400000?' / '+Math.floor(elapsed/3600000)+'h ago':' / '+Math.floor(elapsed/86400000)+'d ago';
-      const text=own?'Normal RP + '+Math.round(Number(own.rp)||0)+' / 1001 Event RP'+age:'Normal RP + up to 1001 Event RP / No reset';
+      const text='Normal RP + up to 1001 Event RP / No reset';
       if(permanentNote.textContent!==text)permanentNote.textContent=text;
       const title='Both rewards use your normal physics-verified personal best. Event RP follows the fastest verified Rolling Hills time; repeated runs do not stack.';
       if(permanentNote.title!==title)permanentNote.title=title;
@@ -953,7 +970,7 @@ export function installEvents(bridge){
       if(row.dataset.periods!==scheduleState){
         row.dataset.periods=scheduleState;row.replaceChildren();
         for(const kind of ['weekly','daily']){const button=document.createElement('button');button.className='button sq-event-card';button.type='button';button.dataset.eventKind=kind;
-          button.innerHTML='<span class="sq-event-thumb" aria-hidden="true"></span><div class="sq-event-record">No record</div><span><small>'+eventName(kind)+' event</small><strong>'+(fetching?'Loading track...':'Schedule unavailable')+'</strong><span>Up to '+(kind==='weekly'?500:100)+' Event RP</span><small>'+(fetching?'Loading saved schedule':'Open Events to retry')+'</small></span>';button.onclick=()=>void open();row.append(button);}
+          button.innerHTML='<span class="sq-event-thumb" aria-hidden="true"></span><div class="sq-event-record">No record</div><span><small>'+eventName(kind)+' event</small><strong>'+(fetching?'Loading track...':'Events unavailable')+'</strong><span>Event results unavailable</span><small>'+(fetching?'Checking event availability':'Open Events to retry')+'</small></span>';button.onclick=()=>void open();row.append(button);}
       }
     }
     const session=sessions.current()||eventIntent;if(document.body.classList.contains('sq-event-active')!==!!session)document.body.classList.toggle('sq-event-active',!!session);
@@ -1026,7 +1043,12 @@ export function installEvents(bridge){
     if(button.matches('.track-info-ui .side-panel button.watch')&&(nativeView||eventIntent||sessions.current())){e.preventDefault();e.stopImmediatePropagation();watchEvent();return;}
     if(button.matches('.track-info-ui .side-panel button.play')&&(nativeView&&!nativeView.archive||eventIntent||sessions.current())&&!nativePlayPermit){e.preventDefault();e.stopImmediatePropagation();void playEvent();return;}
     if(button.closest('.sq-events-overlay,.sq-event-inline,.sq-event-board,.sq-events-entry,.sq-event-track-buttons'))return;
-    if(e.isTrusted&&(button.querySelector('.track-title')||/^(Back|Exit|Multiplayer)$/.test(button.textContent.trim()))){entryRequest++;sessions.leave();eventIntent=null;archiveIntent=null;tick();if(/^(Back|Exit)$/.test(button.textContent.trim()))refreshAfterNativeReturn();}
+    if(e.isTrusted&&(button.querySelector('.track-title')||/^(Back|Exit|Multiplayer)$/.test(button.textContent.trim()))){
+      const request=++entryRequest,accountId=bridge.accountId();
+      sessions.leave();eventIntent=null;archiveIntent=null;tick();
+      // Capture runs before native navigation; restore only after its handlers finish.
+      if(/^(Back|Exit)$/.test(button.textContent.trim()))setTimeout(()=>restoreTrackSelectionAfterBack(request,accountId),0);
+    }
   },true);
   const refreshFromCachedState=()=>{if(document.visibilityState==='visible')tick({cachedOnly:true});};
   // Native refresh replaces its wrappers. Restore cached cards before the next paint,
@@ -1042,6 +1064,13 @@ export function installEvents(bridge){
     if(typeof requestAnimationFrame==='function')requestAnimationFrame(()=>{render();requestAnimationFrame(render);});else setTimeout(render,0);
     setTimeout(render,180);
   };
+  let restoredTrackSelectionRequest=-1;
+  function restoreTrackSelectionAfterBack(request,accountId){
+    if(request!==entryRequest||accountId!==bridge.accountId()||sessions.current()||eventIntent||archiveIntent||restoredTrackSelectionRequest===request)return;
+    restoredTrackSelectionRequest=request;
+    // The parent owns and consumes its saved return-context token. Never open a track here.
+    try{bridge.restoreTrackSelection?.();}finally{refreshAfterNativeReturn();}
+  }
   document.addEventListener('visibilitychange',refreshFromCachedState);
   window.addEventListener('pageshow',refreshFromCachedState);
   window.addEventListener('online',()=>void flush());

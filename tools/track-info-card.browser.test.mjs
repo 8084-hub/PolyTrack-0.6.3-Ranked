@@ -4,12 +4,14 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import {layoutMatrix} from './responsive-matrix.mjs';
 
 const require = createRequire(new URL('./verifier/package.json', import.meta.url));
 let chromium;
 try { ({ chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')); } catch {}
 const read = path => fs.readFileSync(new URL(path, import.meta.url), 'utf8');
 const homeCss = read('../home-ui.css');
+const responsiveCss=read('../responsive-ui.css');
 const patch = read('../polytrack_062_patch.js');
 const bundle = read('../main.bundle.js');
 const literal = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\x60(?:\\.|[^\x60\\])*\x60)`;
@@ -27,7 +29,7 @@ const helper = patch.match(/  function positionTrackFreshnessBanner\(banner,lead
 const bannerExpression = patch.match(/const bannerHtml=([\s\S]*?);\r?\n/)?.[1];
 const nativeScale = bundle.match(/df=function\(\)\{return (Math\.max\(\.01,Math\.min\(1,Math\.min\(window\.innerWidth,1\.4375\*window\.innerHeight\)\/1150\)\))\}/)?.[1];
 
-const viewports = [
+const legacyViewports = [
   { width: 1366, height: 768, label: 'chromebook' },
   { width: 1024, height: 600, label: 'short-chromebook' },
   { width: 320, height: 568, label: 'small-phone-portrait' },
@@ -42,6 +44,7 @@ const viewports = [
   { width: 844, height: 390, label: 'phone-landscape' },
   { width: 820, height: 1180, label: 'ipad-portrait' },
 ];
+const viewports=typeof process!=='undefined'&&process.env.POLYTRACK_FULL_MATRIX==='1'?layoutMatrix:legacyViewports;
 const states = [
   { name: 'snapshot', fieldSize: 84, weight: 1.25, sourceHtml: '<b class="track-data-snapshot-age">Snapshot 2h old</b>', pbStatusHtml: '', updateLine: 'Standings changed 2d ago', policy: 'Live refresh unlocks in 14:00' },
   { name: 'submitted-pb', fieldSize: 12345, weight: 9.99, sourceHtml: '<b class="track-data-snapshot-age">Snapshot 12d old</b> + submitted PB', pbStatusHtml: ' <b class="track-data-pb-status">WAITING</b>', updateLine: 'Standings changed 12 days ago', policy: 'Live refresh unlocks in 14:59' },
@@ -51,7 +54,7 @@ const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({'&':'&am
 const bannerHtml = state => vm.runInNewContext(bannerExpression, { ...state, escapeHtml }, { timeout: 100 });
 const asset = name => `data:image/svg+xml;base64,${fs.readFileSync(new URL(`../images/${name}.svg`, import.meta.url)).toString('base64')}`;
 const fixture = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>${homeCss}\n${nativeCss}\n${injectedCss}
+<style>${homeCss}\n${nativeCss}\n${injectedCss}\n${responsiveCss}
 @font-face{font-family:ForcedSquare;src:url(data:font/woff2;base64,${fontData}) format('woff2')}
 </style></head><body><div id="ui"><div class="menu-ui"><div class="track-info-ui">
 <div class="leaderboard-ui"><h2>Leaderboard</h2><h3>Version 0.6</h3><div class="total-players fade-in">84 Players</div>
@@ -148,13 +151,13 @@ test('snapshot UI adapts around the native menu without changing its geometry', 
               position: style.position, fontFamily: style.fontFamily, fontSize: parseFloat(style.fontSize), titleRatio: parseFloat(title.fontSize) / parseFloat(style.fontSize), detailRatio: parseFloat(details.fontSize) / parseFloat(style.fontSize),
               titleDirection: title.flexDirection, layout: card.dataset.layout || '', background: style.backgroundColor,
               overflow: [card, footer, ...footer.children, document.documentElement].map(node => ({className:node.className, clientWidth:node.clientWidth, scrollWidth:node.scrollWidth, clientHeight:node.clientHeight, scrollHeight:node.scrollHeight})),
-              lines: [...card.children].map(rect),
+              lines: [...card.children].map(node=>({...rect(node),hidden:getComputedStyle(node).clipPath!=='none'||getComputedStyle(node).display==='none'})),
             };
           }, { scale, html: bannerHtml(state), state: state.name }), 'card measurement');
           const label = `${viewport.label} ${viewport.width}x${viewport.height} UI ${scale} ${state.name}`;
           evidence.push({ label, ...result });
-          if (process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR && scale === 1 && state.name === 'submitted-pb' && [384, 390, 1280].includes(viewport.width)) {
-            await bounded(page.screenshot({ path: join(process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR, `track-info-card-${viewport.width}.png`), timeout: 4000, animations: 'disabled' }), 'screenshot');
+          if (process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR && scale === 1 && state.name === 'submitted-pb' && [384, 390, 1280, 1366, 1920].includes(viewport.width)) {
+            await bounded(page.screenshot({ path: join(process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR, `track-info-card-${viewport.width}x${viewport.height}.png`), timeout: 4000, animations: 'disabled' }), 'screenshot');
           }
           assertInside(result.card, result.viewport, `${label} card`);
           assertInside(result.footer, result.viewport, `${label} footer`);
@@ -180,6 +183,7 @@ test('snapshot UI adapts around the native menu without changing its geometry', 
           }
           assert.notEqual(result.background, 'rgba(0, 0, 0, 0)', label);
           for (const [index, line] of result.lines.entries()) {
+            if(line.hidden)continue;
             if(result.layout==='compact'||(result.layout==='horizontal'&&index>=2))continue;
             assertInside(line, result.card, `${label} status line`);
           }

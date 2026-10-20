@@ -74,6 +74,9 @@ const setup=async ({focus,nativeRow,nativeTimeFormatter,queue,deferReady,receipt
   const render=eval('('+nativeRow+')');
   document.querySelector('.leaderboard-ui').__pt062EventRows={version:1,render:(container,row)=>{Oo.set(owner,container);return render.call(owner,row.rank,row.name,row.countryCode||null,row.timeMs,new Date(row.runAt),null,row.pending?0:1,row.isSelf,row.accountId,new Date(),{isCancelled:false},{event:true});}};
   const localInsights=null,warmPracticeTrack=()=>{};
+  // Parent navigation owns the token; these tests exercise the events-side bridge.
+  let eventTrackReturnContext=null,eventTrackReturnEpoch=0;
+  const rememberEventTrackSelection=()=>{eventTrackReturnContext={epoch:++eventTrackReturnEpoch};};
   let eventUi; const nativeFocus=eval('('+focus.trim()+')');
   window.ui=eventUi=(await import('/events/client.mjs')).installEvents(window.bridgeFixture={accountId:()=>id,trackInfo,thumbnail:()=>'',formatTime:ms=>String(ms),readCatalog:async()=>{window.catalogReads++;if(deferCatalog)return new Promise(resolve=>window.resolveCatalog=()=>resolve({periods:cachedPeriods||[period]}));return {periods:[period]};},readSnapshot:async requested=>{window.reads++;const archived=requested==='old-event';return {period:archived?{...period,id:requested,startsAt:Date.now()-172800000,endsAt:Date.now()-86400000,racerCount:1}:period,updatedAt:period.startsAt,entries:archived?[{accountId:'b'.repeat(64),name:'Archived racer',rank:1,timeMs:21000,rp:100}]:[]};},readOwnStatus:async()=>receipt||null,readArchiveMonth:async()=>({periods:[{...period,id:'old-event',racerCount:1,startsAt:Date.now()-172800000,endsAt:Date.now()-86400000}]}),readTotals:async()=>({entries:[]}),submit:async run=>{window.submits.push(run);return {runId:'fixture',status:'waiting'};},ready:()=>deferReady?new Promise(resolve=>window.resolveReady=resolve):Promise.resolve(),require:()=>n=>({A:modules[n]}),openTrack:id=>nativeFocus(id,{event:true})});
   document.querySelector('#native').onclick=()=>{window.car=makeCar();};
@@ -88,6 +91,78 @@ async function fixture(t,options={}){
  await page.evaluate(setup,{focus,nativeRow,nativeTimeFormatter,...options});return page;
 }
 async function enter(page){await page.locator('#open').click();await page.locator('[data-event-id]').click();await page.locator('.sq-event-board').waitFor();}
+async function installReturnProbe(page){
+ await page.evaluate(()=>{
+  window.backLog=[];window.trackOpens=0;
+  const openTrack=bridgeFixture.openTrack;
+  bridgeFixture.openTrack=(...args)=>{trackOpens++;return openTrack(...args);};
+  document.querySelector('.leaderboard-ui .back').onclick=()=>backLog.push('native');
+  bridgeFixture.restoreTrackSelection=()=>backLog.push(ui.isEntered(id)?'restore-active':'restore');
+ });
+}
+test('normal Back restores track selection once after native navigation without reopening an event',async t=>{
+ const p=await fixture(t);await installReturnProbe(p);
+ await p.locator('.leaderboard-ui .back').click();
+ await p.waitForFunction(()=>backLog.length===2);
+ await p.evaluate(()=>{for(let i=0;i<5;i++)ui.tick({cachedOnly:true});});
+ assert.deepEqual(await p.evaluate(()=>({log:backLog,opens:trackOpens,entered:ui.isEntered(id)})),{log:['native','restore'],opens:0,entered:false});
+ assert.equal(await p.locator('.sq-event-board,.sq-events-overlay').count(),0);
+});
+test('event Back restores track selection once after native Back and ignores stale event handlers',async t=>{
+ const p=await fixture(t);await installReturnProbe(p);await enter(p);
+ await p.evaluate(()=>window.staleEventBack=document.querySelector('.sq-event-board .back').onclick);
+ await p.locator('.sq-event-board .back').click();
+ await p.waitForFunction(()=>backLog.length===2);
+ await p.evaluate(()=>{staleEventBack();for(let i=0;i<5;i++)ui.tick({cachedOnly:true});});
+ assert.deepEqual(await p.evaluate(()=>({log:backLog,opens:trackOpens,entered:ui.isEntered(id)})),{log:['native','restore'],opens:1,entered:false});
+ assert.equal(await p.locator('.sq-event-board,.sq-events-overlay').count(),0);
+ await enter(p);await p.evaluate(()=>staleEventBack());
+ assert.equal(await p.evaluate(()=>ui.isEntered(id)),true);
+ assert.deepEqual(await p.evaluate(()=>backLog),['native','restore']);
+ await p.locator('.sq-event-board .back').click();
+ assert.deepEqual(await p.evaluate(()=>backLog),['native','restore','native','restore']);
+});
+test('archive Back restores track selection once and never enters the event',async t=>{
+ const p=await fixture(t);await installReturnProbe(p);
+ await p.locator('#open').click();await p.locator('[data-event-archives]').click();
+ await p.locator('input[name="archive-month"]').fill('2026-08');
+ await p.getByRole('button',{name:'View month',exact:true}).click();
+ await p.locator('[data-archive-event-id="old-event"] summary').click();
+ await p.getByRole('button',{name:'Track details / practice'}).click();
+ await p.locator('.sq-event-board .back').click();
+ assert.deepEqual(await p.evaluate(()=>({log:backLog,opens:trackOpens,entered:ui.isEntered(id)})),{log:['native','restore'],opens:1,entered:false});
+ assert.equal(await p.locator('.sq-event-board,.sq-events-overlay').count(),0);
+});
+test('normal Back skips stale restoration when native navigation changes context or account',async t=>{
+ for(const changed of ['navigation','account']){
+  const p=await fixture(t);await installReturnProbe(p);
+  await p.evaluate(changed=>{
+   document.querySelector('.leaderboard-ui .back').onclick=()=>{
+    backLog.push('native');
+    if(changed==='navigation')ui.leave();else bridgeFixture.accountId=()=> 'b'.repeat(64);
+    setTimeout(()=>window.nativeReturnSettled=true,0);
+   };
+  },changed);
+  await p.locator('.leaderboard-ui .back').click();await p.waitForFunction(()=>window.nativeReturnSettled);
+  assert.deepEqual(await p.evaluate(()=>backLog),['native']);
+ }
+});
+test('event Back cannot restore over a newer event opened by native navigation',async t=>{
+ const p=await fixture(t);await installReturnProbe(p);
+ await p.evaluate(()=>{document.querySelector('.leaderboard-ui .back').onclick=()=>{backLog.push('native');window.newEntry=ui.openEvent({kind:'daily',trackId:id});};});
+ await enter(p);await p.locator('.sq-event-board .back').click();
+ assert.equal(await p.evaluate(()=>newEntry),true);
+ assert.deepEqual(await p.evaluate(()=>backLog),['native']);
+ assert.equal(await p.evaluate(()=>ui.isEntered(id)),true);
+});
+test('Back remains compatible with an absent restoreTrackSelection bridge hook',async t=>{
+ const p=await fixture(t);await enter(p);
+ await p.locator('.sq-event-board .back').click();
+ assert.equal(await p.evaluate(()=>ui.isEntered(id)),false);
+ assert.equal(await p.locator('.sq-event-board').count(),0);
+ await p.locator('.leaderboard-ui .back').click();
+ assert.equal(await p.evaluate(()=>ui.isEntered(id)),false);
+});
 async function boot(page,queue){return page.evaluate(async({entry,queue,QUEUE})=>{
  localStorage.setItem(QUEUE,JSON.stringify(queue));let eventUi=null,eventQueueChecked=false,calls=0,flushes=0,reads=0;
  const prior=Storage.prototype.getItem;Storage.prototype.getItem=function(key){if(key===QUEUE)reads++;return prior.call(this,key);};
@@ -283,10 +358,10 @@ test('schedule-only live event remains playable, preserves its local PB, and acc
   bridgeFixture.readCatalog=async()=>({periods:[scheduled],archives:[]});
   bridgeFixture.readSnapshot=async requested=>({period:{...scheduled,scheduleOnly:false,trackName:'Official fixture track'},updatedAt:Date.now(),entries:[]});
  });
- await p.locator('#open').click();const card=p.locator('.sq-events-overlay [data-event-id="scheduled-fixture"]');await card.waitFor();assert.match(await card.innerText(),/100 Event RP/);assert.match(await card.innerText(),/Awaiting official server assignment/);
+ await p.locator('#open').click();const card=p.locator('.sq-events-overlay [data-event-id="scheduled-fixture"]');await card.waitFor();assert.doesNotMatch(await card.innerText(),/Up to \d+ Event RP|Server confirmation pending/);assert.match(await card.innerText(),/Practice available; event scoring not confirmed/);
  await card.click();await p.waitForFunction(()=>!!window.car);assert.equal(await p.locator('.sq-event-board').count(),1);assert.equal(await p.locator('.sq-events-overlay').count(),0);assert.equal(await p.evaluate(()=>document.body.classList.contains('sq-event-active')),true);
  await p.evaluate(()=>car.finish(21000));await p.waitForFunction(()=>submits.length===1);await p.waitForFunction(()=>JSON.parse(localStorage.getItem('polytrack-062-events-v1')).periods[0].scheduleOnly===false);
- await p.locator('#open').click();const updated=p.locator('.sq-events-overlay [data-event-id="scheduled-fixture"]');await updated.waitFor();assert.match(await updated.innerText(),/21000/);assert.doesNotMatch(await updated.innerText(),/Awaiting official server assignment/);assert.doesNotMatch(await updated.locator('.sq-event-record').innerText(),/verified|\bRP\b.*earned/i);
+ await p.locator('#open').click();const updated=p.locator('.sq-events-overlay [data-event-id="scheduled-fixture"]');await updated.waitFor();assert.match(await updated.innerText(),/21000/);assert.doesNotMatch(await updated.innerText(),/Practice available; event scoring not confirmed/);assert.doesNotMatch(await updated.locator('.sq-event-record').innerText(),/verified|\bRP\b.*earned/i);
 });
 test('event reset labels explicitly use Local',async t=>{const p=await fixture(t);await p.locator('#open').click();assert.match(await p.locator('.sq-events-overlay [data-event-id]').innerText(),/Local/);});
 test('event home renders cached live catalog without waiting for permanent standings',async t=>{
@@ -315,7 +390,7 @@ test('native integrity decorator keeps published event rows verified and local r
  await p.evaluate(source=>eval('('+source+')')(),functionSource('syncIntegrityStateLabels'));
  assert.equal(await p.locator('.sq-event-board button.main.self .verified-state.pending').count(),1);assert.equal(await p.locator('.sq-event-board button.main:not(.self) .verified-state.verified').count(),1);assert.equal(await p.locator('.sq-event-board button.main:not(.self) .sq-integrity-label').innerText(),'');
 });
-test('ended event launches are removed while unavailable slots remain visible',async t=>{const p=await fixture(t);await showLiveRail(p);assert.equal(await p.locator('.sq-event-track-buttons [data-event-id]').count(),1);await p.evaluate(async()=>{bridgeFixture.readCatalog=async()=>({periods:[],archives:[]});await ui.refreshCatalog(true);ui.tick();});assert.equal(await p.locator('.sq-event-track-buttons [data-event-id]').count(),0);assert.equal(await p.locator('.sq-event-track-buttons .sq-event-card').count(),2);assert.match(await p.locator('.sq-event-track-buttons').innerText(),/Schedule unavailable/);assert.equal(await p.locator('.sq-events-entry').count(),1);await p.locator('.sq-event-track-buttons .sq-event-card').first().click();assert.equal(await p.locator('.sq-events-overlay').count(),1);});
+test('ended event launches are removed while unavailable slots remain visible',async t=>{const p=await fixture(t);await showLiveRail(p);assert.equal(await p.locator('.sq-event-track-buttons [data-event-id]').count(),1);await p.evaluate(async()=>{bridgeFixture.readCatalog=async()=>({periods:[],archives:[]});await ui.refreshCatalog(true);ui.tick();});assert.equal(await p.locator('.sq-event-track-buttons [data-event-id]').count(),0);assert.equal(await p.locator('.sq-event-track-buttons .sq-event-card').count(),2);assert.match(await p.locator('.sq-event-track-buttons').innerText(),/Events unavailable/);assert.equal(await p.locator('.sq-events-entry').count(),1);await p.locator('.sq-event-track-buttons .sq-event-card').first().click();assert.equal(await p.locator('.sq-events-overlay').count(),1);});
 test('native event view hides a matching rejected attempt from public standings',async t=>{const p=await fixture(t);await enter(p);await p.waitForFunction(()=>!!window.car);await p.evaluate(()=>car.finish(20000));await p.waitForFunction(()=>submits.length===1);await p.evaluate(()=>{bridgeFixture.readOwnStatus=async()=>({attemptId:submits[0].attemptId,timeMs:20000,status:'mismatch'});});await p.locator('.sq-event-refresh').click();await p.waitForFunction(()=>document.querySelector('.sq-event-board').textContent.includes('No points were added'));assert.equal(await p.locator('.sq-event-board .verified-state').count(),0);assert.match(await p.locator('.sq-event-board').innerText(),/No points were added/);assert.equal(await p.locator('.sq-event-board .verified-state.verified').count(),0);});
 test('leaving event preserves native opponent controls and listeners',async t=>{const p=await fixture(t);await p.evaluate(()=>{const target=document.querySelector('.opponents-container');const button=document.createElement('button');button.textContent='Original opponent';button.onclick=()=>window.opponentClicked=true;target.append(button);window.originalOpponent=button;});await enter(p);await p.waitForFunction(()=>!!window.car);await p.evaluate(()=>ui.leave());assert.equal(await p.evaluate(()=>originalOpponent.isConnected),true);await p.locator('button',{hasText:'Original opponent'}).click();assert.equal(await p.evaluate(()=>opponentClicked),true);});
 
@@ -339,7 +414,7 @@ test('daily and weekly on the same physical track retain exact period binding',a
 test('featured track without exactly one matching server period never opens another event',async t=>{
  const p=await fixture(t);await sharedTrackPeriods(p);
  assert.equal(await p.evaluate(()=>ui.openEvent({kind:'daily',trackId:'b'.repeat(64)})),false);
- assert.equal(await p.evaluate(()=>!!window.car),false);assert.match(await p.locator('.sq-events-dialog main').innerText(),/may differ/);
+ assert.equal(await p.evaluate(()=>!!window.car),false);assert.match(await p.locator('.sq-events-dialog main').innerText(),/unavailable for this track/);
  await p.evaluate(async()=>{periods.push({...periods[1],id:'duplicate-daily'});await ui.refreshCatalog(true);});
  assert.equal(await p.evaluate(()=>ui.openEvent({kind:'daily',trackId:id})),false);assert.equal(await p.evaluate(()=>!!window.car),false);
 });
@@ -549,6 +624,20 @@ test('actual event bridge permits native click once and rejects stale launch con
   try{window.__pt062PrepareEventRace(id,null);return false;}catch{return true;}
  }),true);
  await p.evaluate(()=>ui.leave());await p.locator('.side-panel .play').click();assert.equal(await p.evaluate(()=>nativeEvent),false);
+});
+test('Ranked schedule-only copy offers practice without implying RP can be earned',async t=>{
+ const p=await fixture(t);
+ await p.evaluate(async()=>{
+  bridgeFixture.readCatalog=async()=>({periods:[{id:'daily-practice',trackId:id,kind:'daily',startsAt:Date.now()-1000,endsAt:Date.now()+3600000,maxRp:100,scheduleOnly:true}]});
+  await ui.refreshCatalog(true);
+  const panel=document.createElement('div');panel.id='overallLeaderboardPanel';
+  panel.innerHTML='<section class="daily-card"><button class="competition-feature-button"><span class="competition-kicker"></span><strong class="competition-track-name"></strong><span class="competition-result"></span></button><small></small></section>';
+  document.body.append(panel);ui.tick({cachedOnly:true});
+ });
+ assert.match(await p.locator('.competition-result').innerText(),/Practice available; event scoring not confirmed/);
+ assert.doesNotMatch(await p.locator('.daily-card').innerText(),/Up to \d+ Event RP|server|assignment|pending/i);
+ assert.match(await p.locator('.daily-card button').getAttribute('aria-label'),/server has not confirmed.*Event RP is not guaranteed/);
+ assert.match(await p.locator('.competition-result').getAttribute('title'),/server has not confirmed/);
 });
 test('Ranked footer replaces legacy targets with exact catalog assignments without repeated reads',async t=>{
  const p=await fixture(t);await sharedTrackPeriods(p);await p.evaluate(()=>{

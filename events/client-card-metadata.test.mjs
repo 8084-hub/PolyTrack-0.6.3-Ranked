@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
+import {eventRewardLabel} from './client.mjs';
 const source=fs.readFileSync(new URL('./client.mjs',import.meta.url),'utf8');
 const start=source.indexOf('  function cardStandings(period){');
 const end=source.indexOf('  function selectView(',start);
@@ -13,7 +14,7 @@ const trackId='fb769ac2ea77e8f19a21a9dd3071742f2342bd49c41e4748d7e8c7903d4f0778'
 function render({board=null,permanentSnapshot=null}={}){
  const context={
   cache:new Map(),read:()=>board,STORE:'events',bridge:{accountId:()=> 'mine',thumbnail:()=>'<img>',formatTime:ms=>String(ms),displayName:(_id,name)=>name},
-  knownPeriods:new Map(),escape:value=>String(value??''),displayName:(_row)=>'Leader',recordMarkup:()=> 'No record',periodName:p=>p.trackName,
+  eventRewardLabel,knownPeriods:new Map(),escape:value=>String(value??''),displayName:(_row)=>'Leader',recordMarkup:()=> 'No record',periodName:p=>p.trackName,
   now:()=>100,reset:()=> 'Sunday',time:ms=>String(ms),ROLLING_TRACK_ID:trackId,
   PERMANENT_ROLLING:{id:'permanent-rolling-hills',kind:'permanent',trackId,trackName:'Rolling Hills Racer'},
   permanent:permanentSnapshot,archivePeriodCounts:(_period,snapshot)=>{
@@ -37,12 +38,24 @@ test('live card uses published count and point metadata when present',()=>{
  assert.match(result,/12 racers · 1 verified · 420 Event RP awarded/);
 });
 
-test('Kodub weekly card labels its reward as ERP and does not invent a cap or racer limit',()=>{
+test('Kodub weekly card labels unconfirmed rewards honestly and does not invent a cap or racer limit',()=>{
  const ui=render();
  const markup=ui.cards([{id:'kodub',kind:'kodub',trackId,trackName:'Kodub Track',endsAt:200}],{details:true});
  assert.match(markup,/KODUB WEEKLY/);
- assert.match(markup,/Event RP \(ERP\)/);
+ assert.match(markup,/Event RP details unavailable/);
  assert.doesNotMatch(markup,/Up to 0 Event RP|Up to 0 racers/);
+});
+test('schedule-only cards offer practice without advertising RP or cached verified results',()=>{
+ const ui=render({board:{racerCount:12,totalRp:420,entries:[{accountId:'a',name:'Leader',timeMs:123}]}});
+ for(const kind of ['daily','weekly','kodub']){
+  const markup=ui.cards([{id:kind,kind,trackId,trackName:'Practice track',endsAt:200,maxRp:700,scheduleOnly:true}],{details:true});
+  const visible=markup.replace(/<[^>]*>/g,' ');
+  assert.match(visible,/Practice available; event scoring not confirmed/);
+  assert.match(visible,/Event results unavailable/);
+  assert.doesNotMatch(visible,/Up to \d+ Event RP|verified|awarded|confirmation pending|assignment/i);
+  assert.match(markup,/title="[^"]*server has not confirmed[^"]*Event RP is not guaranteed/);
+  assert.match(markup,/aria-label="Event results unavailable\.[^"]*Event RP is not guaranteed/);
+ }
 });
 
 test('permanent Rolling Hills card shows available counts and verified points only',()=>{

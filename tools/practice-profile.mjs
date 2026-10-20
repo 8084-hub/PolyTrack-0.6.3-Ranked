@@ -167,27 +167,25 @@ function card(row, lookup, preview, results) {
   const activeTime = num(row.activeMs) ? active(row.activeMs) + ' active' : 'Active time not recorded';
   const knownResults = evidence.length
     ? evidence.map(evidenceMarkup).join('')
-    : '<p class="pp-evidence pp-evidence-unavailable">' +
-      '<strong>Saved PB</strong><span>Not available in loaded results</span></p>';
-  const trackedHistory = '<p class="pp-evidence pp-evidence-tracked ' + (!tracked ? 'pp-no-finish' : '') + '">' +
+    : '';
+  const trackedHistory = tracked || finishes ? '<p class="pp-evidence pp-evidence-tracked">' +
     '<strong>Tracked history</strong>' +
     (tracked ? '<b>best ' + time(tracked) + '</b>' : '') +
-    '<span>' + (finishes
-      ? finishes + ' recorded ' + (finishes === 1 ? 'finish' : 'finishes')
-      : 'No finish recorded yet') +
-    '</span></p>';
+    (finishes ? '<span>' + finishes + ' recorded ' + (finishes === 1 ? 'finish' : 'finishes') + '</span>' : '') +
+    '</p>' : '';
   const improvement = num(row.improvedMs ?? row.improvementMs);
 
   return '<li class="pp-track" data-track-id="' + esc(row.trackId) +
     '" data-track-name="' + esc(name.toLocaleLowerCase()) +
     '" data-active-ms="' + num(row.activeMs) +
+    '" data-attempts="' + attempts +
     '" data-last-played="' + num(row.lastPlayedAt) +
     '" data-improvement-ms="' + improvement + '">' +
     '<div class="pp-track-top"><div class="pp-art" aria-hidden="true">' + art(row, preview) +
     '</div><div class="pp-track-main"><h3>' + esc(name) +
     '</h3><p class="pp-last-played">' + (lastPlayed ? 'Last played ' + esc(lastPlayed) : 'Last played date not recorded') +
     '</p><p class="pp-active">' + esc(activeTime) + '</p></div></div>' +
-    '<div class="pp-results">' + knownResults + trackedHistory + '</div>' +
+    (knownResults || trackedHistory ? '<div class="pp-results">' + knownResults + trackedHistory + '</div>' : '') +
     (metrics.length ? '<p class="pp-track-data">' + metrics.map(value => '<span>' + esc(value) + '</span>').join('') + '</p>' : '') +
     (num(row.sincePbMs)
       ? '<p class="pp-since-pb" title="Active practice time accumulated since the latest recorded personal-best improvement">' +
@@ -214,16 +212,14 @@ function finishItems(rows, lookup) {
 function coverageMarkup(coverage) {
   if (!Number.isFinite(coverage?.coverageFraction)) return '';
   const percent = Math.round(Math.max(0, Math.min(1, coverage.coverageFraction)) * 100);
-  const level = percent < 10 ? 'low' : percent < 60 ? 'moderate' : 'adequate';
   const description = percent < 10
-    ? 'Sparse evidence: less than 10% of visible time is covered. Information is limited.'
+    ? 'Less than 10% of visible time is covered. This history describes only the recorded practice.'
     : percent < 60
       ? 'Partial evidence: some visible time is covered.'
       : 'Good evidence: most visible time is covered.';
-  const summary = level === 'low' ? 'limited history' : level === 'moderate' ? 'partial history' : 'well covered';
-  return '<span class="pp-coverage pp-coverage-' + level + '" title="' + esc(description) + '">' +
-    '<b>' + percent + '% visible-time coverage · ' + summary + '</b>' +
-    '<small class="pp-coverage-note">' + esc(description) + '</small></span>';
+  return '<details class="pp-coverage-details"><summary>About history coverage</summary>' +
+    '<p class="pp-coverage-note">' + percent + '% visible-time coverage. ' + esc(description) +
+    ' Attempts and active time are practice observations; saved PB evidence is shown separately and does not imply a tracked finish.</p></details>';
 }
 
 export function renderPracticeProfile({ rows = [], coverage = null, trackName, trackPreview, results = [] } = {}) {
@@ -262,13 +258,17 @@ export function renderPracticeProfile({ rows = [], coverage = null, trackName, t
     ? '<div class="pp-summary" aria-label="Practice summary">' +
       '<span><small>ACTIVE TIME</small><strong>' + active(total) + '</strong></span>' +
       '<span><small>TRACKS DRIVEN</small><strong>' + observed.length + '</strong></span>' +
-      coverageMarkup(coverage) + summaryStats + firstStat + '</div>' +
+      summaryStats + firstStat + '</div>' + coverageMarkup(coverage) +
       '<div class="pp-toolbar">' +
       '<label>Search tracks <input type="search" data-pp-search placeholder="Track name or ID" autocomplete="off"></label>' +
       '<label>Sort by <select data-pp-sort>' +
-      '<option value="recent">Most recent</option><option value="active">Active time</option>' +
-      '<option value="improvement">Improvement</option><option value="name">Name</option>' +
+      '<option value="recent">Last played</option><option value="active">Active time</option>' +
+      '<option value="attempts">Attempts</option>' +
+      (observed.some(row => num(row.improvedMs ?? row.improvementMs)) ? '<option value="improvement">Recorded improvement</option>' : '') +
+      '<option value="name">Name</option>' +
       '</select></label>' +
+      '<label>Direction <select data-pp-direction><option value="desc">Descending</option>' +
+      '<option value="asc">Ascending</option></select></label>' +
       '<div role="group" aria-label="Track layout">' +
       '<button type="button" data-pp-view="grid" aria-pressed="true">Grid</button>' +
       '<button type="button" data-pp-view="list" aria-pressed="false">List</button></div>' +
@@ -304,6 +304,7 @@ export function installPracticeProfileControls(root) {
   if (!root || typeof root.querySelector !== 'function') return () => {};
   const search = root.querySelector('[data-pp-search]');
   const sort = root.querySelector('[data-pp-sort]');
+  const direction = root.querySelector('[data-pp-direction]');
   const list = root.querySelector('.pp-tracks ul');
   const section = root.querySelector('.pp-tracks');
   const countLabel = root.querySelector('[data-pp-count]');
@@ -322,15 +323,13 @@ export function installPracticeProfileControls(root) {
     }
     const visible = items.filter(item => !item.hidden);
     const key = sort?.value || 'recent';
-    visible.sort((a, b) =>
-      key === 'name'
-        ? (a.dataset.trackName || '').localeCompare(b.dataset.trackName || '')
-        : key === 'active'
-          ? num(b.dataset.activeMs) - num(a.dataset.activeMs)
-          : key === 'improvement'
-            ? num(b.dataset.improvementMs) - num(a.dataset.improvementMs)
-            : num(b.dataset.lastPlayed) - num(a.dataset.lastPlayed)
-    );
+    const sign = direction?.value === 'asc' ? 1 : -1;
+    const attribute = { active: 'activeMs', attempts: 'attempts', improvement: 'improvementMs', recent: 'lastPlayed' }[key] || 'lastPlayed';
+    visible.sort((a, b) => {
+      const names = (a.dataset.trackName || '').localeCompare(b.dataset.trackName || '');
+      const comparison = key === 'name' ? names : num(a.dataset[attribute]) - num(b.dataset[attribute]);
+      return sign * comparison || names || (a.dataset.trackId || '').localeCompare(b.dataset.trackId || '');
+    });
     for (const item of visible) list.append(item);
     if (countLabel) countLabel.textContent = visible.length + ' of ' + items.length + ' tracks';
     if (empty) empty.hidden = visible.length !== 0;
@@ -348,11 +347,13 @@ export function installPracticeProfileControls(root) {
 
   search?.addEventListener('input', filter);
   sort?.addEventListener('change', filter);
+  direction?.addEventListener('change', filter);
   root.addEventListener('click', onView);
   filter();
   return () => {
     search?.removeEventListener('input', filter);
     sort?.removeEventListener('change', filter);
+    direction?.removeEventListener('change', filter);
     root.removeEventListener('click', onView);
   };
 }

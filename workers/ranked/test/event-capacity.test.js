@@ -189,6 +189,169 @@ test('idle event coordinator reads exactly one dirty-signal document and never w
  assert.deepEqual(f.calls,Array(10).fill('/'+C.public+'/totals'));assert.equal(f.counts.length,transactions);
 });
 
+test('Rolling-only refresh reuses completed finite scan even after snapshot query expiry',async()=>{
+ const f=await combinedFixture();
+ // Force several finite-total pages, then publish a completed current revision.
+ for(let i=0;i<250;i++)f.data.set(C.totals+'/extra-'+i,{accountId:'extra-'+i,name:'Extra',rp:i,events:1});
+ f.data.get(C.public+'/totals').revision++;
+ f.data.get(C.public+'/totals').publicationPending=true;
+ await advanceEventPublication(f.runtime);
+ const job=f.data.get('0.6.2_event_publication_jobs/event_totals_main');
+ assert.equal(job.scanComplete,true);assert.equal(job.complete,true);assert.equal(job.parts,3);
+ await f.improve();f.time(3600000);
+ const start=f.calls.length;
+ assert.equal((await publishEventCapacity(f.runtime)).published,true);
+ assert.equal(f.calls.slice(start).includes(':runQuery'),false,'unchanged finite totals are never requeried');
+ assert.equal(f.data.get(C.public+'/totals_full').totalEntries,253);
+ assert.equal(f.data.get(C.public+'/totals_full').dynamicComponents.permanentRollingHills.sourceRevision,2);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,false);
+ // A real finite revision change MUST start a fresh authoritative scan.
+ f.data.set(C.totals+'/new',{accountId:'new',name:'New',rp:9999,events:1});
+ f.data.get(C.public+'/totals').revision++;
+ f.data.get(C.public+'/totals').publicationPending=true;
+ const next=f.calls.length;
+ assert.equal((await publishEventCapacity(f.runtime)).published,true);
+ assert.equal(f.calls.slice(next).includes(':runQuery'),true);
+ assert.equal(f.data.get(C.public+'/totals_full').entries[0].accountId,'new');
+ assert.equal(f.data.get(C.public+'/totals_full').totalEntries,254);
+});
+
+test('repeated blocked combined refreshes never query finite totals or read staged parts',async()=>{
+ const f=await combinedFixture(),prior=structuredClone(f.data.get(C.public+'/totals_full'));
+ await f.improve();f.data.get(R.collection+'/'+R.trackId).complete=false;
+ const start=f.calls.length;
+ for(let i=0;i<5;i++)assert.equal((await publishEventCapacity(f.runtime)).reason,'permanent_source_unavailable');
+ const calls=f.calls.slice(start);
+ assert.equal(calls.includes(':runQuery'),false);
+ assert.equal(calls.includes(':batchGet'),false);
+ assert.equal(calls.some(route=>route.includes('event_publication_jobs')),false);
+ assert.deepEqual(f.data.get(C.public+'/totals_full'),prior);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
+ f.data.get(R.collection+'/'+R.trackId).complete=true;
+ assert.equal((await publishEventCapacity(f.runtime)).published,true,'recovery is immediate, not timer based');
+ assert.equal(f.data.get(C.public+'/totals_full').dynamicComponents.permanentRollingHills.sourceRevision,2);
+});
+
+test('legacy completed jobs without an explicit scan-complete checkpoint rescan safely',async()=>{
+ const f=await combinedFixture();
+ delete f.data.get('0.6.2_event_publication_jobs/event_totals_main').scanComplete;
+ await f.improve();const start=f.calls.length;
+ assert.equal((await publishEventCapacity(f.runtime)).published,true);
+ assert.equal(f.calls.slice(start).includes(':runQuery'),true);
+ assert.equal(f.data.get(C.public+'/totals_full').dynamicComponents.permanentRollingHills.sourceRevision,2);
+});
+
+test('missing reused immutable parts fail closed without replacing or acknowledging totals',async()=>{
+ const f=await combinedFixture(),prior=structuredClone(f.data.get(C.public+'/totals_full'));
+ const job=f.data.get('0.6.2_event_publication_jobs/event_totals_main');
+ f.data.delete('0.6.2_event_publication_parts/'+job.generation+'_0');
+ await f.improve();
+ assert.equal((await publishEventCapacity(f.runtime)).reason,'source_parts_missing');
+ assert.deepEqual(f.data.get(C.public+'/totals_full'),prior);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
+ const start=f.calls.length;
+ assert.equal((await publishEventCapacity(f.runtime)).published,true);
+ assert.equal(f.calls.slice(start).includes(':runQuery'),true,'lost parts trigger authoritative recovery');
+ assert.equal(f.data.get(C.public+'/totals_full').dynamicComponents.permanentRollingHills.sourceRevision,2);
+});
+
+for(const revision of [0,8])test(`finite revision ${revision} changing during a multi-pass scan preserves published totals and rescans`,async()=>{
+ const f=await combinedFixture(),prior=structuredClone(f.data.get(C.public+'/totals_full'));
+ for(let i=0;i<500;i++)f.data.set(C.totals+'/extra-'+i,{accountId:'extra-'+i,name:'Extra',rp:i,events:1});
+ Object.assign(f.data.get(C.public+'/totals'),{revision,publicationPending:true});
+ assert.equal((await advanceEventPublication(f.runtime)).pending,true);
+ const request=f.runtime.request;let changed=false;
+ f.runtime.request=async(route,init)=>{
+   const result=await request(route,init);
+   if(route===':runQuery'&&!changed){
+     changed=true;
+     f.data.set(C.totals+'/new',{accountId:'new',name:'New',rp:9999,events:1});
+     f.data.get(C.public+'/totals').revision++;
+   }
+   return result;
+ };
+ assert.equal((await advanceEventPublication(f.runtime)).reason,'finite_source_changed');
+ assert.equal(changed,true);
+ assert.deepEqual(f.data.get(C.public+'/totals_full'),prior);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
+ const jobPath='0.6.2_event_publication_jobs/event_totals_main';
+ assert.equal(f.data.get(jobPath).restartRequired,true);
+ f.runtime.request=request;
+ assert.equal((await advanceEventPublication(f.runtime)).pending,true);
+ assert.equal((await advanceEventPublication(f.runtime)).published,true);
+ const current=f.data.get(C.public+'/totals_full');
+ assert.equal(current.totalEntries,504);assert.equal(current.entries[0].accountId,'new');
+ assert.equal(current.sourceRevision,revision+1);
+ assert.equal(f.data.get(jobPath).restartRequired,undefined);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,false);
+ assert.deepEqual(await publishEventCapacity(f.runtime),{idle:true});
+});
+
+test('missing unfinished scan parts invalidate immediately and recover without an expiry or reset loop',async()=>{
+ const f=await combinedFixture(),prior=structuredClone(f.data.get(C.public+'/totals_full'));
+ for(let i=0;i<500;i++)f.data.set(C.totals+'/extra-'+i,{accountId:'extra-'+i,name:'Extra',rp:i,events:1});
+ f.data.get(C.public+'/totals').revision++;f.data.get(C.public+'/totals').publicationPending=true;
+ assert.equal((await advanceEventPublication(f.runtime)).pending,true);
+ const jobPath='0.6.2_event_publication_jobs/event_totals_main',job=f.data.get(jobPath);
+ f.data.delete('0.6.2_event_publication_parts/'+job.generation+'_0');
+ assert.equal((await advanceEventPublication(f.runtime)).reason,'source_parts_missing');
+ assert.equal(f.data.get(jobPath).restartRequired,true);
+ assert.deepEqual(f.data.get(C.public+'/totals_full'),prior);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
+ assert.equal((await advanceEventPublication(f.runtime)).pending,true);
+ assert.equal((await advanceEventPublication(f.runtime)).published,true);
+ assert.equal(f.data.get(C.public+'/totals_full').totalEntries,503);
+ assert.equal(f.data.get(jobPath).restartRequired,undefined);
+ await f.improve();const start=f.calls.length;
+ assert.equal((await advanceEventPublication(f.runtime)).published,true);
+ assert.equal(f.calls.slice(start).includes(':runQuery'),false,'repaired checkpoint remains reusable');
+});
+
+test('older reuse invocation cannot overwrite a newer finite publication',async()=>{
+ const f=await combinedFixture();await f.improve();
+ const request=f.runtime.request;let overlapped=false,newer;
+ f.runtime.request=async(route,init)=>{
+   const result=await request(route,init);
+   if(route===':commit'&&!overlapped){
+     overlapped=true;
+     f.data.set(C.totals+'/new',{accountId:'new',name:'New',rp:9999,events:1});
+     f.data.get(C.public+'/totals').revision++;
+     assert.equal((await advanceEventPublication(f.runtime)).published,true);
+     newer=structuredClone(f.data.get(C.public+'/totals_full'));
+   }
+   return result;
+ };
+ await assert.rejects(advanceEventPublication(f.runtime),error=>error.code==='event_publication_conflict');
+ assert.equal(overlapped,true);
+ assert.deepEqual(f.data.get(C.public+'/totals_full'),newer);
+ assert.equal(newer.entries[0].accountId,'new');assert.equal(newer.sourceRevision,8);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,false);
+});
+
+test('missing-part invalidation cannot clobber an overlapping completed checkpoint',async()=>{
+ const f=await combinedFixture();await f.improve();
+ const jobPath='0.6.2_event_publication_jobs/event_totals_main',job=f.data.get(jobPath);
+ // Model a terminal scan checkpoint whose final publication has not committed.
+ job.complete=false;
+ const partPath='0.6.2_event_publication_parts/'+job.generation+'_0',part=f.data.get(partPath);
+ f.data.delete(partPath);
+ const request=f.runtime.request;let overlapped=false,newer;
+ f.runtime.request=async(route,init)=>{
+   const result=await request(route,init);
+   if(route===':batchGet'&&!overlapped){
+     overlapped=true;f.data.set(partPath,part);
+     assert.equal((await advanceEventPublication(f.runtime)).published,true);
+     newer=structuredClone(f.data.get(C.public+'/totals_full'));
+   }
+   return result;
+ };
+ await assert.rejects(advanceEventPublication(f.runtime),error=>error.code==='event_publication_conflict');
+ assert.equal(overlapped,true);
+ assert.deepEqual(f.data.get(C.public+'/totals_full'),newer);
+ assert.equal(f.data.get(jobPath).complete,true);assert.equal(f.data.get(jobPath).restartRequired,undefined);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,false);
+});
+
 
 test('blocked permanent dependency yields to pending event periods without acknowledging combined work',async()=>{
  const f=await combinedFixture();f.time(0);await f.service.createPeriod(period);await f.improve();

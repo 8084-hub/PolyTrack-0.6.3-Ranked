@@ -61,7 +61,7 @@ for (const mode of ['place', 'track', 'weight', 'time']) {
   }
 }
 
-test('complete cached board recomputes placement after merging a faster local result', () => {
+for(const cloudConfirmed of [false,true])test('complete cached board recomputes placement and labels upload state: confirmed='+cloudConfirmed, () => {
   const trackId = 'release-156-track';
   const accountId = 'self';
   const snapshot = {
@@ -84,7 +84,7 @@ test('complete cached board recomputes placement after merging a faster local re
     localRaceRowsForTrack: id => localRows.filter(row => row.trackId === id),
     safeRecordingId: value => value || '',
     buildRecordingId: () => 'generated-local-recording',
-    localPbCloudConfirmed: () => false,
+    localPbCloudConfirmed: () => cloudConfirmed,
     entryTimeMs: row => Number(row?.timeMs || 0),
     pbTimestamp: row => Number(row?.createdAt || row?.pbAt || 0),
     knownFinishWeight: ({rank, fieldSize}) => rank && fieldSize ? fieldSize / rank : null,
@@ -114,5 +114,6 @@ test('complete cached board recomputes placement after merging a faster local re
   assert.equal(finish.timeMs, 14000);
   assert.equal(finish.rank, 1);
   assert.equal(finish.fieldSize, 3);
-  assert.equal(finish.local, true);
+  assert.equal(finish.local, !cloudConfirmed);
+  assert.equal(finish.runVerified,false,'upload confirmation is not physics verification');
 });
