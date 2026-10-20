@@ -20,6 +20,12 @@ function localSelection(value, base, now) {
   return current;
 }
 const weeklyLoads=new WeakMap();
+async function fetchWithDeadline(fetcher,url,options,milliseconds){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),milliseconds);
+  try{return await fetcher(url,{...options,signal:controller.signal});}
+  finally{clearTimeout(timer);}
+}
 export async function loadKodubWeekly(options) {
   const fetcher=options.fetcher||fetch,now=options.now??Date.now();
   let loads=weeklyLoads.get(fetcher);if(!loads){loads=new Map();weeklyLoads.set(fetcher,loads);}
@@ -36,15 +42,23 @@ async function fetchKodubWeekly({baseUrl,brokerUrl,fetcher=fetch,now=Date.now()}
   const base = new URL('./kodub/',baseUrl);
   let local = null;
   try {
-    const response = await fetcher(new URL('current.json',base),{cache:'default',signal:AbortSignal.timeout(4000)});
-    if (response.ok) local = localSelection(await response.json(),base,now);
+    const url=new URL('current.json',base);
+    const response = await fetchWithDeadline(fetcher,url,{cache:'default'},4000);
+    if (response.ok) {
+      local = localSelection(await response.json(),base,now);
+      // An expired browser copy must not force school networks onto workers.dev.
+      if(!local){
+        const fresh=await fetchWithDeadline(fetcher,url,{cache:'no-cache'},4000);
+        if(fresh.ok)local=localSelection(await fresh.json(),base,now);
+      }
+    }
   } catch { /* The live feed can recover a missing or expired local copy. */ }
   // Same-origin assets work on networks that block workers.dev and avoid a
   // second native error path. The scheduled capture keeps this copy current.
   if (local) return {serverTime:new Date(now).toISOString(),current:local};
   if (brokerUrl) try {
     const url = new URL('/v1/kodub-weekly',brokerUrl);
-    const response = await fetcher(url,{signal:AbortSignal.timeout(8000)});
+    const response = await fetchWithDeadline(fetcher,url,{},8000);
     if (!response.ok) throw Error('Kodub feed unavailable');
     const current = validateWeekly(await response.json(),now);
     if (current) for (const [field,kind] of [['trackUrl','track'],['thumbnailUrl','image'],['coverUrl','image']]) {

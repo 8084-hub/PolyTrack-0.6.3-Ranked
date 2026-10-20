@@ -33,6 +33,27 @@ test('uses an unexpired same-origin capture without probing the broker',async()=
  assert.equal(result.current.trackUrl,`https://game.test/events/kodub/assets/${hash}.track`);
  assert.equal(brokerReads,0);
 });
+
+test('expired browser capture revalidates same-origin before a blocked broker',async()=>{
+ const calls=[];
+ const result=await loadKodubWeekly({baseUrl,brokerUrl,now,fetcher:async(url,options)=>{
+   calls.push({url:String(url),cache:options.cache,signal:options.signal});
+   assert.ok(String(url).includes('current.json'),'school fallback stays on the game origin');
+   return response(options.cache==='no-cache'?current:{...current,endTime:new Date(now-1).toISOString()});
+ }});
+ assert.equal(result.current.trackId,hash);
+ assert.deepEqual(calls.map(call=>call.cache),['default','no-cache']);
+ assert.ok(calls.every(call=>call.signal instanceof AbortSignal));
+});
+
+test('weekly feed works without the newer AbortSignal.timeout API',async()=>{
+ const original=AbortSignal.timeout;
+ try{
+   AbortSignal.timeout=undefined;
+   const result=await loadKodubWeekly({baseUrl,now,fetcher:async()=>response(current)});
+   assert.equal(result.current.trackId,hash);
+ }finally{AbortSignal.timeout=original;}
+});
 test('missing capture uses broker assets as recovery',async()=>{
  const next={...live,trackId:'b'.repeat(64),name:'Next'};
  const result=await loadKodubWeekly({baseUrl,brokerUrl,now,fetcher:async u=>String(u).includes('current.json')?new Response(null,{status:404}):response(next)});

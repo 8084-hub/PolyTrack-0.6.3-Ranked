@@ -28,6 +28,8 @@ const bannerExpression = patch.match(/const bannerHtml=([\s\S]*?);\r?\n/)?.[1];
 const nativeScale = bundle.match(/df=function\(\)\{return (Math\.max\(\.01,Math\.min\(1,Math\.min\(window\.innerWidth,1\.4375\*window\.innerHeight\)\/1150\)\))\}/)?.[1];
 
 const viewports = [
+  { width: 1366, height: 768, label: 'chromebook' },
+  { width: 1024, height: 600, label: 'short-chromebook' },
   { width: 320, height: 568, label: 'small-phone-portrait' },
   { width: 384, height: 216, label: '500-percent-zoom-equivalent' },
   { width: 560, height: 312, label: 'small-landscape' },
@@ -167,12 +169,13 @@ test('production snapshot card stays at the screen bottom-left without covering 
           const shortPortrait = viewport.width <= 600 && viewport.height <= 650 && viewport.height > viewport.width;
           const compact = viewport.width <= 600 || viewport.height <= 500;
           assert.ok(result.fontSize >= (viewport.height <= 320 ? 6 : shortPortrait ? 14 : compact ? 12 : 15), `${label}: readable text at the native scale`);
-          assert.ok(Math.abs(result.titleRatio - (compact ? 1.05 : 1.2)) < 0.01 && Math.abs(result.detailRatio - (compact ? 1 : 1.05)) < 0.01, `${label}: proportional text`);
+          const statusStrip = viewport.height <= 850 || viewport.width <= 1100;
+          assert.ok(Math.abs(result.titleRatio - (compact || statusStrip ? 1.05 : 1.2)) < 0.01 && Math.abs(result.detailRatio - (compact ? 1 : 1.05)) < 0.01, `${label}: proportional text`);
           if (shortPortrait) assert.equal(result.titleDirection, 'row', `${label}: compact title shares a row`);
-          else if (viewport.width === 390 || result.layout === 'vertical') assert.equal(result.titleDirection, 'column', `${label}: title stacks when space allows`);
+          else if (!statusStrip && (viewport.width === 390 || result.layout === 'vertical')) assert.equal(result.titleDirection, 'column', `${label}: title stacks when space allows`);
           assert.notEqual(result.background, 'rgba(0, 0, 0, 0)', label);
           for (const [index, line] of result.lines.entries()) {
-            if (shortPortrait && index === 2) continue; // Supplementary timestamp stays available to screen readers.
+            if ((statusStrip && index >= 2) || (shortPortrait && index === 2)) continue; // Supplementary details stay available to screen readers.
             assertInside(line, result.card, `${label} status line`);
           }
           for (const overflow of result.overflow) assert.ok(overflow.scrollWidth <= overflow.clientWidth + 1, `${label}: horizontal overflow ${JSON.stringify(overflow)}`);
