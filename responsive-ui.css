@@ -51,7 +51,7 @@ html body :is(#overallProfilePopup,#overallHelpPopup) {
 }
 html body #overallLeaderboardPanel .overall-shell {
   width: min(1540px, calc(var(--sq-available-width) - 16px)) !important;
-  height: min(1100px, calc(var(--sq-available-height) - 16px)) !important;
+  height: calc(var(--sq-available-height) - 16px) !important;
   max-height: calc(var(--sq-available-height) - 16px) !important;
   min-width: 0;
 }
