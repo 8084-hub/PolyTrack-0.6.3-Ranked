@@ -162,9 +162,10 @@
 html body #polytrackTrackFreshness.polytrack-track-freshness {
   --sq-track-data-bg: #253a75;
   position: fixed !important;
-  inset: auto auto max(0.75em, env(safe-area-inset-bottom)) max(0.65em, env(safe-area-inset-left)) !important;
+  inset: auto auto max(var(--sq-track-data-bottom, 12px), env(safe-area-inset-bottom)) max(var(--sq-track-data-left, 12px), env(safe-area-inset-left)) !important;
   z-index: 20;
   width: fit-content !important;
+  min-width: 0 !important;
   transform: none !important;
   pointer-events: none;
   max-width: min(31em, var(--sq-track-data-width, 31em), calc(100vw - 1.25em)) !important;
@@ -184,11 +185,7 @@ html body #polytrackTrackFreshness.polytrack-track-freshness {
   clip-path: none !important;
   box-shadow: 0 0.4em 1.2em rgba(0, 0, 0, .3) !important;
 }
-html body .menu-ui > .track-info-ui:not(.hidden):not([hidden]) {
-  box-sizing: border-box;
-  padding-bottom: var(--sq-track-status-reserve, 0px);
-}
-/* Short laptop screens need a status strip, not a second footer-sized panel. */
+/* Compact typography where space is limited; exterior vertical cards restore details. */
 @media (max-height: 850px), (max-width: 1100px) {
   html body #polytrackTrackFreshness.polytrack-track-freshness {
     font-size: max(15px, calc(16px * var(--sq-ui-scale, 1))) !important;
@@ -249,11 +246,6 @@ html body #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack > 
 }
 html body #overallLeaderboardPanel #overallDailyGrid .overall-challenge-stack > section > small strong {
   font-size: 15px !important;
-}
-@media (max-width: 600px) and (orientation: portrait) {
-  html body .menu-ui > .track-info-ui:not(.hidden):not([hidden]) {
-    padding-bottom: max(54px, var(--sq-track-status-reserve, 0px)) !important;
-  }
 }
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-source="snapshot"],
 html body #polytrackTrackFreshness.polytrack-track-freshness[data-source="mixed"],
@@ -324,6 +316,67 @@ html body #polytrackTrackFreshness.polytrack-track-freshness[data-layout="vertic
 html body #polytrackTrackFreshness[data-local-pb="true"] { box-shadow:inset -3px 0 #c5a8ff,0 8px 24px rgba(0,0,0,.3)!important; }
 html body #polytrackTrackFreshness[data-refresh-failed="true"] { border-left-color:#ffbe91!important; }
 html body #polytrackTrackFreshness[data-source="loading"] { border-left-color:#c6edff!important; }
+/* Snapshot information consumes exterior space only, never native menu space. */
+html:root body #polytrackTrackFreshness.polytrack-track-freshness[data-layout="vertical"] {
+  width: var(--sq-track-data-width) !important;
+  padding: 10px !important;
+  gap: 8px !important;
+  pointer-events: auto;
+}
+html:root body #polytrackTrackFreshness.polytrack-track-freshness[data-layout="vertical"] > strong {
+  flex-direction: column !important;
+  align-items: flex-start;
+  gap: 5px !important;
+}
+html:root body #polytrackTrackFreshness.polytrack-track-freshness[data-layout="vertical"] > span {
+  position: static !important;
+  width: auto !important;
+  height: auto !important;
+  clip-path: none !important;
+  overflow: visible !important;
+}
+html:root body #polytrackTrackFreshness.polytrack-track-freshness[data-layout="compact"] {
+  inset: var(--sq-track-data-top) auto auto var(--sq-track-data-left) !important;
+  width: 32px !important;
+  height: 32px !important;
+  max-height: calc(100dvh - var(--sq-track-data-top) - 12px) !important;
+  padding: 4px !important;
+  cursor: pointer;
+  pointer-events: auto;
+  font-size: 16px !important;
+  border: 1px solid #9bcbe4 !important;
+  border-radius: 50% !important;
+  background: #253a4d !important;
+  display: block !important;
+  text-align: center;
+  overflow: auto !important;
+}
+html:root body #polytrackTrackFreshness[data-layout="compact"]::before {
+  content: 'i';
+  display: block;
+  font: bold italic 20px/22px Georgia, serif;
+  color: #c6edff;
+}
+html:root body #polytrackTrackFreshness[data-layout="compact"]:not([data-expanded="true"]) > * {
+  display: none !important;
+}
+html:root body #polytrackTrackFreshness[data-layout="compact"][data-expanded="true"] {
+  width: var(--sq-track-data-width) !important;
+  height: auto !important;
+  padding: 10px !important;
+  border-radius: 0 !important;
+  text-align: left;
+}
+html:root body #polytrackTrackFreshness[data-layout="compact"][data-expanded="true"] > span {
+  position: static !important;
+  width: auto !important;
+  height: auto !important;
+  clip-path: none !important;
+}
+html:root body #polytrackTrackFreshness[data-layout="compact"]:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
 html body [data-sq-snapshot-refresh-lock] {
   cursor: default !important;
   filter: none !important;

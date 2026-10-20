@@ -83,7 +83,7 @@ test('responsive card harness uses production CSS, font, markup and placement', 
   assert.match(homeCss, /font-size:\s*1\.05em\s*!important/);
 });
 
-test('production snapshot card stays at the screen bottom-left without covering native controls or rows', {
+test('snapshot UI adapts around the native menu without changing its geometry', {
   skip: !chromium && 'Set PLAYWRIGHT_MODULE to run the offline browser check.', timeout: 65000,
 }, async () => {
   const browser = await chromium.launch({ headless: true, timeout: 15000,
@@ -124,6 +124,8 @@ test('production snapshot card stays at the screen bottom-left without covering 
             card.dataset.source = state === 'error-empty' ? 'error' : 'snapshot';
             card.dataset.submittedPb = String(state === 'submitted-pb');
             card.innerHTML = html;
+            const nativeGeometry=()=>JSON.stringify([board.closest('.track-info-ui'),board,...board.children].map(node=>node.getBoundingClientRect().toJSON()));
+            const beforeGeometry=nativeGeometry();
             // Repeated calls must not leave a stale compact layout or oscillate placement.
             window.positionTrackFreshnessBanner(card, board);
             const bottom = card.style.bottom;
@@ -141,6 +143,7 @@ test('production snapshot card stays at the screen bottom-left without covering 
               overlapsFooter: intersects(cardRect, rect(footer)), overlapsPages: intersects(cardRect, rect(pages)), overlapsScrollbar: intersects(cardRect, scrollbar),
               screenCorner: cardRect.left <= 32 && innerHeight - cardRect.bottom <= 32,
               outsideScroll: card.parentElement === document.body && !scroll.contains(card), stableBottom: bottom === card.style.bottom,
+              nativeUnchanged: beforeGeometry===nativeGeometry(),
               completeRacerVisible: rect(scroll).height >= rect(scroll.querySelector('button.main')).height - 1,
               position: style.position, fontFamily: style.fontFamily, fontSize: parseFloat(style.fontSize), titleRatio: parseFloat(title.fontSize) / parseFloat(style.fontSize), detailRatio: parseFloat(details.fontSize) / parseFloat(style.fontSize),
               titleDirection: title.flexDirection, layout: card.dataset.layout || '', background: style.backgroundColor,
@@ -158,7 +161,8 @@ test('production snapshot card stays at the screen bottom-left without covering 
           assertInside(result.pages, result.viewport, `${label} pagination`);
           assert.equal(result.position, 'fixed', label);
           assert.equal(result.outsideScroll, true, `${label}: card remains outside the racer scroll area`);
-          assert.equal(result.screenCorner, true, `${label}: card is anchored to the screen bottom-left`);
+          assert.equal(result.nativeUnchanged, true, `${label}: snapshot UI must never resize or move the native menu`);
+          if(result.layout!=='compact')assert.equal(result.screenCorner, true, `${label}: exterior card is anchored to the screen bottom-left`);
           assert.equal(result.overlapsFooter, false, `${label}: native footer collision`);
           assert.equal(result.overlapsPages, false, `${label}: pagination collision`);
           assert.equal(result.overlapsScrollbar, false, `${label}: scrollbar collision`);
@@ -166,16 +170,17 @@ test('production snapshot card stays at the screen bottom-left without covering 
           assert.equal(result.stableBottom, true, `${label}: repeated placement is stable`);
           assert.equal(result.uiScale, String(scale), `${label}: browser zoom is not UI scale`);
           assert.match(result.fontFamily, /ForcedSquare/, label);
-          const shortPortrait = viewport.width <= 600 && viewport.height <= 650 && viewport.height > viewport.width;
           const compact = viewport.width <= 600 || viewport.height <= 500;
+          const shortPortrait=viewport.width<=600&&viewport.height<=650&&viewport.height>viewport.width;
+          if(result.layout!=='compact'){
           assert.ok(result.fontSize >= (viewport.height <= 320 ? 6 : shortPortrait ? 14 : compact ? 12 : 15), `${label}: readable text at the native scale`);
           const statusStrip = viewport.height <= 850 || viewport.width <= 1100;
           assert.ok(Math.abs(result.titleRatio - (compact || statusStrip ? 1.05 : 1.2)) < 0.01 && Math.abs(result.detailRatio - (compact ? 1 : 1.05)) < 0.01, `${label}: proportional text`);
-          if (shortPortrait) assert.equal(result.titleDirection, 'row', `${label}: compact title shares a row`);
-          else if (!statusStrip && (viewport.width === 390 || result.layout === 'vertical')) assert.equal(result.titleDirection, 'column', `${label}: title stacks when space allows`);
+          if(result.layout==='vertical')assert.equal(result.titleDirection,'column',`${label}: title stacks in side gutter`);
+          }
           assert.notEqual(result.background, 'rgba(0, 0, 0, 0)', label);
           for (const [index, line] of result.lines.entries()) {
-            if ((statusStrip && index >= 2) || (shortPortrait && index === 2)) continue; // Supplementary details stay available to screen readers.
+            if(result.layout==='compact'||(result.layout==='horizontal'&&index>=2))continue;
             assertInside(line, result.card, `${label} status line`);
           }
           for (const overflow of result.overflow) assert.ok(overflow.scrollWidth <= overflow.clientWidth + 1, `${label}: horizontal overflow ${JSON.stringify(overflow)}`);
@@ -188,6 +193,22 @@ test('production snapshot card stays at the screen bottom-left without covering 
         }
       }
     }
+    await page.setViewportSize({width:390,height:844});
+    await page.evaluate(()=>{
+      const scale=window.nativeTrackUiScale(),root=document.getElementById('ui');
+      root.style.width=`calc(100% / ${scale})`;root.style.height=`calc(100% / ${scale})`;root.style.transform=`scale(${scale})`;
+      window.positionTrackFreshnessBanner(document.getElementById('polytrackTrackFreshness'),document.querySelector('.leaderboard-ui'));
+    });
+    const info=page.getByRole('button',{name:'Track data information',exact:true});
+    assert.equal(await info.getAttribute('aria-expanded'),'false');
+    const nativeBefore=await page.locator('.track-info-ui').boundingBox();
+    await info.click();
+    assert.equal(await info.getAttribute('aria-expanded'),'true');
+    const popup=await info.boundingBox();
+    assert.ok(popup.x>=0&&popup.x+popup.width<=390&&popup.y+popup.height<=844,'expanded information fits the phone');
+    await info.press('Escape');
+    assert.equal(await info.getAttribute('aria-expanded'),'false');
+    assert.deepEqual(await page.locator('.track-info-ui').boundingBox(),nativeBefore,'opening and closing info never changes the menu');
     for(const source of ['snapshot','mixed','cache','live','local','error']){
       const contrast=await page.locator('#polytrackTrackFreshness').evaluate((el,source)=>{
         el.dataset.source=source;
