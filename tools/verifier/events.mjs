@@ -7,6 +7,8 @@ import { reviewInboxWrite } from './review-inbox.mjs';
 import { VerificationEventConflictError } from './throughput.mjs';
 
 export const EVENT_JOB_LIMIT = 16;
+const DISCOVERY_REQUEST_RESERVE = 24;
+const BATCH_REQUEST_RESERVE = 136;
 async function deferEventConflict(work) {
   try { return await work(); }
   catch (error) {
@@ -46,9 +48,11 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
   if (!Number.isInteger(intakeLimit) || intakeLimit < 1 || intakeLimit > 16) throw Error('Event intake limit');
   let consumed = 0, rejected = false, budgetDeferred = false;
   let eventFindingsAdded = 0, eventFindingWriteFailed = 0;
-  for (let i = 0; i < intakeLimit; i++) {
+  // Do not pay to admit more receipts than this round can verify. Unread
+  // receipts remain behind the durable cursor for the next bounded round.
+  for (let i = 0; i < Math.min(intakeLimit, limit); i++) {
     // Two bounded intake transactions plus discovery and one leased batch must fit.
-    if (!canSpend(48 + 24 + 128)) { budgetDeferred = true; break; }
+    if (!canSpend(48 + DISCOVERY_REQUEST_RESERVE + BATCH_REQUEST_RESERVE)) { budgetDeferred = true; break; }
     let intake;
     try { intake = await consumeInbox(r, { preferRetry: i % 2 === 0 }); }
     catch (error) {
@@ -61,8 +65,11 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
     rejected ||= intake.rejected === true;
     if (!intake.consumed) break;
   }
-  if (!canSpend(24)) return {checked:0,consumed,rejected,archived:null,results:[],budgetDeferred:true};
-  const work = await readWork(r);
+  if (!canSpend(DISCOVERY_REQUEST_RESERVE + BATCH_REQUEST_RESERVE))
+    return {checked:0,consumed,rejected,archived:null,results:[],budgetDeferred:true};
+  // Intake has already checked the inbox. Only queue and archive discovery
+  // affect this round; the standalone due gate still inspects inbox/retries.
+  const work = await readWork(r, {inspectInbox:false});
   let checked = 0;
   const results = [];
   const pending = [...work.periodIds];
@@ -74,7 +81,7 @@ export async function runEventCoordinator(r, root, { verifyBatch, limit = EVENT_
     // Reserve before leasing: one lease and up to four completion transactions.
     // Existing adapter has no retries; each transaction uses at most sixteen reads.
     // Four findings may each require one inbox read and one commit after publication.
-    if (!canSpend(136)) { budgetDeferred = true; break; }
+    if (!canSpend(BATCH_REQUEST_RESERVE)) { budgetDeferred = true; break; }
     const periodId = pending.shift();
     const reviewCandidates = new Map();
     const published = await deferEventConflict(() => r.service.processBatch(periodId, (jobs,period)=>{

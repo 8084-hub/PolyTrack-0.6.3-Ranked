@@ -3,7 +3,7 @@ const positiveInt = value => Number.isSafeInteger(Number(value)) && Number(value
 const cleanText = value => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 100);
 const hash = value => /^[a-f0-9]{64}$/.test(value || '');
 const publicIdPattern = /^[A-Za-z0-9_-]{1,256}$/;
-const numbers = ['activeMs', 'simulatedMs', 'sincePbMs', 'attempts', 'finishes', 'pbs', 'restarts', 'respawns', 'lastPlayedAt', 'lastPbAt', 'trackingStartedAt', 'legacyActiveMs', 'furthestCheckpoint', 'bestMs', 'improvedMs', 'focusedMs', 'pausedMs', 'hiddenMs', 'movingMs', 'longestHuntMs', 'biggestImprovementMs', 'biggestObservedImprovementMs', 'biggestPbImprovementMs', 'trackedBestMs', 'motionObservedMs', 'stationaryMs', 'progressingMs', 'idleMs', 'unobservedGapMs', 'observationVersion', 'observedStartedAt'];
+const numbers = ['activeMs', 'simulatedMs', 'sincePbMs', 'attempts', 'finishes', 'pbs', 'restarts', 'restartsSincePb', 'respawns', 'lastPlayedAt', 'lastPbAt', 'trackingStartedAt', 'legacyActiveMs', 'furthestCheckpoint', 'bestMs', 'improvedMs', 'focusedMs', 'pausedMs', 'hiddenMs', 'movingMs', 'longestHuntMs', 'biggestImprovementMs', 'biggestObservedImprovementMs', 'biggestPbImprovementMs', 'trackedBestMs', 'lastObservedFinishMs', 'lastObservedFinishAt', 'motionObservedMs', 'stationaryMs', 'progressingMs', 'idleMs', 'unobservedGapMs', 'observationVersion', 'observedStartedAt'];
 const resultNumbers = ['timeMs', 'rank', 'fieldSize', 'weight', 'cachedAt', 'snapshotCapturedAt'];
 const settingNames = new Set(['music', 'sound', 'showFps', 'showGhost', 'cameraShake', 'sensitivity', 'volume', 'fov', 'renderDistance', 'resolutionScale', 'graphics', 'shadows', 'antialiasing', 'uiTextScale', 'compactTrackPanel', 'plannerCurrentOnly', 'plannerOfficialOnly']);
 const insightSources = ['planner', 'profile', 'leaderboard', 'event', 'selection', 'unknown'];
@@ -27,9 +27,9 @@ function sanitizeInsights(insights) {
  const transitions = {};
  for (const [key, count] of Object.entries(insights.transitions || {}).filter(([key]) => /^[a-f0-9]{64}:[a-f0-9]{64}$/.test(key)).slice(0, 512)) transitions[key] = finite(count);
  const metrics = {};
- for (const [key, row] of Object.entries(insights.metrics || {}).filter(([key]) => /^[A-Z0-9_-]{1,32}$/.test(key)).slice(0, 32)) metrics[key] = { count: finite(row?.count), totalMs: finite(row?.totalMs), maxMs: finite(row?.maxMs), over5s: finite(row?.over5s), averageMs: finite(row?.averageMs), over5sPercent: finite(row?.over5sPercent) };
+ for (const [key, row] of Object.entries(insights.metrics || {}).filter(([key]) => /^[A-Z0-9_-]{1,32}$/.test(key)).slice(0, 32)) metrics[key] = { count: finite(row?.count), totalMs: finite(row?.totalMs), maxMs: finite(row?.maxMs), over5s: finite(row?.over5s), over30s: finite(row?.over30s), averageMs: finite(row?.averageMs), over5sPercent: finite(row?.over5sPercent), over30sPercent: finite(row?.over30sPercent) };
  const actions = Object.fromEntries(Object.entries(insights.actions || {}).filter(([key]) => /^[a-z-]{1,32}$/.test(key)).slice(0, 32).map(([key, value]) => [key, finite(value)]));
- return { version: 1, scope: 'This browser device; navigation and version observations may span local racer profiles', startedAt: finite(insights.startedAt), revisions, tracks, transitions, metrics, actions };
+ return { version: 1, scope: 'This browser device; navigation and version observations may span local racer profiles', startedAt: finite(insights.startedAt), latencyCapMs: insights.latencyCapMs === 30000 ? 30000 : null, revisions, tracks, transitions, metrics, actions };
 }
 
 function practiceEvidence(row){
@@ -49,19 +49,24 @@ function summarizePractice(practice) {
  };
 }
 
-export function buildDeveloperReport({ practice = [], coverage = null, finishes = [], localResults = [], snapshot = {}, events = [], viewport = {}, publicId = '', includePublicId = false, clientRevision = 156, insights = null, extraTracks = [], settings = null, localData = null } = {}) {
+export function buildDeveloperReport({ practice = [], coverage = null, finishes = [], localResults = [], snapshot = {}, events = [], viewport = {}, publicId = '', includePublicId = false, includeSavedTrackCodes, clientRevision = 156, insights = null, extraTracks = [], settings = null, localData = null } = {}) {
  const rows = Array.isArray(practice) ? practice.slice(0, 256) : [];
  const localRows = Array.isArray(localResults) ? localResults : [];
  const trackRows = Array.isArray(extraTracks) ? extraTracks : [];
  const profileRows = Array.isArray(localData?.profiles) ? localData.profiles : [];
  const localTrackRows = Array.isArray(localData?.tracks) ? localData.tracks : [];
  const localPracticeRows = Array.isArray(localData?.practice) ? localData.practice : [];
- const includesLocalData = includePublicId === true;
+ const savedTrackRows = Array.isArray(localData?.savedTracks) ? localData.savedTracks : [];
+ const includesLocalData = includePublicId === true || includePublicId?.includePublicId === true;
+ // A boolean true keeps the historical full-export API; the dialog passes explicit choices.
+ const codeChoice = typeof includeSavedTrackCodes === 'boolean' ? includeSavedTrackCodes :
+  typeof includePublicId === 'object' ? includePublicId?.includeSavedTrackCodes === true : includePublicId === true;
+ const includesSavedTrackCodes = includesLocalData && codeChoice;
  const sanitizedSettings = settings && typeof settings === 'object' ? Object.fromEntries(Object.entries(settings).filter(([key]) => settingNames.has(key)).filter(([, value]) => typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))).slice(0, settingNames.size)) : null;
  return {
   schema: 'polytrack-developer-diagnostics-v1', revision: finite(clientRevision), diagnosticsRevision: 158, exportedAt: new Date().toISOString(),
-  privacy: { automaticUpload: false, includesPublicId: includesLocalData && (hash(publicId) || profileRows.some(row => opaqueId(row?.publicId || row?.accountId))), includesLocalProfiles: includesLocalData, limitations: 'Client observations are incomplete and untrusted. Timing notes are not cheating verdicts. Practice coverage is partial and does not imply legacy playtime was tracked. Request events are not billed Firebase operations.' },
-  ...(includePublicId && hash(publicId) ? { publicRacerId: publicId } : {}),
+  privacy: { automaticUpload: false, includesPublicId: includesLocalData && (hash(publicId) || profileRows.some(row => opaqueId(row?.publicId || row?.accountId))), includesLocalProfiles: includesLocalData, includesSavedTrackCodes, limitations: 'Client observations are incomplete and untrusted. Timing notes are not cheating verdicts. Practice coverage is partial and does not imply legacy playtime was tracked. Request events are not billed Firebase operations.' },
+  ...(includesLocalData && hash(publicId) ? { publicRacerId: publicId } : {}),
   snapshot: { generation: finite(snapshot.generation), capturedAt: finite(snapshot.capturedAt) },
   viewport: selectNumbers(viewport, ['width', 'height', 'pixelRatio']),
   practiceCoverage: coverage ? { version: 2, scope: 'Known reported/device visible-time estimate, not full historical driving coverage', ...selectNumbers(coverage, ['startedAt', 'baselinePlaytimeMs', 'knownPlaytimeMs', 'observedVisibleMs', 'coverageFraction']) } : null,
@@ -69,21 +74,22 @@ export function buildDeveloperReport({ practice = [], coverage = null, finishes 
   loadedResults: (Array.isArray(finishes) ? finishes : []).slice(0, 256).map(sanitizeResult),
   localResults: localRows.slice(0, 5000).map(sanitizeResult),
   insights: sanitizeInsights(insights),
+  savedTrackSummary: { count: finite(localData?.collection?.savedTrackCount ?? savedTrackRows.length), bytes: finite(localData?.collection?.savedTrackBytes ?? savedTrackRows.reduce((sum, row) => sum + (typeof row?.data === 'string' ? new TextEncoder().encode(row.data).length : 0), 0)) },
   extraTracks: trackRows.slice(0, 5000).map(row => ({ trackId: opaqueId(row?.trackId ?? row?.id), name: cleanText(row?.name), author: cleanText(row?.author) })),
   localData: includesLocalData ? {
-   profiles: profileRows.slice(0, 500).map(row => ({ publicId: opaqueId(row?.publicId ?? row?.accountId), name: cleanText(row?.name ?? row?.nickname), carStyle: cleanText(row?.carStyle), countryCode: cleanText(row?.countryCode), carColors: Array.isArray(row?.carColors) ? row.carColors.slice(0, 16).map(value => cleanText(value)) : cleanText(row?.carColors), cosmetics: row?.cosmetics && typeof row.cosmetics === 'object' ? Object.fromEntries(Object.entries(row.cosmetics).filter(([key, value]) => /^[a-zA-Z0-9_-]{1,40}$/.test(key) && !/(token|auth|credential|password|secret|socket|uid|email|replay|connection)/i.test(key) && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')).slice(0, 64).map(([key, value]) => [key, typeof value === 'string' ? cleanText(value) : value])) : null, playtimeMs: finite(row?.playtimeMs), personalBests: (Array.isArray(row?.personalBests) ? row.personalBests : []).slice(0, 5000).map(pb => ({ trackId: opaqueId(pb?.trackId), trackName: cleanText(pb?.trackName), timeMs: finite(pb?.timeMs), frames: finite(pb?.frames), achievedAt: finite(pb?.achievedAt), mode: ['default','undeterministic'].includes(pb?.mode)?pb.mode:'default' })) })),
-   collection: localData?.collection?{...selectNumbers(localData.collection,['blockedReads','nativeProfiles','profileCount','pbCount']),scope:cleanText(localData.collection.scope)}:null,
-   savedTracks: (Array.isArray(localData?.savedTracks)?localData.savedTracks:[]).slice(0,5000).map(row=>({name:cleanText(row?.name),data:typeof row?.data==='string'&&row.data.length<=2*1024*1024?row.data:null,savedAt:finite(row?.savedAt),omittedBytes:typeof row?.data==='string'&&row.data.length>2*1024*1024?new TextEncoder().encode(row.data).length:0})),
-   tracks: localTrackRows.slice(0, 5000).map(row => ({ trackId: opaqueId(row?.trackId ?? row?.id), name: cleanText(row?.name), author: cleanText(row?.author), source: cleanText(row?.source), official: typeof row?.official === 'boolean' ? row.official : null })),
-   practice: localPracticeRows.slice(0, 500).map(row => ({ publicId: opaqueId(row?.publicId), trackId: opaqueId(row?.trackId), trackName: cleanText(row?.trackName), ...selectNumbers(row, numbers), ...practiceEvidence(row), resetTimingBuckets: Array.from({ length: 4 }, (_, i) => finite(row?.restartBuckets?.[i])), recentFinishes: (Array.isArray(row?.recentFinishes) ? row.recentFinishes : []).slice(-8).map(run => ({ ...selectNumbers(run, ['at', 'timeMs', 'practiceMs']), timingNote: run?.timingNote === true })) }))
+   profiles: profileRows.map(row => ({ publicId: opaqueId(row?.publicId ?? row?.accountId), name: cleanText(row?.name ?? row?.nickname), carStyle: cleanText(row?.carStyle), countryCode: cleanText(row?.countryCode), carColors: Array.isArray(row?.carColors) ? row.carColors.slice(0, 16).map(value => cleanText(value)) : cleanText(row?.carColors), cosmetics: row?.cosmetics && typeof row.cosmetics === 'object' ? Object.fromEntries(Object.entries(row.cosmetics).filter(([key, value]) => /^[a-zA-Z0-9_-]{1,40}$/.test(key) && !/(token|auth|credential|password|secret|socket|uid|email|replay|connection)/i.test(key) && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')).slice(0, 64).map(([key, value]) => [key, typeof value === 'string' ? cleanText(value) : value])) : null, playtimeMs: finite(row?.playtimeMs), personalBests: (Array.isArray(row?.personalBests) ? row.personalBests : []).map(pb => ({ trackId: opaqueId(pb?.trackId), trackName: cleanText(pb?.trackName), timeMs: finite(pb?.timeMs), frames: finite(pb?.frames), achievedAt: finite(pb?.achievedAt), mode: ['default','undeterministic'].includes(pb?.mode)?pb.mode:'default' })) })),
+   collection: localData?.collection?{...selectNumbers(localData.collection,['blockedReads','nativeProfiles','profileCount','pbCount','savedTrackCount','savedTrackBytes']),scope:cleanText(localData.collection.scope)}:null,
+   savedTracks: savedTrackRows.map(row => ({ name: cleanText(row?.name), savedAt: finite(row?.savedAt), bytes: finite(row?.bytes ?? (typeof row?.data === 'string' ? new TextEncoder().encode(row.data).length : 0)), ...(includesSavedTrackCodes ? { data: typeof row?.data === 'string' ? row.data : null } : {}) })),
+   tracks: localTrackRows.map(row => ({ trackId: opaqueId(row?.trackId ?? row?.id), name: cleanText(row?.name), author: cleanText(row?.author), source: cleanText(row?.source), official: typeof row?.official === 'boolean' ? row.official : null })),
+   practice: localPracticeRows.map(row => ({ publicId: opaqueId(row?.publicId), trackId: opaqueId(row?.trackId), trackName: cleanText(row?.trackName), ...selectNumbers(row, numbers), ...practiceEvidence(row), resetTimingBuckets: Array.from({ length: 4 }, (_, i) => finite(row?.restartBuckets?.[i])), recentFinishes: (Array.isArray(row?.recentFinishes) ? row.recentFinishes : []).slice(-8).map(run => ({ ...selectNumbers(run, ['at', 'timeMs', 'practiceMs']), timingNote: run?.timingNote === true })) }))
   } : null,
   truncation: {
    localResults: { omitted: Math.max(0, localRows.length - 5000) },
    extraTracks: { omitted: Math.max(0, trackRows.length - 5000) },
-   localProfiles: { omitted: includesLocalData ? Math.max(0, profileRows.length - 500) : profileRows.length },
-   localPersonalBests: { omitted: includesLocalData ? profileRows.reduce((sum, row, index) => sum + (index >= 500 ? (Array.isArray(row?.personalBests) ? row.personalBests.length : 0) : Math.max(0, (Array.isArray(row?.personalBests) ? row.personalBests.length : 0) - 5000)), 0) : 0 },
-   localTracks: { omitted: includesLocalData ? Math.max(0, localTrackRows.length - 5000) : localTrackRows.length },
-   localPractice: { omitted: includesLocalData ? Math.max(0, localPracticeRows.length - 500) : localPracticeRows.length }
+   localProfiles: { omitted: includesLocalData ? 0 : profileRows.length },
+   localPersonalBests: { omitted: 0 },
+   localTracks: { omitted: includesLocalData ? 0 : localTrackRows.length },
+   localPractice: { omitted: includesLocalData ? 0 : localPracticeRows.length }
   },
   settings: sanitizedSettings,
   practiceSummary: summarizePractice(rows),
@@ -94,10 +100,13 @@ export function buildDeveloperReport({ practice = [], coverage = null, finishes 
 export function openDiagnostics({ report, returnFocus = document.activeElement } = {}) {
  document.getElementById('polytrackDeveloperDialog')?.remove();
  const dialog = document.createElement('dialog'); dialog.id = 'polytrackDeveloperDialog'; dialog.className = 'sq-developer-dialog';
- dialog.innerHTML = '<header><h2>Export developer diagnostics</h2><button type="button" data-close aria-label="Close developer diagnostics">Close</button></header><main><p>Copy or download a JSON report to share with a developer. Nothing is uploaded automatically.</p><label><input type="checkbox" data-public-id> Include public racer IDs and all local profiles</label><details><summary>What is included?</summary><p>The checked option includes public racer IDs and names for local profiles, car colors, cosmetic selections, playtime and per-track personal bests. The report also contains local practice details and loaded track metadata. These IDs are public identifiers, not passwords, but can identify or link your racer profiles.</p><p>Without the checkbox, local profiles, their public IDs and per-profile personal bests are omitted. Saved custom-track codes are included with the checked option; do not share a report if it contains tracks you want to keep private. No raw generic storage, credentials, authentication tokens, socket credentials, passwords, connection codes or unrelated origin storage are read or included. Practice coverage is incomplete and legacy playtime was not necessarily tracked. Timing notes are not cheating verdicts and client data is not proof of fair play.</p></details><p role="status" aria-live="polite" data-status></p></main><footer><button type="button" data-download>Download JSON</button><button type="button" data-copy>Copy JSON</button></footer>';
+ dialog.innerHTML = '<header><h2>Export developer diagnostics</h2><button type="button" data-close aria-label="Close developer diagnostics">Close</button></header><main><p>Copy or download a report. Nothing uploads automatically.</p><label><input type="checkbox" data-public-id> Include local profiles and PBs</label><details><summary>More export options</summary><p>The basic report includes practice, results, settings and timing summaries. Profile opt-in adds racer IDs, names, appearance, playtime and PBs. Saved-track metadata is included without codes.</p><label><input type="checkbox" data-saved-codes disabled> Include saved track codes</label><p>Codes can reveal private tracks. Credentials are never included. Review JSON before sharing; timing notes are not cheating verdicts.</p></details><p role="status" aria-live="polite" data-status></p></main><footer><button type="button" data-download>Download JSON</button><button type="button" data-copy>Copy JSON</button></footer>';
  const status = dialog.querySelector('[data-status]');
- const makeJson = () => JSON.stringify(report(dialog.querySelector('[data-public-id]').checked), null, 2);
- dialog.querySelector('[data-public-id]').addEventListener('change',()=>{const button=dialog.querySelector('[data-copy]');button.classList.remove('is-success');button.textContent='Copy JSON';status.textContent='Export options changed. Copy again to update the clipboard.';});
+ const profileChoice=dialog.querySelector('[data-public-id]'),codesChoice=dialog.querySelector('[data-saved-codes]');
+ const makeJson = () => JSON.stringify(report(profileChoice.checked ? {includePublicId:true,includeSavedTrackCodes:codesChoice.checked} : false), null, 2);
+ const changed = () => {const button=dialog.querySelector('[data-copy]');button.classList.remove('is-success');button.textContent='Copy JSON';status.textContent='Export options changed. Copy again to update the clipboard.';};
+ profileChoice.addEventListener('change',()=>{codesChoice.disabled=!profileChoice.checked;if(codesChoice.disabled)codesChoice.checked=false;changed();});
+ codesChoice.addEventListener('change',changed);
  const close = () => dialog.close();
  dialog.querySelector('[data-close]').addEventListener('click', close);
  dialog.addEventListener('close', () => { dialog.remove(); if (returnFocus?.isConnected && !returnFocus.disabled) returnFocus.focus({ preventScroll: true }); });

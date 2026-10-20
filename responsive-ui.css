@@ -81,8 +81,24 @@ html body #overallHelpPopup .overall-help-grid {
   gap: 14px !important;
   align-items: start;
 }
-html body #overallHelpPopup .overall-help-grid section { min-width: 0; padding: 12px; overflow-wrap: anywhere; }
+html body #overallLeaderboardPanel #overallHelpPopup .overall-help-grid section { min-width: 0; padding: 12px; overflow-wrap: anywhere; grid-column: auto !important; }
+html body #overallHelpPopup .overall-help-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+html body #overallHelpPopup .overall-help-head h3 { font-size: clamp(22px, 3vw, 32px); min-width: 0; }
+html body #overallHelpPopup #overallHelpClose { flex: 0 0 auto; width: auto !important; min-width: 88px !important; min-height: 44px !important; padding: 8px 18px !important; font-size: 17px !important; white-space: nowrap; }
 html body #overallHelpPopup .overall-help-grid p { line-height: 1.4; }
+html body #overallHelpPopup .overall-help-content > h4 { margin: 20px 0 6px; color: #9ce8ff; }
+html body #overallHelpPopup .ranked-help-note { margin: 0 0 12px; color: #becde8; line-height: 1.4; }
+html body #overallHelpPopup .ranked-help-sections { display: grid; gap: 8px; }
+html body #overallHelpPopup .ranked-help-controls { min-width: 0; border: 1px solid #4b6690; background: #17264c; }
+html body #overallHelpPopup .ranked-help-controls summary { min-height: 44px; box-sizing: border-box; padding: 12px 16px; cursor: pointer; color: #e1f6ff; }
+html body #overallHelpPopup .ranked-help-controls summary:focus-visible { outline: 2px solid #8ee9ff; outline-offset: -3px; }
+html body #overallHelpPopup .ranked-help-controls[open] summary { background: #29416f; border-bottom: 1px solid #4b6690; }
+html body #overallHelpPopup .ranked-help-controls dl { margin: 0; padding: 4px 16px 12px; }
+html body #overallHelpPopup .ranked-help-controls dl > div { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 0; border-bottom: 1px solid #304568; }
+html body #overallHelpPopup .ranked-help-controls dl > div:last-child { border-bottom: 0; }
+html body #overallHelpPopup .ranked-help-controls dt { flex: 1 1 210px; min-width: 0; color: #96e7ff; }
+html body #overallHelpPopup .ranked-help-controls dd { flex: 2 1 260px; min-width: 0; margin: 0; line-height: 1.5; color: #e2eafb; }
+html body #overallHelpPopup .ranked-help-controls kbd { font: inherit; overflow-wrap: anywhere; }
 html body #overallHelpPopup .overall-help-actions { position: sticky; bottom: 0; background: #25386c; padding-block: 8px; }
 html body .pt-group-filter-menu .fm-shell {
   max-width: calc(var(--sq-available-width) - 24px) !important;

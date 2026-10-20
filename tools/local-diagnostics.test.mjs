@@ -11,3 +11,11 @@ test('per-profile best times stay separate, native undeterministic results retai
  const data=await collectLocalDiagnostics({storage:storage(values),hashToken:async()=>id,localRows:[{accountId:id,trackId:track,timeMs:222},{accountId:other,trackId:track,timeMs:333}]});
  assert.equal(data.profiles.length,2);assert.equal(data.profiles.find(p=>p.publicId===id).personalBests.length,2);assert.equal(data.profiles.find(p=>p.publicId===other).personalBests[0].timeMs,333);assert.equal(data.profiles[0].personalBests.find(p=>p.mode==='undeterministic').timeMs,111);
 });
+test('saved custom-track codes stay available only to the later export consent gate',async()=>{
+ const key='polytrack_v5_prod_track_private';
+ const values={[key]:JSON.stringify({data:'PRIVATE-TRACK-CODE',saveTime:123})};
+ const data=await collectLocalDiagnostics({storage:storage(values)});
+ assert.equal(data.collection.savedTrackCount,1);
+ assert.equal(data.collection.savedTrackBytes,18);
+ assert.deepEqual(data.savedTracks,[{name:'private',data:'PRIVATE-TRACK-CODE',savedAt:123,bytes:18}]);
+});

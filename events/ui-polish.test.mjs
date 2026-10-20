@@ -41,6 +41,16 @@ test('featured event metadata and PB icons fit desktop and phone viewports',asyn
   await page.addStyleTag({content:css});
   for(const [width,height] of [[1366,600],[1024,600],[844,390],[390,844],[320,568]]){
    await page.setViewportSize({width,height});
+   const cardHeights=await page.locator('.sq-kodub-weekly>.button,.sq-permanent-track>.button,.sq-event-track-buttons>.sq-event-card').evaluateAll(nodes=>nodes.map(node=>node.getBoundingClientRect().height));
+   assert.equal(cardHeights.length,4);
+   if(width>480)assert(Math.max(...cardHeights)-Math.min(...cardHeights)<=1,`featured card heights match at ${width}: ${cardHeights}`);
+   else{
+    assert(cardHeights.slice(1,3).every(height=>height<=250),`short-copy phone cards stay compact at ${width}: ${cardHeights}`);
+    assert(cardHeights[3]<=300,`long-copy daily phone card grows only for content at ${width}: ${cardHeights}`);
+    const phoneCards=await page.locator('.sq-kodub-weekly>.button,.sq-permanent-track>.button,.sq-event-track-buttons>.sq-event-card').evaluateAll(nodes=>nodes.map(node=>({top:node.getBoundingClientRect().top,width:node.getBoundingClientRect().width,ratio:getComputedStyle(node).aspectRatio})));
+    assert(phoneCards.every(card=>card.width>=width-48&&card.ratio==='auto'),`phone cards use full-width content sizing at ${width}: ${JSON.stringify(phoneCards)}`);
+    assert(phoneCards.every((card,index)=>index===0||card.top>phoneCards[index-1].top),`phone cards form one column at ${width}`);
+   }
    for(const card of await page.locator('.sq-event-card').all()){
     const box=await card.boundingBox(),reset=await card.locator('.sq-event-reset').boundingBox();
     assert(box.x>=0&&box.x+box.width<=width+1,`card fits ${width}`);
@@ -53,6 +63,7 @@ test('featured event metadata and PB icons fit desktop and phone viewports',asyn
    assert.equal(icon.height,22);assert.equal(icon.width,22);
    assert(icon.y>=line.y&&icon.y+icon.height<=line.y+line.height+1,`timer stays in PB row ${width}`);
    assert.equal(await page.locator('.sq-kodub-reward').evaluate(e=>getComputedStyle(e).backgroundColor),'rgba(0, 0, 0, 0)');
+   if((width===1366||width===390)&&process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR)await page.screenshot({path:process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR+'/event-cards-'+width+'.png',fullPage:true});
   }
  }finally{await browser.close();}
 });

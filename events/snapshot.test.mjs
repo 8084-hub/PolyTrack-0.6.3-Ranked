@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 const source=fs.readFileSync(new URL('./client.mjs',import.meta.url),'utf8');
 const fn=source.slice(source.indexOf('  async function snapshot('),source.indexOf('  function updateEventRefreshControl('));
-function fixture(readSnapshot){
+function fixture(readSnapshot,readArchivedSnapshot){
  const cache=new Map(),snapshotFetching=new Map(),snapshotAttempts=new Map(),saved=new Map();let at=1000000;
- const context={cache,snapshotFetching,snapshotAttempts,catalog:{periods:[]},read:(k,v)=>saved.get(k)??v,cacheWrite:(k,v)=>saved.set(k,v),STORE:'test',now:()=>at,bridge:{readSnapshot}};
+ const context={cache,snapshotFetching,snapshotAttempts,catalog:{periods:[]},read:(k,v)=>saved.get(k)??v,cacheWrite:(k,v)=>saved.set(k,v),STORE:'test',now:()=>at,bridge:{readSnapshot,readArchivedSnapshot}};
  return {cache,snapshotFetching,snapshotAttempts,saved,advance:ms=>{at+=ms;},run:vm.runInNewContext('('+fn+')',context)};
 }
 const period={id:'p',trackId:'a'.repeat(64)};
@@ -64,4 +64,28 @@ test('a flagged fallback preserves failure state even when the newer cached boar
  const result=await f.run(period,true);assert.equal(result.updatedAt,20);assert.ok(f.snapshotAttempts.get('p').error);
  f.advance(60000);await f.run(period,true);assert.equal(calls,1);
  f.advance(60000);await f.run(period,true);assert.equal(calls,2);
+});
+
+test('finalized archive reads only the saved static snapshot and reuses it permanently',async()=>{
+ let live=0,staticReads=0;
+ const f=fixture(async()=>{live++;throw Error('Live service must not be called');},async()=>{staticReads++;return {...board(20),archived:true};});
+ const archived={...period,archived:true};
+ const [first,second]=await Promise.all([f.run(archived),f.run(archived)]);
+ assert.equal(first,second);assert.equal(first.archived,true);
+ f.advance(86400000);assert.equal(await f.run(archived,true),first);
+ assert.equal(staticReads,1);assert.equal(live,0);
+});
+
+test('missing or incomplete static archive never falls through to live reads',async()=>{
+ for(const staticRead of [undefined,async()=>null,async()=>board(20)]){
+  let live=0;const f=fixture(async()=>{live++;return board(30);},staticRead);
+  await assert.rejects(f.run({...period,archived:true}),/archive/i);
+  assert.equal(live,0);
+ }
+});
+
+test('cached finalized archive does not refresh through the live service',async()=>{
+ let live=0;const f=fixture(async()=>{live++;return board(30);});
+ const saved={...board(20),archived:true,fetchedAt:1};f.cache.set(period.id,saved);
+ assert.equal(await f.run(period,true),saved);assert.equal(live,0);
 });

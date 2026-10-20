@@ -7,13 +7,13 @@ const source=fs.readFileSync(path.join(__dirname,'..','polytrack_062_patch.js'),
 const start=source.indexOf('  let overallPageOffset=0;');
 const end=source.indexOf('  function handleArchivePageShortcut(',start);
 function fixture(){
- let now=1000;const jumps=[];const panel={querySelector:()=>null};
+ let now=1000;const jumps=[];const favorites=[];const panel={querySelector:()=>null,querySelectorAll:()=>Array.from({length:4},(_,i)=>({click:()=>favorites.push(i+1)}))};
  const context=vm.createContext({Date:{now:()=>now},HTMLInputElement:class{},HTMLTextAreaElement:class{},HTMLSelectElement:class{},document:{getElementById:()=>panel},isElementVisible:value=>Boolean(value),overallPage:4,currentLeaderboardCount:()=>400,OVERALL_PAGE_SIZE:10,
  shortcutDigit:event=>/^Digit[0-9]$/.test(event.code)?Number(event.code.at(-1))||10:null,
  jumpOverallPage:page=>{if(page<1||page>40)return false;jumps.push(page);context.overallPage=page-1;return true;},changeOverallPage:delta=>context.overallPage+=delta});
  vm.runInContext(source.slice(start,end),context);
  const key=(code,other={})=>context.handleOverallLeaderboardShortcut({code,key:'',target:null,shiftKey:true,preventDefault(){},stopPropagation(){},...other});
- return {context,jumps,key,advance:()=>now+=4000};
+ return {context,jumps,favorites,key,advance:()=>now+=4000};
 }
 test('relative page shortcuts add and subtract without changing direct Shift digits',()=>{
  const f=fixture();f.key('Equal');f.key('Digit5');assert.deepEqual(f.jumps,[10]);
@@ -51,16 +51,34 @@ function pageFieldFixture(){
  const input={id:'overallPageJump',value:'5'};
  return {context,input,pages,event(type,key,inputType){return {type,key,inputType,target:input,preventDefault(){this.prevented=true;},stopPropagation(){}};}};
 }
-test('footer up/down arrows change pages immediately and clamp at ends',()=>{
- const f=pageFieldFixture();const up=f.event('keydown','ArrowUp');assert.equal(f.context.handleOverallPageInput(up),true);assert.equal(up.prevented,true);assert.equal(f.input.value,'6');
- f.context.handleOverallPageInput(f.event('keydown','ArrowDown'));assert.deepEqual(f.pages,[6,5]);f.context.overallPage=0;f.input.value='1';f.context.handleOverallPageInput(f.event('keydown','ArrowDown'));assert.equal(f.input.value,'1');
+test('page field has no spinner or up/down page shortcuts',()=>{
+ const f=pageFieldFixture();
+ for(const key of ['ArrowUp','ArrowDown'])assert.equal(f.context.handleOverallPageInput(f.event('keydown',key)),false);
+ assert.deepEqual(f.pages,[]);
+ assert.match(source,/id="overallPageJump" type="text" inputmode="numeric"/);
 });
-test('footer spinner switches immediately while text entry waits for Enter',()=>{
- const f=pageFieldFixture();f.input.value='7';f.context.handleOverallPageInput(f.event('input'));assert.deepEqual(f.pages,[7]);
- f.input.value='1';assert.equal(f.context.handleOverallPageInput(f.event('input',null,'insertText')),false);assert.deepEqual(f.pages,[7]);
- assert.match(source,/addEventListener\('input',handleOverallPageInput\)/);
+test('typing waits until change or Enter and invalid pages restore the current page',()=>{
+ const f=pageFieldFixture();f.input.value='7';
+ assert.equal(f.context.handleOverallPageInput(f.event('input',null,'insertText')),false);
+ assert.deepEqual(f.pages,[]);
+ f.context.handleOverallPageInput(f.event('change'));assert.deepEqual(f.pages,[7]);
+ for(const invalid of ['','-1','1e1','3.5','100','letters']){
+   f.input.value=invalid;f.context.handleOverallPageInput(f.event('change'));assert.equal(f.input.value,'7');
+ }
 });
-
-test('page-field arrows step from an edited page number rather than losing the edit',()=>{const f=pageFieldFixture();f.input.value='7';f.context.handleOverallPageInput(f.event('keydown','ArrowUp'));assert.equal(f.input.value,'8');assert.deepEqual(f.pages,[8]);});
-
-test('pointer spinners support replacement input and change events across browser implementations',()=>{const f=pageFieldFixture();f.input.value='6';f.context.handleOverallPageInput(f.event('input',null,'insertReplacementText'));assert.deepEqual(f.pages,[6]);f.input.value='7';f.context.handleOverallPageInput(f.event('change'));assert.deepEqual(f.pages,[6,7]);assert.match(source,/addEventListener\('change',handleOverallPageInput\)/);});
+test('plain 1-4 activate visible ranking favorites without changing Shift page shortcuts',()=>{
+ const f=fixture();
+ for(let i=1;i<=4;i++)assert.equal(f.key('Digit'+i,{shiftKey:false}),true);
+ assert.deepEqual(f.favorites,[1,2,3,4]);assert.deepEqual(f.jumps,[]);
+ f.key('Digit5',{shiftKey:false});f.key('Digit2',{shiftKey:false,target:new f.context.HTMLInputElement()});
+ assert.deepEqual(f.favorites,[1,2,3,4]);
+ f.key('Digit3');assert.deepEqual(f.jumps,[3]);
+});
+test('new racers get four distinct useful ranking suggestions',()=>{
+ const start=source.indexOf('  function leaderboardArcadeMarkup('),end=source.indexOf('  const MIN_RANKED_TRACKS',start);
+ const context=vm.createContext({readJsonStorage:()=>({}),LEADERBOARD_USAGE_KEY:'test',LEADERBOARD_LABELS:{overall:'Overall RP',events:'Event RP',topTracks:'Top Tracks',tracks:'Tracks completed'},overallCategory:'overall',escapeHtml:String});
+ vm.runInContext(source.slice(start,end),context);
+ const html=context.leaderboardArcadeMarkup();
+ assert.deepEqual([...html.matchAll(/data-leaderboard-shortcut="([^"]+)"/g)].map(m=>m[1]),['overall','events','topTracks','tracks']);
+ assert.equal((html.match(/aria-keyshortcuts=/g)||[]).length,4);
+});

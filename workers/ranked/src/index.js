@@ -12,7 +12,7 @@ import { VERIFICATION_BOOTSTRAP_ID, VERIFICATION_BOOTSTRAP_BATCH, bootstrapSlots
 import { aggregateServerAchievements, BEAT_OWNER_STAGES, OWNER_PUBLIC_ID, SERVER_ACHIEVEMENT_VERSION, SPECIAL_ROLLING_HILLS_TRACK_ID } from './server-achievements.js';
 import { EXTRA_TRACK_IDS } from './extra-track-ids.js';
 import { recordFirestoreReads } from './firestore-read-cost.js';
-import {loadOverallSources, sourceCatalogAfterTrackWrite, sourceCatalogNeedsScan} from './overall-source-cache.js';
+import {loadOverallSources, sourceCatalogAfterTrackWrite, sourceCatalogNeedsScan, sourceCatalogIsReady, SOURCE_CATALOG_RESCAN_MS} from './overall-source-cache.js';
 const FIREBASE_JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
 const FIREBASE_JWKS_REFRESH_COOLDOWN_MS = 30000;
 const FIREBASE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -1508,7 +1508,15 @@ async function loadOverallRebuild(env, force = false) {
   }
   const metricsOutdated = Number(meta.plannerPublicationVersion || 0) < PLANNER_PUBLICATION_VERSION || Number(meta.plannerBundleVersion || 0) < PLANNER_BUNDLE_VERSION || Number(meta.cosmeticEntitlementVersion||0)<COSMETIC_ENTITLEMENT_VERSION || Number(meta.averagePlacementVersion || 0) < AVERAGE_PLACEMENT_VERSION || Number(meta.derivedMetricsVersion || 0) < DERIVED_METRICS_VERSION;
   const catalogScanDue = sourceCatalogNeedsScan(meta.sourceCatalog, {now,force});
-  if (!force && !catalogScanDue && !metricsOutdated && (!meta.dirty || now - Number(meta.lastOverallBuildAt || 0) < REBUILD_COOLDOWN_MS)) return { rebuilt: false, reason: meta.dirty ? 'cooldown' : 'clean', revision: Number(meta.builtRevision || 0) };
+  const lastBuild = Number(meta.lastOverallBuildAt || 0), age = now - lastBuild;
+  const coolingDown = lastBuild > 0 && age >= 0 && age < REBUILD_COOLDOWN_MS &&
+    (!catalogScanDue || !sourceCatalogIsReady(meta.sourceCatalog));
+  const incompleteCoolingDown = meta.overallRetryExhausted === true && !meta.dirty &&
+    lastBuild > 0 && age >= 0 && age < SOURCE_CATALOG_RESCAN_MS;
+  // A missing/incomplete source catalog is not permission to rescan every cron.
+  // Real source changes set dirty; forced admin repair still bypasses this gate.
+  if (!force && !metricsOutdated && (coolingDown || incompleteCoolingDown || !catalogScanDue && !meta.dirty))
+    return {rebuilt:false, reason:!catalogScanDue && !meta.dirty ? 'clean' : incompleteCoolingDown ? 'incomplete_cooldown' : coolingDown ? 'cooldown' : 'clean', revision:Number(meta.builtRevision || 0)};
   try {
     return await buildOverallSnapshot(env, metaDoc, meta, now, force);
   } catch (error) {
@@ -2078,7 +2086,8 @@ async function publicSnapshot(request, env, context, origin, collection, id) {
               })),
             }
           : overallData;
-        const response = json(origin, env, 200, data, 'public, max-age=60, stale-while-revalidate=30');
+        const response = json(origin, env, 200, data, collection === PUBLIC_PAGE_COLLECTION
+          ? 'public, max-age=86400, immutable' : 'public, max-age=300, stale-while-revalidate=30');
         if (cache && context.waitUntil) {
           const fill = Promise.resolve().then(() => cache.put(cacheKey, response.clone()))
             .catch(() => {})

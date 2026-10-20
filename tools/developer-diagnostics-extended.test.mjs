@@ -75,11 +75,32 @@ test('local profile data is explicit, whitelisted, ID-preserving, and gated by t
  assert.match(report.privacy.limitations, /does not imply legacy playtime was tracked/);
 });
 
-test('local data truncation reports every omitted category', () => {
- const profile = { publicId: 'racer', personalBests: Array.from({ length: 5001 }, (_, i) => ({ trackId: id, timeMs: i })) };
- const report = buildDeveloperReport({ includePublicId: true, localData: { profiles: Array(501).fill(profile), tracks: Array(5001).fill({ trackId: 'track' }), practice: Array(501).fill({ trackId: id }) } });
- assert.deepEqual(report.truncation.localProfiles, { omitted: 1 });
- assert.deepEqual(report.truncation.localPersonalBests, { omitted: 5501 });
- assert.deepEqual(report.truncation.localTracks, { omitted: 1 });
- assert.deepEqual(report.truncation.localPractice, { omitted: 1 });
+test('opt-in preserves every whitelisted local profile, PB, track and practice row', () => {
+ const profiles = Array.from({ length: 501 }, (_, i) => ({ publicId: `racer${i}`, personalBests: i ? [] : Array.from({ length: 5001 }, (_, n) => ({ trackId: id, timeMs: n + 1 })) }));
+ const report = buildDeveloperReport({ includePublicId: {includePublicId:true,includeSavedTrackCodes:false}, localData: { profiles, tracks: Array(5001).fill({ trackId: 'track' }), practice: Array(501).fill({ trackId: id }), savedTracks: [{ data: 'PRIVATE-TRACK-CODE' }] } });
+ assert.equal(report.localData.profiles.length, 501);
+ assert.equal(report.localData.profiles[0].personalBests.length, 5001);
+ assert.equal(report.localData.tracks.length, 5001);
+ assert.equal(report.localData.practice.length, 501);
+ assert.deepEqual(report.truncation.localProfiles, { omitted: 0 });
+ assert.deepEqual(report.truncation.localPersonalBests, { omitted: 0 });
+ assert.deepEqual(report.truncation.localTracks, { omitted: 0 });
+ assert.deepEqual(report.truncation.localPractice, { omitted: 0 });
+ assert.deepEqual(report.localData.savedTracks, [{name:'',savedAt:0,bytes:18}]);
+ assert.deepEqual(report.savedTrackSummary, {count:1,bytes:18});
+ assert.doesNotMatch(JSON.stringify(report), /PRIVATE-TRACK-CODE/);
+ const withCodes=buildDeveloperReport({ includePublicId: {includePublicId:true,includeSavedTrackCodes:true}, localData: { profiles, savedTracks:[{name:'Private',data:'PRIVATE-TRACK-CODE'}] } });
+ assert.equal(withCodes.localData.savedTracks[0].data,'PRIVATE-TRACK-CODE');
+ assert.equal(withCodes.privacy.includesSavedTrackCodes,true);
+ assert.equal(buildDeveloperReport({includePublicId:true,localData:{savedTracks:[{data:'PRIVATE-TRACK-CODE'}]}}).localData.savedTracks[0].data,'PRIVATE-TRACK-CODE');
+ assert.equal(buildDeveloperReport({includePublicId:true,includeSavedTrackCodes:false,localData:{savedTracks:[{data:'PRIVATE-TRACK-CODE'}]}}).localData.savedTracks[0].data,undefined);
+ assert.equal(buildDeveloperReport({ includeSavedTrackCodes:true, localData:{savedTracks:[{data:'PRIVATE-TRACK-CODE'}]} }).localData,null);
+});
+
+test('ordinary non-PB finishes retain observed time in the export', () => {
+ const report = buildDeveloperReport({ practice: [{ trackId: id, attempts: 2, finishes: 1, pbs: 0, bestMs: 900, trackedBestMs: 1000, lastObservedFinishMs: 1000, lastObservedFinishAt: 1234, recentFinishes: [{ at: 1234, timeMs: 1000 }] }] });
+ assert.equal(report.practiceSummary.finishes, 1);
+ assert.equal(report.practice[0].pbs, 0);
+ assert.equal(report.practice[0].lastObservedFinishMs, 1000);
+ assert.equal(report.practice[0].recentFinishes[0].timeMs, 1000);
 });

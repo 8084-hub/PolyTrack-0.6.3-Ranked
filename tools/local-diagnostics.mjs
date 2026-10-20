@@ -18,7 +18,10 @@ export async function collectLocalDiagnostics({storage,hashToken,localRows=[],tr
  for(const row of localRows){const id=String(row.accountId||row.userId||'');const profile=ensure(id);if(profile){if(!profile.name)profile.name=String(row.nickname||row.name||'');profile.playtimeMs=Math.max(profile.playtimeMs,Number(row.totalPlaytimeMs)||0);rememberPb(profile,row);}}
  for(const key of keys){const match=/^polytrack_v5_prod_record_(\d+)_(default|undeterministic)_([a-f0-9]{64})$/.exec(key);if(!match)continue;const record=read(key),owner=nativeProfiles.find(p=>p.slot===Number(match[1]));if(!record||!owner||record.tokenHash!==owner.id)continue;rememberPb(ensure(owner.id),{trackId:match[3],frames:record.frames,mode:match[2]});}
  const savedTracks=[];
- for(const key of keys.filter(k=>k.startsWith(PREFIX+'track_'))){const value=read(key);if(value&&typeof value.data==='string')savedTracks.push({name:key.slice((PREFIX+'track_').length),data:value.data,savedAt:Number(value.saveTime)||0});}
+ for(const key of keys.filter(k=>k.startsWith(PREFIX+'track_'))){
+  const value=read(key);
+  if(value&&typeof value.data==='string')savedTracks.push({name:key.slice((PREFIX+'track_').length),data:value.data,savedAt:Number(value.saveTime)||0,bytes:new TextEncoder().encode(value.data).length});
+ }
  const practice=[];for(const profile of profiles.values())for(const row of practiceRows(profile.publicId)||[]){rememberTrack(row.trackId);practice.push({...row,publicId:profile.publicId,trackName:trackInfo(row.trackId)?.name||''});}
- return {profiles:[...profiles.values()],tracks:[...tracks.values()],practice,savedTracks,collection:{blockedReads,nativeProfiles:nativeProfiles.length,profileCount:profiles.size,pbCount:[...profiles.values()].reduce((sum,p)=>sum+p.personalBests.length,0),scope:'Known game profiles, native PB summaries and local practice only; credentials and replay payloads excluded'}};
+ return {profiles:[...profiles.values()],tracks:[...tracks.values()],practice,savedTracks,collection:{blockedReads,nativeProfiles:nativeProfiles.length,profileCount:profiles.size,pbCount:[...profiles.values()].reduce((sum,p)=>sum+p.personalBests.length,0),savedTrackCount:savedTracks.length,savedTrackBytes:savedTracks.reduce((sum,row)=>sum+row.bytes,0),scope:'Known game profiles, native PB summaries, local practice and saved tracks only; credentials and replay payloads excluded'}};
 }

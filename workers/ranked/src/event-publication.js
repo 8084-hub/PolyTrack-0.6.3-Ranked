@@ -18,10 +18,10 @@ function rollingRevision(source) {
 }
 // One fixed-snapshot source query per page, no per-racer verification or menu scan.
 // Authoritative per-account PB/total documents already exist; only display storage was capped.
-export async function advanceEventPublication(runtime,periodId=null) {
+export async function advanceEventPublication(runtime,periodId=null,knownRoot=undefined) {
  const kind=periodId?'event':'event_totals',id=periodId||'main',jobId=kind+'_'+id;
  const rootPath=C.public+'/'+(periodId||'totals'),targetPath=C.public+'/'+(periodId||'totals_full');
- const root=decode(await runtime.request('/'+rootPath));
+ const root=knownRoot===undefined?decode(await runtime.request('/'+rootPath)):knownRoot;
  if(!root||!root.publicationPending)return {idle:true};
  const priorCombined=periodId?null:decode(await runtime.request('/'+targetPath));
  let rolling=null;
@@ -155,10 +155,16 @@ export async function publishEventCapacity(runtime) {
  const cursor=decode(await runtime.request('/'+cursorPath));
  const active=cursor?.active?candidates.indexOf(cursor.periodId||null):-1;
  const index=active>=0?active:(cursor?.offset||0)%candidates.length,periodId=candidates[index];
- const result=await advanceEventPublication(runtime,periodId);
+ const result=await advanceEventPublication(runtime,periodId,periodId?undefined:work);
+ const nextCursor={active:!!result.pending&&!result.deferred,periodId,offset:(index+1)%candidates.length};
+ // One blocked source otherwise rewrites this identical cursor twice per five
+ // minutes forever. Its source is still checked on every turn for recovery.
+ const sameCursor=(a,b)=>a?.active===b?.active&&a?.periodId===b?.periodId&&a?.offset===b?.offset;
+ if(!sameCursor(cursor,nextCursor))
  await runtime.store.transaction(async tx=>{
-   await tx.get(cursorPath);
-   await tx.set(cursorPath,{active:!!result.pending&&!result.deferred,periodId,offset:index+1});
+   const current=await tx.get(cursorPath);
+   if(!sameCursor(current,cursor))throw new EventError('event_publication_conflict',409);
+   await tx.set(cursorPath,nextCursor);
  });
  return result.idle?{deferred:true,kind:periodId?'event':'event_totals',id:periodId||'main',reason:'event_source_not_ready'}:result;
 }

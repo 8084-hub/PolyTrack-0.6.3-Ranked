@@ -36,6 +36,14 @@ test('cosmetic retry backoff is bounded at one hour', () => {
   assert.deepEqual([1, 2, 3, 4, 5, 20].map(backoff), [15000, 60000, 300000, 900000, 3600000, 3600000]);
 });
 
+test('cosmetic publication uses its saved queue instead of transaction retry storms', () => {
+  const body=source.slice(source.indexOf('async function flushPendingCosmeticPublishes('),source.indexOf('async function saveRankedProfileCosmetics('));
+  assert.match(body,/\},\{maxAttempts:1\}\)/);
+  assert.match(body,/noteFirebaseQuota\(error\)/);
+  const scheduler=source.slice(source.indexOf('function scheduleCosmeticPublishRetry('),source.indexOf('async function flushPendingCosmeticPublishes('));
+  assert.match(scheduler,/Math\.max\(0,quotaDelay,Number\(item.nextAttemptAt/);
+});
+
 test('publish identity requires both the active account and bound auth UID', () => {
   const pending = item('account-a', 'uid-a', 'draft-a', 1);
   assert.equal(identityMatches(pending, 'account-a', 'uid-a'), true);

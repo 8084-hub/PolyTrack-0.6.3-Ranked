@@ -132,7 +132,7 @@ async function dueRetry(runtime) {
   return result.find(row => row.document)?.document || null;
 }
 
-export async function eventWork(runtime, { projectedInbox = true } = {}) {
+export async function eventWork(runtime, { projectedInbox = true, inspectInbox = true } = {}) {
   const raw = await runtime.request('/' + C.catalog + '/main');
   const periods = raw ? decode(raw).periods || [] : [];
   const at = runtime.now();
@@ -143,11 +143,14 @@ export async function eventWork(runtime, { projectedInbox = true } = {}) {
     const queue = await runtime.request('/' + C.queues + '/' + p.id);
     if (queue && (decode(queue).slots || []).some(s => exhaustedEventLease(s, at) || s.notBefore <= at && s.leaseUntil <= at && s.attempts < L.verificationAttempts)) due.push(p.id);
   }
-  const inbox = await inboxPage(runtime, { projected: projectedInbox });
-  const retry = inbox.documents.length ? null : await dueRetry(runtime);
+  let inbox = false;
+  if (inspectInbox) {
+    const page = await inboxPage(runtime, { projected: projectedInbox });
+    inbox = page.documents.length > 0 || !!(await dueRetry(runtime));
+  }
   const closing = periods.find(p => !p.archived && at >= p.endsAt + p.graceMs);
   if (due.length) { const rotation = Math.floor(at / 900000) % due.length; due.push(...due.splice(0, rotation)); }
-  return { hasWork: !!(due.length || inbox.documents.length || retry || closing), periodIds: due, inbox: inbox.documents.length > 0 || !!retry, archiveId: closing?.id || null };
+  return { hasWork: !!(due.length || inbox || closing), periodIds: due, inbox, archiveId: closing?.id || null };
 }
 
 

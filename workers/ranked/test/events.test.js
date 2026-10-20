@@ -36,6 +36,46 @@ test('disabled periods do not wake verifier and malformed query fails closed', a
   await assert.rejects(inboxPage({ request: async () => null }), /Unexpected/);
 });
 
+test('queue-only discovery saves inbox reads while the standalone gate still detects receipts and retries',async()=>{
+  for (const source of ['receipt','retry','empty']) {
+    const calls=[];
+    const doc=value=>({fields:eventEncode(value).mapValue.fields});
+    const runtime={now:()=>2000,request:async(path,init)=>{
+      calls.push(path);
+      if(path===`/${C.catalog}/main`)return doc({periods:[p]});
+      if(path===`/${C.queues}/${p.id}`)return doc({slots:[]});
+      if(path===`/${C.cursors}/scan`)return null;
+      assert.equal(path,':runQuery');
+      const query=JSON.parse(init.body).structuredQuery;
+      assert.equal(query.limit,1);
+      const collection=query.from[0].collectionId;
+      return source==='receipt'&&collection===C.inbox || source==='retry'&&collection===C.retries
+        ? [{document:doc({receivedAt:{__firestoreTimestamp:'2026-01-01T00:00:00Z'}})}] : [];
+    }};
+    const gate=await eventWork(runtime);
+    assert.equal(gate.hasWork,source!=='empty');
+    assert.equal(gate.inbox,source!=='empty');
+    assert.equal(calls.length,source==='receipt'?4:5);
+    calls.length=0;
+    const queueOnly=await eventWork(runtime,{inspectInbox:false});
+    assert.equal(queueOnly.inbox,false);
+    assert.deepEqual(queueOnly.periodIds,gate.periodIds);
+    assert.equal(queueOnly.archiveId,gate.archiveId);
+    assert.deepEqual(calls,[`/${C.catalog}/main`,`/${C.queues}/${p.id}`]);
+  }
+});
+
+test('queue-only discovery preserves due queues and settlement without querying inbox',async()=>{
+  const at=p.endsAt+p.graceMs;
+  const runtime={now:()=>at,request:async path=>{
+    if(path===`/${C.catalog}/main`)return {fields:eventEncode({periods:[p]}).mapValue.fields};
+    assert.equal(path,`/${C.queues}/${p.id}`);
+    return {fields:eventEncode({slots:[{notBefore:0,leaseUntil:0,attempts:0}]}).mapValue.fields};
+  }};
+  assert.deepEqual(await eventWork(runtime,{inspectInbox:false}),
+    {hasWork:true,periodIds:[p.id],inbox:false,archiveId:p.id});
+});
+
 test('event maintenance archives the oldest period after settlement without a manual route', async () => {
   const at=p.endsAt+p.graceMs;
   const periods=[{...p,archived:false},{...eventPeriod({...inputPeriod,id:'day0',startsAt:1000,endsAt:2000}),archived:false}];

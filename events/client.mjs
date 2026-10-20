@@ -228,6 +228,18 @@ export function installEvents(bridge){
     const valid=value=>value&&Array.isArray(value.entries)&&value.period?.id===period.id&&value.period.trackId===period.trackId&&value.period.kind===period.kind&&Number.isSafeInteger(value.updatedAt)&&value.updatedAt>=0;
     const candidate=cache.get(period.id)||read(STORE+'-'+period.id,null),saved=valid(candidate)?candidate:null;
     if(snapshotFetching.has(period.id))return snapshotFetching.get(period.id);
+    if(period.archived===true||saved?.archived===true){
+      if(saved?.archived===true)return saved;
+      if(typeof bridge.readArchivedSnapshot!=='function')throw Error('Saved final archive is unavailable');
+      const pending=Promise.resolve().then(()=>bridge.readArchivedSnapshot(period.id)).then(archived=>{
+        if(!valid(archived)||archived.archived!==true)throw Error('Invalid final archive snapshot');
+        const final={...archived,fetchedAt:now(),saved:false};
+        cache.set(period.id,final);cacheWrite(STORE+'-'+period.id,final);
+        return final;
+      }).finally(()=>snapshotFetching.delete(period.id));
+      snapshotFetching.set(period.id,pending);
+      return pending;
+    }
     const attempt=snapshotAttempts.get(period.id);
     if(attempt&&now()<attempt.nextAt){if(saved)return saved;if(attempt.error)throw attempt.error;}
     if(!force&&saved&&now()-saved.fetchedAt<120000)return saved;
@@ -377,7 +389,8 @@ export function installEvents(bridge){
     if(period?.scheduleOnly)return race(period,{direct:true});
     shell();const accountId=bridge.accountId(),closed=now()>=period.endsAt;selectView(closed?'archives':'home');selected=period;const token=++requestId;body('<p role="status">Loading event standings...</p>');
     try{
-      const board=await snapshot(period,force&&!closed),receipt=await readReceipt(period.id,accountId);
+      const board=await snapshot(period,force&&!closed);
+      const receipt=board.archived===true||period.archived===true?null:await readReceipt(period.id,accountId);
       if(!dialog||token!==requestId||accountId!==bridge.accountId())return;
       period=board.period;selected=period;
       const local=localBest(period),published=board.entries.find(row=>row.accountId===bridge.accountId());
@@ -401,6 +414,7 @@ export function installEvents(bridge){
     openArchivedTrack(period,saved);
   }
   async function importArchived(period){
+    if(typeof bridge.readArchivedTrack!=='function'){message('Saved archived track import is unavailable.');return;}
     const token=++requestId;message('Loading archived track for custom-track practice...');
     try{const code=await bridge.readArchivedTrack(period);if(token!==requestId||!dialog)return;close();bridge.importTrackCode(code);}
     catch(error){if(dialog)message(error.message||'Archived track could not be imported.');}
@@ -410,8 +424,8 @@ export function installEvents(bridge){
     shell();selectView('archives');selected=null;const token=++requestId;body('<p>Loading past events...</p>');
     try{
       let periods;
-      if(month){if(!/^\d{4}-\d{2}$/.test(month))throw Error('Choose a month');const key=STORE+'-archive-'+month;try{const data=await bridge.readArchiveMonth(month);if(!Array.isArray(data?.periods))throw Error('Invalid archive');periods=data.periods;cacheWrite(key,periods);}catch(error){periods=read(key,null);if(!periods)throw error;}}
-      else{await loadCatalog();periods=catalogArchivePeriods(catalog,now());}
+      if(month){if(!/^\d{4}-\d{2}$/.test(month))throw Error('Choose a month');const key=STORE+'-archive-'+month;try{const data=await bridge.readArchiveMonth(month);if(!Array.isArray(data?.periods))throw Error('Saved archive month unavailable');periods=data.periods;cacheWrite(key,periods);}catch(error){periods=read(key,null);if(!periods)throw error;}periods=periods.map(period=>({...period,archived:true}));}
+      else{const savedCatalog=await bridge.readStaticArchiveCatalog?.(),source=savedCatalog&&Array.isArray(savedCatalog.archives)?savedCatalog:catalog,finalIds=new Set((source.archives||[]).map(period=>period.id));periods=catalogArchivePeriods(source,now()).map(period=>finalIds.has(period.id)?{...period,archived:true}:period);}
       if(!dialog||token!==requestId)return;
       const value=month||new Date().toISOString().slice(0,7);
       await bridge.prepareArchive?.();if(!dialog||token!==requestId)return;
@@ -529,7 +543,8 @@ export function installEvents(bridge){
   }
   const replayContextActive=session=>session?.archive===true?archiveIntent===session&&bridge.accountId()===session.accountId:sessions.current()===session&&bridge.accountId()===session.accountId;
   async function selectReplay(period,row,{silent=false}={}){
-    const session=sessions.current()||archiveIntent,viewer=bridge.accountId();if(!session||session.periodId!==period.id||typeof bridge.readReplay!=='function')return;
+    const session=sessions.current()||archiveIntent,viewer=bridge.accountId(),readReplay=session?.archive?bridge.readArchivedReplay:bridge.readReplay;
+    if(!session||session.periodId!==period.id||typeof readReplay!=='function')return;
     const pendingSelection=pendingGhosts.get(row.accountId);
     if(pendingSelection?.periodId===period.id&&pendingSelection.accountId===viewer&&pendingSelection.targetTimeMs===row.timeMs&&pendingSelection.targetPending===!!row.pending&&pendingSelection.targetRunId===(row.runId||null)){
       ++topSelectionToken;++replayRequest;pendingGhosts.delete(row.accountId);if(!silent)message('Event ghost selection cancelled.');tick();return false;
@@ -539,10 +554,11 @@ export function installEvents(bridge){
       ++topSelectionToken;++replayRequest;pendingGhosts.delete(row.accountId);selectedGhosts.delete(row.accountId);selectedGhost=[...selectedGhosts.values()].at(-1)||null;if(!silent){message('Event ghost unselected.');tick();}return false;
     }
     ++topSelectionToken;const token=++replayRequest;for(const [id,target] of pendingGhosts)if(target.groupToken)pendingGhosts.delete(id);const pending={periodId:period.id,accountId:viewer,targetAccountId:row.accountId,targetTimeMs:row.timeMs,targetPending:!!row.pending,targetRunId:row.runId||null};pendingGhosts.set(row.accountId,pending);if(!silent){message('Loading event replay...');tick();}
-    const key=period.id+'_'+row.accountId+'_'+row.timeMs+'_'+(row.runId||'verified'),failureKey=key+'_'+viewer;
+    const key=(session.archive?'archive:':'live:')+period.id+'_'+row.accountId+'_'+row.timeMs+'_'+(row.runId||'verified'),failureKey=key+'_'+viewer;
     try{
       const failure=replayFailure(failureKey);if(failure)throw Error(failure);
-      let payload=replayCache.get(key);if(!payload)payload=await bridge.readReplay(period.id,row.accountId,row.pending?row.runId:null);
+      let payload=replayCache.get(key);if(!payload)payload=await readReplay(period.id,row.accountId,row.pending?row.runId:null);
+      if(session.archive&&!payload)throw Error('Saved archived replay is unavailable.');
       if(pendingGhosts.get(row.accountId)!==pending)return;
       if(!replayContextActive(session)){pendingGhosts.delete(row.accountId);tick();return;}
       const ghostKey=key+'_'+viewer;
@@ -578,9 +594,10 @@ export function installEvents(bridge){
   async function selectEventRows(first,last,fromTop=false,explicitRows=null){
     const view=nativeView,session=sessions.current()||archiveIntent,accountId=bridge.accountId();
     if(!view||!session||session.periodId!==view.periodId||session.accountId!==accountId)return;
+    const readReplay=session.archive?bridge.readArchivedReplay:bridge.readReplay;
     const period=view.period||knownPeriods.get(view.periodId)||(catalog.periods||[]).find(row=>row.id===view.periodId);if(!period)return;
     const offset=fromTop?0:view.page*20,sourceRows=(view.archive?archivePeriodCounts(period,view.snapshot).verifiedEntries:eventDisplayRows(period).rows).filter(row=>!view.onlyVerified||!row.pending);
-    const chosen=(explicitRows||sourceRows.slice(offset+first-1,offset+last)).slice(0,10).filter(row=>(!row.pending||/^[a-f0-9]{64}$/.test(row.runId||''))&&typeof bridge.readReplay==='function');
+    const chosen=(explicitRows||sourceRows.slice(offset+first-1,offset+last)).slice(0,10).filter(row=>(!row.pending||/^[a-f0-9]{64}$/.test(row.runId||''))&&typeof readReplay==='function');
     const active=[...selectedGhosts.values()].filter(row=>row.periodId===period.id&&row.accountId===accountId);
     const same=chosen.length>0&&active.length===chosen.length&&chosen.every(row=>{const selected=selectedGhosts.get(row.accountId);return selected?.periodId===period.id&&selected.accountId===accountId&&selected.targetTimeMs===row.timeMs&&selected.targetRunId===(row.runId||null)&&selected.targetPending===!!row.pending;});
     const pendingActive=[...pendingGhosts.values()].filter(row=>row.periodId===period.id&&row.accountId===accountId),groupToken=pendingActive[0]?.groupToken;
@@ -596,16 +613,17 @@ export function installEvents(bridge){
     const prepared=await Promise.all(chosen.map(async row=>{
       const pending=pendingGhosts.get(row.accountId);
       try{
-        const key=period.id+'_'+row.accountId+'_'+row.timeMs+'_'+(row.runId||'verified');
+        const key=(session.archive?'archive:':'live:')+period.id+'_'+row.accountId+'_'+row.timeMs+'_'+(row.runId||'verified');
         const failureKey=key+'_'+accountId,failure=replayFailure(failureKey);if(failure)throw Error(failure);
-        let payload=replayCache.get(key);if(!payload)payload=await bridge.readReplay(period.id,row.accountId,row.pending?row.runId:null);
+        let payload=replayCache.get(key);if(!payload)payload=await readReplay(period.id,row.accountId,row.pending?row.runId:null);
+        if(session.archive&&!payload)throw Error('Saved archived replay is unavailable.');
         if(token!==topSelectionToken||requestToken!==replayRequest||pendingGhosts.get(row.accountId)!==pending||!replayContextActive(session))return null;
         const ghostKey=key+'_'+accountId;let ghost=preparedGhosts.get(ghostKey);
         if(!ghost){ghost=await preparePublishedEventGhost({require:bridge.require(),row:payload,period,entry:row,viewer:accountId});preparedGhosts.set(ghostKey,ghost);if(preparedGhosts.size>16)preparedGhosts.delete(preparedGhosts.keys().next().value);}
         if(token!==topSelectionToken||requestToken!==replayRequest||pendingGhosts.get(row.accountId)!==pending||!replayContextActive(session))return null;
         replayFailures.delete(failureKey);if(replayCache.size>=16)replayCache.delete(replayCache.keys().next().value);replayCache.set(key,payload);
         return {row,ghost};
-      }catch(error){if(token===topSelectionToken&&requestToken===replayRequest&&pendingGhosts.get(row.accountId)===pending)rememberReplayFailure(period.id+'_'+row.accountId+'_'+row.timeMs+'_'+(row.runId||'verified')+'_'+accountId,error);return null;}
+      }catch(error){if(token===topSelectionToken&&requestToken===replayRequest&&pendingGhosts.get(row.accountId)===pending)rememberReplayFailure((session.archive?'archive:':'live:')+period.id+'_'+row.accountId+'_'+row.timeMs+'_'+(row.runId||'verified')+'_'+accountId,error);return null;}
     }));
     if(token!==topSelectionToken||requestToken!==replayRequest)return;
     if(!replayContextActive(session)){for(const row of chosen)if(pendingGhosts.get(row.accountId)?.groupToken===token)pendingGhosts.delete(row.accountId);tick();return;}
@@ -758,7 +776,7 @@ export function installEvents(bridge){
     for(const row of rows.slice(view.page*20,view.page*20+20)){
       const renderer=view.board.__pt062EventRows;if(renderer?.version!==1)break;
       const runAt=[row.submittedAt,row.receivedAt,row.pbAt].find(value=>Number.isSafeInteger(value)&&value>0&&value<=now());
-      const button=renderer.render(container,nativeEventRow(row,view.accountId,runAt||now()));button.type='button';button.dataset.eventAccountId=row.accountId;button.dataset.eventTime=String(row.timeMs);button.dataset.eventRunId=row.runId||'';button.dataset.eventPending='false';const playable=typeof bridge.readReplay==='function';button.tabIndex=playable?0:-1;button.setAttribute('aria-disabled',String(!playable));button.setAttribute('aria-pressed','false');button.setAttribute('aria-busy','false');button.title=playable?'Select this archived replay. It will not submit an event result.':'Archived replay selection is unavailable.';if(playable)button.onclick=()=>void selectReplay(period,row);
+      const button=renderer.render(container,nativeEventRow(row,view.accountId,runAt||now()));button.type='button';button.dataset.eventAccountId=row.accountId;button.dataset.eventTime=String(row.timeMs);button.dataset.eventRunId=row.runId||'';button.dataset.eventPending='false';const playable=typeof bridge.readArchivedReplay==='function';button.tabIndex=playable?0:-1;button.setAttribute('aria-disabled',String(!playable));button.setAttribute('aria-pressed','false');button.setAttribute('aria-busy','false');button.title=playable?'Select this archived replay. It will not submit an event result.':'Saved archived replay is unavailable.';if(playable)button.onclick=()=>void selectReplay(period,row);
       button.querySelector('.left p:not(.position)').classList.add('event-time');
       const state=button.querySelector('.verified-state');state.dataset.sqRunStatus='verified';if(!runAt){state.firstChild.textContent='Date unavailable';state.title='Archived verified result - run date unavailable';}const actions=event=>{if(typeof bridge.racerActions!=='function')return;event.preventDefault();event.stopPropagation();const rect=button.getBoundingClientRect();bridge.racerActions(row,{clientX:event.clientX||rect.left+rect.width/2,clientY:event.clientY||rect.top+rect.height/2});};button.oncontextmenu=actions;button.onkeydown=event=>{if(event.key==='ContextMenu'||event.shiftKey&&event.key==='F10')actions(event);};
       const points=document.createElement('span');points.className='sq-event-earned-rp';points.textContent=Math.round(Number(row.groupRp??row.rp)||0)+' ERP';points.title='Archived Event RP';state.prepend(points);bridge.decorateRacer?.(button,row);
@@ -973,8 +991,10 @@ export function installEvents(bridge){
           button.innerHTML='<span class="sq-event-thumb" aria-hidden="true"></span><div class="sq-event-record">No record</div><span><small>'+eventName(kind)+' event</small><strong>'+(fetching?'Loading track...':'Events unavailable')+'</strong><span>Event results unavailable</span><small>'+(fetching?'Checking event availability':'Open Events to retry')+'</small></span>';button.onclick=()=>void open();row.append(button);}
       }
     }
-    const session=sessions.current()||eventIntent;if(document.body.classList.contains('sq-event-active')!==!!session)document.body.classList.toggle('sq-event-active',!!session);
+    const session=sessions.current()||eventIntent,activeChanged=document.body.classList.contains('sq-event-active')!==!!session;
+    if(activeChanged)document.body.classList.toggle('sq-event-active',!!session);
     syncNativeBoard(session||archiveIntent);
+    if(activeChanged)bridge.eventLayoutChanged?.();
   }
   document.addEventListener('keydown',event=>{
     if(event.defaultPrevented||event.repeat||event.ctrlKey||event.altKey||event.metaKey||!nativeView?.board?.getClientRects().length||dialog||document.querySelector('.sq-extra-overlay:not([hidden])'))return;

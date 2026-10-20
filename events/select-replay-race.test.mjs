@@ -50,6 +50,7 @@ function harness() {
     catalog: { periods: [period] },
     now: () => clock,
     eventDisplayRows: () => ({ rows: displayRows }),
+    archivePeriodCounts: () => ({ verifiedEntries: displayRows }),
     syncNativeBoard() {},
     tick: () => { ticks++; },
     preparePublishedEventGhost: async ({ row, entry }) => {
@@ -74,6 +75,7 @@ function harness() {
     setPreparationError: value => { preparationError = value; },
     setRows: value => { displayRows = value; },
     showNativeBoard: () => { context.nativeView = { period, periodId: 'period', page: 0, signature: '' }; },
+    useArchive: () => { activeSession = null;context.archiveIntent = { ...session, archive: true };context.nativeView = { period, periodId: 'period', page: 0, archive: true, onlyVerified: false, snapshot: { entries: displayRows } }; },
     ticks: () => ticks,
     prepares: () => prepares
   };
@@ -351,6 +353,29 @@ test('a pending replay with unavailable asset never appears loaded',async()=>{
  assert.equal(h.selectedCount(),0);assert.equal(h.pendingCount(),0);
  assert.match(h.messages.at(-1),/asset is unavailable/);
  assert.doesNotMatch(h.messages.at(-1),/Replay ready/);
+});
+
+test('archived replay selection never falls through to live or reuses its cache',async()=>{
+ const h=harness(),row=racer('racer',1400,'Racer');let live=0,staticReads=0;
+ h.bridge.readReplay=async()=>{live++;return payload(row);};
+ await h.selectReplay(period,row);h.clearEventGhostSelection(period.id,'viewer');
+ h.useArchive();h.bridge.readArchivedReplay=async()=>{staticReads++;throw Error('Saved archived replay unavailable');};
+ assert.equal(await h.selectReplay(period,row),false);
+ assert.equal(h.selectedCount(),0);assert.equal(live,1);assert.equal(staticReads,1);
+ assert.match(h.messages.at(-1),/Saved archived replay unavailable/);
+});
+
+test('missing archived replay hook leaves both direct and group selection unavailable',async()=>{
+ const h=harness(),row=racer('racer',1400,'Racer');let live=0;
+ h.bridge.readReplay=async()=>{live++;return payload(row);};
+ h.setRows([row]);h.useArchive();
+ assert.equal(await h.selectReplay(period,row),undefined);
+ await h.selectTopEventRows(1);
+ assert.equal(h.selectedCount(),0);assert.equal(live,0);
+ h.bridge.readArchivedReplay=async()=>null;
+ assert.equal(await h.selectReplay(period,row),false);
+ assert.match(h.messages.at(-1),/Saved archived replay is unavailable/);
+ assert.equal(live,0);
 });
 
 test('clicking the same event replay again unselects it without another download',async()=>{

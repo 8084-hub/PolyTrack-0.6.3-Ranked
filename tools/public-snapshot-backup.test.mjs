@@ -7,7 +7,8 @@ import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {publicOverallBackup, publicTrackBackup, publicEventBackup, publicTrackRegistry, chooseTrackFetches,
-  publicEventReplayBackup, runPublicSnapshotBackup, PUBLIC_SNAPSHOT_LIMITS} from './public-snapshot-backup.mjs';
+  publicEventReplayBackup, runPublicSnapshotBackup, PUBLIC_SNAPSHOT_LIMITS,
+  isReusableArchivedEventBackup, createAdminArchiveCaptureFetch} from './public-snapshot-backup.mjs';
 
 const trackId = 'a'.repeat(64);
 const period = {id: 'daily_20261002', trackId, startsAt: 100, endsAt: 200, maxRp: 100, kind: 'daily'};
@@ -16,6 +17,153 @@ const overall = {updatedAt: 300, revision: 9, builtRevision: 9, sourceRevision: 
     ownerUid: 'private', resultSamples: [{replay: 'private'}], bestTracks: [{trackId, rank: 1, replayHash: 'private'}]}],
   trackSummaries: [{trackId, updatedAt: 250, fieldSize: 2, leader: {accountId: 'racer', name: 'Racer', replay: 'private'}}],
   authorityAudit: {ownerUid: 'private'}, resultBundleLocation: 'main_results'};
+
+test('legacy archive reuse requires validated exact coverage and never invents completeness',()=>{
+  const legacy={period:{...period,entrantLimit:200},updatedAt:220,archived:true,racerCount:1,
+    entries:[{accountId:'b'.repeat(64),timeMs:23,name:'Racer'}]};
+  assert.equal(isReusableArchivedEventBackup(legacy,period.id),true);
+  assert.equal(isReusableArchivedEventBackup({...legacy,totalEntries:1,sourceTotalEntries:1},period.id),true);
+  assert.equal(isReusableArchivedEventBackup({...legacy,racerCount:0,entries:[]},period.id),true);
+  assert.equal(legacy.complete,undefined);assert.equal(legacy.totalEntries,undefined);
+  const full=structuredClone(legacy);
+  full.entries=Array.from({length:200},(_,i)=>({accountId:i.toString(16).padStart(64,'0'),timeMs:23}));
+  full.racerCount=200;
+  assert.equal(isReusableArchivedEventBackup(full,period.id),true,'exact authoritative count supports the legacy cap');
+  for(const change of [{archived:false},{complete:false},{complete:null},{sourceComplete:false},
+    {sourceComplete:'true'},{publicationPending:true},{publicationPending:null},{totalEntries:2},
+    {totalEntries:null},{sourceTotalEntries:2},{racerCount:undefined},{racerCount:2},
+    {racerCount:'1'},{racerCount:-1},{period:undefined},{period:{...period,id:'wrong'}},
+    {period:{...period,entrantLimit:0}},{entries:[{accountId:'invalid',timeMs:23}]},
+    {entries:[{accountId:'b'.repeat(64),timeMs:0}]},
+    {entries:[legacy.entries[0],legacy.entries[0]],racerCount:2},
+    {pagination:{complete:false}},{pagination:null},{paginatedSource:true}])
+    assert.equal(isReusableArchivedEventBackup({...legacy,...change},period.id),false,JSON.stringify(change));
+  const projected=publicEventBackup({...legacy,publicationPending:true},period.id);
+  assert.equal(projected.publicationPending,true,'incomplete marker must survive saving');
+  assert.equal(isReusableArchivedEventBackup(projected,period.id),false);
+});
+
+test('modern archive reuse rejects explicit incomplete metadata and unassembled pages',()=>{
+  const modern={period,updatedAt:220,archived:true,entries:[],complete:true,totalEntries:0};
+  assert.equal(isReusableArchivedEventBackup(modern,period.id),true);
+  assert.equal(isReusableArchivedEventBackup({...modern,sourceComplete:false},period.id),false);
+  const pagination={version:1,generation:'a'.repeat(64),pageSize:100,pageCount:0,totalEntries:0,complete:true};
+  assert.equal(isReusableArchivedEventBackup({...modern,pagination,paginatedSource:true},period.id),true);
+  assert.equal(isReusableArchivedEventBackup({...modern,pagination},period.id),false);
+  for(const change of [{complete:false},{pageCount:1},{totalEntries:100},{generation:'wrong'},{pageSize:200}])
+    assert.equal(isReusableArchivedEventBackup({...modern,paginatedSource:true,pagination:{...pagination,...change}},period.id),false);
+});
+
+test('validated legacy archives and recordings are reused indefinitely with no completeness fields',async t=>{
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'polytrack-legacy-archive-'));
+  t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+  const archived={...period,id:'daily_old',entrantLimit:200};
+  const accountId='b'.repeat(64),replay='encoded',replayHash=createHash('sha256').update(replay).digest('hex');
+  const calls=[],logs=[];
+  const fetchImpl=async input=>{
+    const url=new URL(input);calls.push(url.pathname);
+    if(url.pathname.endsWith('/overall'))return Response.json({...overall,trackSummaries:[]});
+    if(url.pathname.endsWith('/catalog'))return Response.json({periods:[period],archives:[archived]});
+    if(url.pathname==='/v1/snapshot/track')return new Response('',{status:404});
+    if(url.pathname.includes('/replays/'))return Response.json({periodId:archived.id,trackId,accountId,
+      runId:'c'.repeat(64),timeMs:23,frames:23,replay,replayHash,carStyle:'native',
+      verificationStatus:'verified',verified:true,eventRpEligible:true});
+    const id=url.pathname.split('/').at(-2);
+    return Response.json(id===archived.id?{period:archived,id,updatedAt:220,archived:true,racerCount:1,
+      entries:[{accountId,timeMs:23,name:'Racer'}]}:{id,updatedAt:220,archived:false,entries:[]});
+  };
+  const capture=now=>runPublicSnapshotBackup({fetchImpl,directory,now,trackIds:[],log:line=>logs.push(JSON.parse(line))});
+  await capture(1000);calls.length=0;
+  const second=await capture(1000+365*86400000);
+  assert.equal(calls.some(url=>url.includes('/daily_old/')),false);
+  assert.equal(second.events[archived.id].checkedAt,1000);
+  assert.equal(logs.at(-1).publicSnapshotBackup.archivedEventsReused,1);
+  const file=path.join(directory,`events/${archived.id}.json`);
+  const cached=JSON.parse(await fs.readFile(file,'utf8'));
+  assert.equal(Object.hasOwn(cached,'complete'),false);
+  assert.equal(Object.hasOwn(cached,'totalEntries'),false);
+  for(const change of [{complete:false},{sourceComplete:false},{publicationPending:true},{racerCount:2},{totalEntries:2}]) {
+    await fs.writeFile(file,JSON.stringify({...cached,...change}));calls.length=0;
+    await capture(1001+365*86400000);
+    assert.equal(calls.filter(url=>url==='/v1/events/daily_old/snapshot').length,1,JSON.stringify(change));
+    assert.equal(logs.at(-1).publicSnapshotBackup.archivedEventsReused,0);
+  }
+});
+
+test('admin capture credentials are scoped to named GET resources and never follow redirects',async()=>{
+  const base='https://polytrack-ranked-worker.staticquasar931.workers.dev',calls=[];
+  const wrapper=createAdminArchiveCaptureFetch({token:'synthetic-private-token',periodIds:['daily_old'],maxRequests:4,
+    fetchImpl:async(input,init)=>{calls.push({url:new URL(input),init});return Response.json({}, {headers:{'X-Archive-Document-Reads':'1'}});}});
+  for(const suffix of ['snapshot','snapshot/page?generation='+'a'.repeat(64)+'&page=0','replays/'+'b'.repeat(64),'track']) {
+    await wrapper.fetch(base+'/v1/events/daily_old/'+suffix,{headers:{Accept:'application/json'}});
+    const sent=calls.at(-1);
+    assert.ok(sent.url.pathname.startsWith('/v1/events/admin/archive-export/daily_old/'));
+    assert.equal(sent.init.headers.get('X-Admin-Token'),'synthetic-private-token');
+    assert.equal(sent.init.headers.get('Origin'),'https://staticquasar931.github.io');
+    assert.equal(sent.init.redirect,'error');assert.equal(sent.init.method,'GET');
+  }
+  assert.equal(calls[1].url.searchParams.get('page'),'0');
+  await assert.rejects(wrapper.fetch(base+'/v1/events/daily_old/snapshot'),/request budget/);
+  assert.equal(calls.length,4);
+  await wrapper.fetch(base+'/v1/events/daily_live/snapshot');
+  assert.equal(new Headers(calls.at(-1).init?.headers).has('X-Admin-Token'),false);
+  await assert.rejects(wrapper.fetch('https://foreign.test/v1/events/daily_old/snapshot'),/host/);
+  await assert.rejects(wrapper.fetch(base+'/v1/events/daily_old/receipt'),/resource/);
+  await assert.rejects(wrapper.fetch(base+'/v1/events/daily_old/snapshot',{method:'POST'}),/resource/);
+  assert.deepEqual(wrapper.stats(),{requests:4,documentReads:4,documentReadCeiling:24});
+  assert.equal(calls.length,5);
+});
+
+test('admin capture requires explicit finite options and bounded response accounting',async()=>{
+  for(const change of [{token:''},{periodIds:[]},{periodIds:['*']},{periodIds:['daily_old','daily_old']},
+    {periodIds:['permanent-rolling-hills']},{maxRequests:0},{maxRequests:121}])
+    assert.throws(()=>createAdminArchiveCaptureFetch({token:'synthetic',periodIds:['daily_old'],...change}),/options/);
+  for(const header of [undefined,'7','-1','NaN']) {
+    const wrapper=createAdminArchiveCaptureFetch({token:'synthetic',periodIds:['daily_old'],maxRequests:1,
+      fetchImpl:async()=>Response.json({},{headers:header===undefined?{}:{'X-Archive-Document-Reads':header}})});
+    await assert.rejects(wrapper.fetch('https://polytrack-ranked-worker.staticquasar931.workers.dev/v1/events/daily_old/snapshot'),/accounting unavailable/);
+    assert.deepEqual(wrapper.stats(),{requests:1,documentReads:6,documentReadCeiling:6});
+  }
+});
+
+test('opt-in archive capture exhaustion preserves previous backups without public fallback',async t=>{
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'polytrack-admin-archive-'));
+  t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+  const prior={schemaVersion:1,tracks:{},events:{}};
+  await fs.writeFile(path.join(directory,'manifest.json'),JSON.stringify(prior));
+  const calls=[];
+  const options={directory,trackIds:[],log:()=>{},
+    archiveExport:{token:'synthetic',periodIds:['old1','old2'],maxRequests:1},
+    fetchImpl:async(input,init)=>{
+      const url=new URL(input);calls.push(url.pathname);
+      if(url.pathname.includes('/admin/archive-export/')) {
+        assert.equal(init.headers.get('X-Admin-Token'),'synthetic');
+        const id=url.pathname.split('/').at(-2);
+        return Response.json({period:{...period,id},updatedAt:220,archived:true,racerCount:0,entries:[]},
+          {headers:{'X-Archive-Document-Reads':'1'}});
+      }
+      assert.equal(new Headers(init?.headers).has('X-Admin-Token'),false);
+      if(url.pathname.endsWith('/overall'))return Response.json({...overall,trackSummaries:[]});
+      if(url.pathname.endsWith('/catalog'))return Response.json({periods:[],archives:['old1','old2'].map(id=>({...period,id}))});
+      if(url.pathname==='/v1/snapshot/track')return new Response('',{status:404});
+      assert.equal(url.pathname,'/v1/events/permanent-rolling-hills/snapshot');
+      return Response.json({updatedAt:220,entries:[]});
+    }};
+  const result=await runPublicSnapshotBackup(options);
+  assert.equal(result.deferred,true);
+  assert.equal(result.previousBackupsPreserved,true);
+  assert.equal(calls.filter(url=>url.includes('/admin/archive-export/')).length,1);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(directory,'manifest.json'),'utf8')),prior);
+  assert.deepEqual(await fs.readdir(directory),['manifest.json']);
+  calls.length=0;
+  const captured=await runPublicSnapshotBackup({...options,archiveExport:{...options.archiveExport,maxRequests:2}});
+  assert.equal(captured.deferred,undefined);
+  assert.ok(captured.events.old1);assert.ok(captured.events.old2);
+  assert.equal(calls.filter(url=>url.includes('/admin/archive-export/')).length,2);
+  calls.length=0;
+  await runPublicSnapshotBackup(options);
+  assert.equal(calls.some(url=>url.includes('/admin/archive-export/')),false,'freshly captured legacy archives also become reusable');
+});
 
 test('archived standings and validated replays survive catalog rollover without replay refetches',async t=>{
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'polytrack-static-archive-'));
@@ -366,7 +514,7 @@ test('bounded export keeps prior tracks, exports permanent event, and continues 
   assert.ok(calls.length < firstCount);
 });
 
-test('finalized archive backups are reused, while live events and weekly correction checks stay fresh', async t => {
+test('complete finalized archives never expire, while live and incomplete events stay fresh', async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'polytrack-archive-reuse-'));
   t.after(() => fs.rm(directory, {recursive: true, force: true}));
   const archived = {...period, id: 'daily_old'};
@@ -377,7 +525,7 @@ test('finalized archive backups are reused, while live events and weekly correct
     if (url.pathname.endsWith('/v1/snapshot/overall')) return Response.json({...overall, trackSummaries: []});
     if (url.pathname.endsWith('/v1/events/catalog')) return Response.json({periods: [period], archives: [archived]});
     const id = url.pathname.split('/').at(-2);
-    return Response.json({id, updatedAt: 180, entries: [], archived: id === archived.id});
+    return Response.json({id, updatedAt: 180, entries: [], complete:true, totalEntries:0, archived: id === archived.id});
   };
   const now = 1000000000;
   await runPublicSnapshotBackup({fetchImpl, directory, now, trackIds: [], log: () => {}});
@@ -391,13 +539,17 @@ test('finalized archive backups are reused, while live events and weekly correct
   assert.equal(manifest.eventIdsFetched, 2);
   calls.length = 0;
   await runPublicSnapshotBackup({fetchImpl, directory,
-    now: now + PUBLIC_SNAPSHOT_LIMITS.archivedEventRecheckMs, trackIds: [], log: () => {}});
-  assert.ok(calls.some(url => url.includes('/daily_old/')));
+    now: now + 365 * 86400000, trackIds: [], log: () => {}});
+  assert.equal(calls.some(url => url.includes('/daily_old/')),false);
   await fs.writeFile(path.join(directory, `events/${archived.id}.json`), '{}');
   calls.length = 0;
   await runPublicSnapshotBackup({fetchImpl, directory,
-    now: now + PUBLIC_SNAPSHOT_LIMITS.archivedEventRecheckMs + 1, trackIds: [], log: () => {}});
+    now: now + 365 * 86400000 + 1, trackIds: [], log: () => {}});
   assert.ok(calls.some(url => url.includes('/daily_old/')));
+  await fs.writeFile(path.join(directory, `events/${archived.id}.json`),JSON.stringify({id:archived.id,updatedAt:180,entries:[],archived:true,complete:false}));
+  calls.length=0;
+  await runPublicSnapshotBackup({fetchImpl,directory,now:now+365*86400000+2,trackIds:[],log:()=>{}});
+  assert.ok(calls.some(url=>url.includes('/daily_old/')),'partial archives must still be repaired by the capture job');
 });
 
 test('public event projection preserves valid replay bindings across repeated captures', () => {

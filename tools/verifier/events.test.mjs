@@ -58,6 +58,30 @@ test('intake stops on empty and never reads more than sixteen receipts', async (
     assert.equal(f.intakes(), Math.min(count + 1, 16));
   }
 });
+test('event intake is capped by native allowance even when caller requests sixteen receipts', async () => {
+  for (const limit of [1,4,7,12,16]) {
+    const f=fixture({daily:100},100);
+    const result=await runEventCoordinator(f.runtime,'/repo',{...f.options,limit,intakeLimit:16});
+    assert.equal(result.consumed,limit);
+    assert.equal(f.intakes(),limit);
+    assert.equal(result.checked,limit);
+  }
+  const f=fixture({daily:100},100);
+  const result=await runEventCoordinator(f.runtime,'/repo',{...f.options,limit:4,intakeLimit:2});
+  assert.equal(result.consumed,2);
+  assert.equal(result.checked,4,'already admitted jobs remain eligible');
+});
+test('post-intake discovery does not rescan receipts or retries', async () => {
+  const f=fixture({daily:4});
+  let discoveries=0;
+  await runEventCoordinator(f.runtime,'/repo',{...f.options,limit:4,
+    readWork:async(_runtime,options)=>{
+      discoveries++;
+      assert.deepEqual(options,{inspectInbox:false});
+      return {periodIds:['daily'],archiveId:null};
+    }});
+  assert.equal(discoveries,1);
+});
 test('invalid job and intake limits fail before any work', async () => {
   const f = fixture({ daily: 100 });
   for (const limit of [0, 17, 1.5]) await assert.rejects(runEventCoordinator(f.runtime, '/repo', { ...f.options, limit }), /limit/);
@@ -196,19 +220,31 @@ test('sustained intake preserves request allowance for a leased event batch',asy
   const runtime={service:{processBatch:async(_period,_verify,limit)=>{
     assert.ok(remaining>=136,'must reserve completion plus four possible findings before lease');remaining-=128;batches++;
     return Array.from({length:limit},()=>({reason:'native_exact_finish'}));
-  },archivePeriod:async()=>assert.fail('archive must be deferred')}};
+  },archivePeriod:async()=>{assert.ok(remaining>=24);remaining-=24;}}};
   const result=await runEventCoordinator(runtime,'/repo',{limit:4,canSpend:n=>n<=remaining,
     consumeInbox:async()=>{remaining-=48;intakes++;return {consumed:1};},
     readWork:async()=>{remaining-=24;return {periodIds:['daily'],archiveId:'old'};},
     verifyBatch:async()=>assert.fail('fixture batch simulates native accounting')});
-  assert.equal(intakes,5);assert.equal(batches,1);assert.equal(result.checked,4);
-  assert.equal(result.archived,null);assert.equal(result.budgetDeferred,true);assert.equal(remaining,8);
+  assert.equal(intakes,4);assert.equal(batches,1);assert.equal(result.checked,4);
+  assert.equal(result.archived,'old');assert.equal(result.budgetDeferred,false);assert.equal(remaining,32);
 });
 
-test('insufficient completion reserve never leases another event batch',async()=>{
-  const f=fixture({daily:20});let remaining=127;
-  const result=await runEventCoordinator(f.runtime,'/repo',{...f.options,canSpend:n=>n<=remaining});
-  assert.equal(f.native(),0);assert.equal(f.batches.length,0);assert.equal(result.budgetDeferred,true);
+test('insufficient discovery plus completion reserve performs no event reads or leases',async()=>{
+  for (const remaining of [0,24,127,136,159]) {
+    const f=fixture({daily:20});
+    f.options.readWork=async()=>assert.fail('insufficient reserve must skip discovery');
+    const result=await runEventCoordinator(f.runtime,'/repo',{...f.options,canSpend:n=>n<=remaining});
+    assert.equal(f.intakes(),0);assert.equal(f.native(),0);assert.equal(f.batches.length,0);
+    assert.equal(result.budgetDeferred,true);assert.equal(result.archived,null);
+  }
+});
+
+test('exact discovery and completion reserve still processes already admitted work',async()=>{
+  const f=fixture({daily:4});let remaining=160;
+  const result=await runEventCoordinator(f.runtime,'/repo',{...f.options,limit:4,canSpend:n=>n<=remaining,
+    readWork:async()=>{remaining-=24;return {periodIds:['daily'],archiveId:null};}});
+  assert.equal(f.intakes(),0);assert.equal(result.checked,4);
+  assert.equal(result.budgetDeferred,true,'new intake was deferred but queued work proceeds');
 });
 
 test('four-slot Catch-Up rounds rotate sustained periods even when discovery clock order is unchanged', async () => {

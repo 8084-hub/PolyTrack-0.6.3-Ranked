@@ -418,7 +418,9 @@ service cloud.firestore {
     }
 
     match /0.6.2_race_results/{resultId} {
-      allow read: if true;
+      // Keyed PB reads remain compatible; public collection scans are not.
+      allow get: if true;
+      allow list: if false;
 
       allow create: if signedIn()
         && request.resource.data.ingestedAt == request.time
@@ -509,7 +511,9 @@ service cloud.firestore {
     }
 
     match /0.6.2_profiles_public/{accountId} {
-      allow read: if true;
+      // Full public exports must be captured before enabling this candidate.
+      allow get: if true;
+      allow list: if false;
 
       allow create: if signedIn()
         && request.resource.data.ownerUid == request.auth.uid
@@ -1168,7 +1172,8 @@ service cloud.firestore {
     }
 
     match /0.6.2_event_inbox/{inboxId} {
-      allow get: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      // Read receipts through the live-window-gated Worker, never old inboxes.
+      allow get: if false;
       allow list, delete: if false;
       allow create: if signedIn() && validEventInbox(request.resource.data, inboxId);
       allow update: if signedIn()
@@ -1206,9 +1211,8 @@ service cloud.firestore {
     }
 
     match /0.6.2_event_receipts/{receiptId} {
-      allow get: if signedIn()
-        && receiptId.matches('^[A-Za-z0-9_-]{1,64}_[a-f0-9]{64}$')
-        && ownsEventReceipt(receiptId);
+      // Avoid Rules-dependent profile reads for archived or missing receipts.
+      allow get: if false;
       allow list, create, update, delete: if false;
     }
 

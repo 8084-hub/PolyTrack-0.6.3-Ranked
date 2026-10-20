@@ -1,4 +1,6 @@
 import {publicationPageId} from './paged-publication.js';
+import {staticEventRead} from './event-read-policy.js';
+import {ARCHIVE_EXPORT_PREFIX, exportEventArchive} from './event-archive-export.js';
 import {publishEventCapacity} from './event-publication.js';
 import { provisionKodubEvent } from './kodub-event.js';
 import { createEventHandler, EventError } from './events.js';
@@ -12,8 +14,8 @@ function eventPageCacheName(kind,id,generation,page){
 const EVENT_CACHE_FILL_LIMIT = 64;
 const eventCacheFills = new Map();
 
-export function eventWorkerHandler(env, { request, authenticate, origins, context = {} }) {
-  const runtime = eventRuntime(request, { projectId: env.FIREBASE_PROJECT_ID || 'polytrack-052' });
+export function eventWorkerHandler(env, { request, authenticate, origins, context = {}, now = Date.now }) {
+  const runtime = eventRuntime(request, { projectId: env.FIREBASE_PROJECT_ID || 'polytrack-052', now });
   const enabled = () => String(env.EVENTS_ENABLED) === 'true';
   const cachedHits = new WeakMap();
   const admittedRequests = new WeakSet();
@@ -32,6 +34,10 @@ export function eventWorkerHandler(env, { request, authenticate, origins, contex
       const snapshot = /^\/v1\/events\/([A-Za-z0-9_-]{1,64})\/snapshot$/.exec(url.pathname);
       if (archive) name = 'archive/' + archive[1];
       else if (snapshot) name = 'snapshot/' + encodeURIComponent(snapshot[1]);
+      else {
+        const recording = /^\/v1\/events\/([A-Za-z0-9_-]{1,64})\/(replays|playbacks)\/([a-f0-9]{64})$/.exec(url.pathname);
+        if (recording) name = recording[2] + '/' + recording[1] + '/' + recording[3];
+      }
     }
     if (!name) return null;
     const keyUrl = new URL('/__event_public_cache/' + encodeURIComponent(env.FIREBASE_PROJECT_ID || 'polytrack-052') + '/' + name, url);
@@ -61,6 +67,20 @@ export function eventWorkerHandler(env, { request, authenticate, origins, contex
   };
   return async incoming => {
     const url = new URL(incoming.url);
+    if (url.pathname === ARCHIVE_EXPORT_PREFIX || url.pathname.startsWith(ARCHIVE_EXPORT_PREFIX + '/'))
+      return exportEventArchive(incoming, env, {request, origins, now});
+    // Before authentication, rate limits, cache hits, or any database lookup.
+    // Missing static archives must remain missing, never become paid fallbacks.
+    const archived = incoming.method === 'GET' && staticEventRead(url.pathname, now());
+    if (archived) {
+      const origin = incoming.headers.get('Origin') || '';
+      const headers = {'Content-Type': 'application/json', 'Cache-Control': 'no-store', Vary: 'Origin'};
+      if (!origins.has(origin)) return new Response(JSON.stringify({error:'origin_not_allowed'}), {status:403, headers});
+      headers['Access-Control-Allow-Origin'] = origin;
+      if (!enabled()) return new Response(JSON.stringify({error:'events_disabled'}), {status:503, headers});
+      return new Response(JSON.stringify({error:'event_archive_static_only', snapshotOnly:true,
+        snapshotPointer:'snapshot-current.json', ...archived}), {status:410, headers});
+    }
     const cachedPublic = async (name, ttl, load) => {
       const cache = typeof caches !== 'undefined' ? caches.default : null;
       const keyUrl = new URL('/__event_public_cache/' + encodeURIComponent(env.FIREBASE_PROJECT_ID || 'polytrack-052') + '/' + name, url);
@@ -103,10 +123,11 @@ export function eventWorkerHandler(env, { request, authenticate, origins, contex
     };
     const service = { ...runtime.service,
       publicPage:(kind,id,generation,page)=>cachedPublic(eventPageCacheName(kind,id,generation,page),86400,()=>runtime.service.publicPage(kind,id,generation,page)),
-      catalog: () => cachedPublic('catalog', 120, () => runtime.service.catalog()),
-      totals: () => cachedPublic('totals', 20, () => runtime.service.totals()),
-      archiveMonth: month => cachedPublic('archive/' + month, 300, () => runtime.service.archiveMonth(month)),
-      snapshot: id => cachedPublic('snapshot/' + encodeURIComponent(id), 15, () => runtime.service.snapshot(id)) };
+      catalog: () => cachedPublic('catalog', 300, () => runtime.service.catalog()),
+      totals: () => cachedPublic('totals', 120, () => runtime.service.totals()),
+      replay: (id, accountId) => cachedPublic('replays/' + id + '/' + accountId, 60, () => runtime.service.replay(id, accountId)),
+      playback: (id, runId) => cachedPublic('playbacks/' + id + '/' + runId, 60, () => runtime.service.playback(id, runId)),
+      snapshot: id => cachedPublic('snapshot/' + encodeURIComponent(id), 60, () => runtime.service.snapshot(id)) };
     const events = createEventHandler({ service, authenticate, allowedOrigins: origins, enabled, allowRequest });
     if (incoming.method === 'GET' && url.pathname === '/v1/events/permanent-rolling-hills/snapshot') {
       const origin = incoming.headers.get('Origin') || '';
@@ -118,7 +139,7 @@ export function eventWorkerHandler(env, { request, authenticate, origins, contex
         headers['Retry-After'] = '60';
         return new Response(JSON.stringify({ error: 'event_ingress_limit' }), { status: 429, headers });
       }
-      try { return new Response(JSON.stringify(await cachedPublic('permanent-rolling-hills', 20, () => readPermanentRollingHills(request))), { status: 200, headers }); }
+      try { return new Response(JSON.stringify(await cachedPublic('permanent-rolling-hills', 120, () => readPermanentRollingHills(request))), { status: 200, headers }); }
       catch (error) {
         if (error.code === 'event_ingress_limit') {
           headers['Retry-After'] = '60';
@@ -132,7 +153,7 @@ export function eventWorkerHandler(env, { request, authenticate, origins, contex
     const finite = await response.json();
     if(finite.dynamicComponents)return new Response(JSON.stringify(finite),{status:200,headers:response.headers});
     try {
-      const rolling = await cachedPublic('permanent-rolling-hills', 20, () => readPermanentRollingHills(request));
+      const rolling = await cachedPublic('permanent-rolling-hills', 120, () => readPermanentRollingHills(request));
       return new Response(JSON.stringify(mergePermanentRollingIntoTotals(finite, rolling)), { status: 200, headers: response.headers });
     } catch {
       return new Response(JSON.stringify({ ...finite, eventRpComplete: false,

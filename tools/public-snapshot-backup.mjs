@@ -7,8 +7,7 @@ import {publicDisplayName} from './public-display-name.mjs';
 import {assemblePublishedSnapshotPages} from './published-snapshot-pages.mjs';
 
 export const PUBLIC_SNAPSHOT_LIMITS = Object.freeze({trackFetches: 100, eventFetches: 120, eventReplayFetches: 30, pageFetches: 100,
-  eventReplaysPerPeriod: 500, eventReplayResponseBytes: 70 * 1024, responseBytes: 2 * 1024 * 1024, concurrency: 4,
-  archivedEventRecheckMs: 7 * 86400000});
+  eventReplaysPerPeriod: 500, eventReplayResponseBytes: 70 * 1024, responseBytes: 2 * 1024 * 1024, concurrency: 4});
 const WORKER = 'https://polytrack-ranked-worker.staticquasar931.workers.dev';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDirectory = path.join(root, 'local-reports', 'snapshot-staging');
@@ -49,7 +48,7 @@ const eventEntryFields = ['accountId', 'name', 'carStyle', 'timeMs', 'rp', 'rank
   'runAgeMs', 'eventRpContribution', 'normalRpEligible', 'physicsVerified', 'replayIntegrityVerified'];
 const eventFields = ['id', 'kind', 'trackId', 'period', 'scoreVersion', 'targetPolicy', 'targetMs', 'maxRp', 'sourceRevision',
   'updatedAt', 'archived', 'state', 'racerCount', 'complete', 'totalEntries', 'sourceTotalEntries', 'sourceCompleteness',
-  'contributions', 'eventRpComplete', 'entries', 'sourceComplete', 'paginatedSource', 'pagination'];
+  'contributions', 'eventRpComplete', 'entries', 'sourceComplete', 'paginatedSource', 'pagination', 'publicationPending'];
 const pendingEventFields = ['accountId', 'runId', 'timeMs', 'name', 'carStyle', 'submittedAt'];
 
 function project(source, fields) {
@@ -225,6 +224,76 @@ export function publicEventBackup(value, eventId) {
   return result;
 }
 
+export function isReusableArchivedEventBackup(value, eventId) {
+  try {
+    publicEventBackup(value, eventId);
+    if (value.archived !== true || eventId === 'permanent-rolling-hills') return false;
+    for (const field of ['complete', 'sourceComplete'])
+      if (value[field] !== undefined && value[field] !== true) return false;
+    if (value.publicationPending !== undefined && value.publicationPending !== false) return false;
+    for (const field of ['totalEntries', 'sourceTotalEntries'])
+      if (value[field] !== undefined && value[field] !== value.entries.length) return false;
+    if (value.pagination !== undefined || value.paginatedSource === true) {
+      const p = value.pagination;
+      if (value.complete !== true || value.paginatedSource !== true || p?.version !== 1 ||
+          !TRACK_ID.test(p.generation || '') || p.complete !== true || p.pageSize !== 100 ||
+          p.totalEntries !== value.entries.length || p.pageCount !== Math.ceil(value.entries.length / 100))
+        return false;
+    }
+    if (value.complete === true) return true;
+    // Legacy frozen archives omit completeness metadata. An exact, validated
+    // racer count establishes coverage without inventing complete:true.
+    if (!value.period || !Number.isSafeInteger(value.racerCount) || value.racerCount < 0 ||
+        value.racerCount !== value.entries.length) return false;
+    const limit = value.period.entrantLimit;
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || value.racerCount > limit)) return false;
+    const seen = new Set();
+    for (const row of value.entries) {
+      if (!PUBLIC_ACCOUNT_ID.test(row?.accountId || '') || seen.has(row.accountId) ||
+          !Number.isSafeInteger(row.timeMs) || row.timeMs < 1 || row.timeMs > MAX_EVENT_TIME_MS) return false;
+      seen.add(row.accountId);
+    }
+    return true;
+  } catch { return false; }
+}
+
+// Explicit manual capture only: credentials never go to public/live URLs,
+// redirects or arbitrary hosts. The Worker independently enforces frozen data.
+export function createAdminArchiveCaptureFetch({fetchImpl = fetch, token, periodIds, maxRequests = 16} = {}) {
+  if (typeof token !== 'string' || !token || token.trim() !== token || token.length > 4096 ||
+      !Array.isArray(periodIds) || !periodIds.length || periodIds.length > 120 ||
+      periodIds.some(id => !EVENT_ID.test(id) || id === 'permanent-rolling-hills') ||
+      new Set(periodIds).size !== periodIds.length ||
+      !Number.isSafeInteger(maxRequests) || maxRequests < 1 || maxRequests > 120)
+    throw Error('Invalid bounded admin archive capture options');
+  const ids = new Set(periodIds);
+  let requests = 0, documentReads = 0;
+  const captureFetch = async (input, init = {}) => {
+    const url = new URL(input);
+    if (url.origin !== new URL(WORKER).origin) throw Error('Unexpected archive capture host');
+    const match = /^\/v1\/events\/([A-Za-z0-9_-]{1,64})\/(.+)$/.exec(url.pathname);
+    if (!match || !ids.has(match[1])) return fetchImpl(input, init);
+    if ((init.method || 'GET') !== 'GET' ||
+        !/^(snapshot(?:\/page)?|track|replays\/[a-f0-9]{64})$/.test(match[2]))
+      throw Error('Unsupported admin archive capture resource');
+    if (requests >= maxRequests) throw new PublicBackupDeferredError('Admin archive capture request budget reached');
+    requests++;
+    url.pathname = '/v1/events/admin/archive-export/' + match[1] + '/' + match[2];
+    const headers = new Headers(init.headers);
+    headers.set('Origin', 'https://staticquasar931.github.io');
+    headers.set('X-Admin-Token', token);
+    const response = await fetchImpl(url.href, {...init, method:'GET', headers, redirect:'error'});
+    const reads = response.headers.get('X-Archive-Document-Reads');
+    if (!/^[0-6]$/.test(reads || '')) {
+      documentReads += 6;
+      throw new PublicBackupDeferredError('Admin archive capture read accounting unavailable');
+    }
+    documentReads += Number(reads);
+    return response;
+  };
+  return {fetch: captureFetch, stats: () => ({requests, documentReads, documentReadCeiling:maxRequests * 6})};
+}
+
 export function publicEventReplayBackup(value, {periodId, trackId, entry}) {
   if (!EVENT_ID.test(periodId || '') || !TRACK_ID.test(trackId || '') || !PUBLIC_ACCOUNT_ID.test(entry?.accountId || '') ||
       !Number.isSafeInteger(entry?.timeMs) || !value || typeof value !== 'object' || value.periodId !== periodId ||
@@ -335,7 +404,9 @@ async function writeJsonIfChanged(directory, relative, value) {
 }
 
 async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outputDirectory, now = Date.now(),
-  trackIds = null, log = console.log} = {}) {
+  trackIds = null, log = console.log, archiveExport = null} = {}) {
+  const adminCapture = archiveExport ? createAdminArchiveCaptureFetch({...archiveExport, fetchImpl}) : null;
+  if (adminCapture) fetchImpl = adminCapture.fetch;
   const previous = await readManifest(directory);
   let pageFetches = 0;
   const assemble = (value, endpoint) => assemblePublishedSnapshotPages(value, {fetchPage: (page, generation) => {
@@ -353,19 +424,21 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
   }
   const liveIds = new Set((catalog.periods || []).map(row => row.id));
   const eventFetchIds = [];
+  let archivedEventsReused = 0;
   for (const id of selectedEvents) {
     const record = previous.events?.[id];
-    const age = now - Number(record?.checkedAt || 0);
     let reusable = false;
     if (!liveIds.has(id) && id !== 'permanent-rolling-hills' && record?.path === `events/${id}.json` &&
-        Number(record.checkedAt) > 0 && age >= 0 && age < PUBLIC_SNAPSHOT_LIMITS.archivedEventRecheckMs) {
+        Number(record.checkedAt) > 0) {
       try {
         const cached = JSON.parse(await fs.readFile(path.join(directory, record.path), 'utf8'));
-        publicEventBackup(cached, id);
-        reusable = cached.archived === true;
+        // Completed finite event standings are immutable. Repair only missing,
+        // invalid or incomplete captures, not every archive on a rolling timer.
+        reusable = isReusableArchivedEventBackup(cached, id);
       } catch { /* A missing or invalid backup must be fetched again. */ }
     }
-    if (!reusable) eventFetchIds.push(id);
+    if (reusable) archivedEventsReused++;
+    else eventFetchIds.push(id);
   }
   // Missing and oldest archives go first, so a catalog larger than one batch
   // eventually gets complete coverage without increasing the request budget.
@@ -540,7 +613,8 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
   await writeJsonIfChanged(directory, 'manifest.json', manifest);
   log(JSON.stringify({publicSnapshotBackup: {workerRequests: 2 + trackRows.length + eventRows.length + replayCandidates.length + pageFetches, pageFetches,
     trackFetches: trackRows.length, tracksChanged, tracksMissing: missingTracks,
-    eventFetches: eventRows.length, archivedEventsReused: selectedEvents.length - eventRows.length, eventsChanged, eventsMissing: missingEvents,
+    eventFetches: eventRows.length, archivedEventsReused, eventsChanged, eventsMissing: missingEvents,
+    ...(adminCapture ? {adminArchiveCapture:adminCapture.stats()} : {}),
     eventReplayCandidates: replayCandidates.length, eventReplays: Object.keys(eventReplays).length,
     plannerAvailable: planner.available, plannerReason: planner.reason}}));
   return manifest;

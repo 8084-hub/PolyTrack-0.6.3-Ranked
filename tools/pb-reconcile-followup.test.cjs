@@ -11,7 +11,8 @@ function productionHarness({rows,readDoc,paused=()=>false,readRecordingStore=()=
   const end=source.indexOf('  function hookLegacyNetworking(){',start);
   assert.ok(start>=0&&end>start,'production reconcile and scheduling functions exist');
   let now=1000000,timerId=0;
-  const timers=new Map(),storage=new Map();
+  const timers=new Map(),storage=new Map(),listeners=new Map();
+  const addEventListener=(name,callback)=>listeners.set(name,callback);
   const context={
     Date:{now:()=>now},Math,JSON,Map,Array,String,Number,Error,
     LOCAL_PB_RECONCILE_STATE_KEY:'state',FIREBASE_QUOTA_PAUSE_KEY:'quota',OVERALL_PB_DIRTY_KEY:'dirty',
@@ -22,7 +23,8 @@ function productionHarness({rows,readDoc,paused=()=>false,readRecordingStore=()=
     readJsonStorage:(key,fallback)=>storage.has(key)?storage.get(key):fallback,writeJsonStorage:(key,value)=>storage.set(key,JSON.parse(JSON.stringify(value))),
     firebaseQuotaPaused:paused,noteFirebaseQuota:()=>{},
     setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay});return id;},clearTimeout:id=>timers.delete(id),
-    window:{firebase:{auth:()=>({currentUser:{uid:'uid'}})}},
+    window:{addEventListener,firebase:{auth:()=>({currentUser:{uid:'uid'}})}},
+    document:{addEventListener,visibilityState:'visible'},navigator:{onLine:true},compatibilityOnlineAllowed:true,
     db:async()=>({collection:()=>({doc:id=>({get:async()=>readDoc(id)})})}),
     cloudOwnerConflicts:new Map(),showCloudOwnerConflict:()=>{},assertCloudOwner:()=>{},
     readRecordingStore,safeRecordingId:x=>x,normalizeReplayPayloadString:x=>String(x||''),
@@ -34,11 +36,24 @@ function productionHarness({rows,readDoc,paused=()=>false,readRecordingStore=()=
   };
   context.writeJsonStorage=(key,value)=>storage.set(key,JSON.parse(JSON.stringify(value)));
   vm.createContext(context);vm.runInContext(source.slice(start,end),context);
-  context.advance=ms=>{now+=ms;};context.timers=timers;context.storage=storage;
+  context.advance=ms=>{now+=ms;};context.timers=timers;context.storage=storage;context.listeners=listeners;
   return context;
 }
 
 function docMissing(){return {exists:false,metadata:{fromCache:false}};}
+
+test('returning online or to the page resumes PB sync without polling hidden tabs',()=>{
+  const h=productionHarness({rows:[],readDoc:async()=>docMissing()});
+  h.document.visibilityState='hidden';
+  h.listeners.get('online')();assert.equal(h.timers.size,0);
+  h.document.visibilityState='visible';h.navigator.onLine=false;
+  h.listeners.get('visibilitychange')();assert.equal(h.timers.size,0);
+  h.navigator.onLine=true;h.storage.set('quota',1000000+60000);
+  h.firebaseQuotaPaused=()=>true;
+  h.listeners.get('online')();assert.equal(h.timers.size,1);
+  assert.ok([...h.timers.values()][0].delay>=60000);
+  h.listeners.get('pageshow')();assert.equal(h.timers.size,1);
+});
 
 test('actual reconcile rotates past 16 permanently denied rows and uploads row 17 within batch limit',async()=>{
   const rows=Array.from({length:17},(_,i)=>({trackId:`t${String(i).padStart(2,'0')}`,timeMs:10000+i,replayHash:`h${i}`,replay:i===16?'replay':''}));

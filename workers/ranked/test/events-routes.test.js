@@ -7,14 +7,15 @@ import { VERIFIER_ENGINE_DIGEST, VERIFIER_VERSION } from '../src/verification.js
 
 test('actual Worker routes accept seven-field run without session and publish matching read contracts', async () => {
   const at = Date.now(), accountId = 'b'.repeat(64), trackId = 'a'.repeat(64), data = new Map();
+  const periodId = 'd_' + new Date(at).toISOString().slice(0, 10).replaceAll('-', '');
   const capacity = { policyVersion: 'test', entrants: 200, admissionsPerPeriod: 2048,
     replayBytesPerPeriod: 16777216, minIntervalMs: 5000, verificationsPerDay: 1536 };
-  const period = eventPeriod({ id: 'd_test', enabled: true, kind: 'daily', maxRp: 100,
+  const period = eventPeriod({ id: periodId, enabled: true, kind: 'daily', maxRp: 100,
     trackId, startsAt: at - 10000, endsAt: at + 86400000 - 10000, graceMs: 86400000,
     targetMs: 10000, capacity, eligibility: 'best-submitted-during-period' });
-  data.set(`${C.periods}/d_test`, period);
+  data.set(`${C.periods}/${periodId}`, period);
   data.set(`${C.catalog}/main`, { periods: [period] });
-  data.set(`${C.queues}/d_test`, { slots: [], runIds: [], subjects: [], admitted: 0, entrants: 0, replayBytes: 0 });
+  data.set(`${C.queues}/${periodId}`, { slots: [], runIds: [], subjects: [], admitted: 0, entrants: 0, replayBytes: 0 });
   data.set(`${C.profiles}/${accountId}`, { ownerUid: 'user1', accountId, name: 'Racer' });
   let reads = 0; const commits = [];
   const env = { EVENTS_ENABLED: 'true', FIREBASE_PROJECT_ID: 'polytrack-052',
@@ -42,42 +43,42 @@ test('actual Worker routes accept seven-field run without session and publish ma
     method: body ? 'POST' : 'GET', headers: { Origin: 'https://example.test', 'Content-Type': 'application/json', 'CF-Connecting-IP': '127.0.0.1' },
     ...(body ? { body: JSON.stringify(body) } : {}) });
   const body = { accountId, trackId, attemptId: 'native1', timeMs: 20402, frames: 20402, replay: 'AAAA', carStyle: '' };
-  const response = await handleRequest(request('d_test/runs', body), env);
+  const response = await handleRequest(request(periodId+'/runs', body), env);
   assert.equal(response.status, 202); const accepted = await response.json(); assert.equal(accepted.status, 'waiting');
-  assert.equal(data.get(`${C.queues}/d_test`).admitted, 1);
-  const receipt = await (await handleRequest(request('d_test/receipt?accountId=' + accountId), env)).json();
+  assert.equal(data.get(`${C.queues}/${periodId}`).admitted, 1);
+  const receipt = await (await handleRequest(request(periodId+'/receipt?accountId=' + accountId), env)).json();
   assert.equal(receipt.attemptId, 'native1'); assert.equal(receipt.status, 'waiting');
   const catalog = await (await handleRequest(request('catalog'), env)).json();
   assert.equal(catalog.periods[0].id, period.id); assert.equal(typeof catalog.periods[0].startsAt, 'number');
   assert.deepEqual((await (await handleRequest(request('totals'), env)).json()).entries, []);
-  const snapshot = await (await handleRequest(request('d_test/snapshot'), env)).json();
+  const snapshot = await (await handleRequest(request(periodId+'/snapshot'), env)).json();
   assert.equal(snapshot.period.id, period.id); assert.deepEqual(snapshot.entries, []);
   assert.equal(snapshot.racerCount, 1); assert.equal(snapshot.pendingPlaybacks[0].runId, accepted.runId);
   assert.equal(snapshot.pendingPlaybacks[0].source, 'pending-event-playback');
-  const pendingPlayback = await (await handleRequest(request(`d_test/playbacks/${accepted.runId}`), env)).json();
+  const pendingPlayback = await (await handleRequest(request(`${periodId}/playbacks/${accepted.runId}`), env)).json();
   assert.equal(pendingPlayback.verificationStatus, 'waiting'); assert.equal(pendingPlayback.verified, false);
   assert.equal(pendingPlayback.eventRpEligible, false); assert.equal(pendingPlayback.replay, 'AAAA');
   assert.equal(pendingPlayback.pending, true); assert.equal(pendingPlayback.source, 'pending-event-recording');
-  assert.equal((await handleRequest(request('d_test/sessions', body), env)).status, 404);
+  assert.equal((await handleRequest(request(periodId+'/sessions', body), env)).status, 404);
   assert.equal((await handleRequest(request('catalog'), { ...env, EVENTS_ENABLED: 'false' })).status, 503);
   // Exercise the production adapter, not the memoryStore core fixture. Native
   // physics is intentionally replaced by an exact bound verdict for this test.
   const service = createEventService({ store: createEventFirestoreStore({ request: env.__TEST_FIRESTORE, projectId: 'polytrack-052' }) });
-  const [job] = await service.leaseJobs('d_test');
+  const [job] = await service.leaseJobs(periodId);
   const binding = { resultId: job.resultId, trackId, nativeTrackId: trackId, timeMs: job.timeMs,
     replayHash: job.replayHash, actualReplayHash: job.replayHash,
     engineDigest: VERIFIER_ENGINE_DIGEST, verifierVersion: VERIFIER_VERSION };
-  const published = await service.completeJob('d_test', job, { resultId: job.resultId, trackId,
+  const published = await service.completeJob(periodId, job, { resultId: job.resultId, trackId,
     timeMs: job.timeMs, replayHash: job.replayHash, engineDigest: VERIFIER_ENGINE_DIGEST,
     binding, status: 'verified', reason: 'native_exact_finish' });
   assert.equal(published.canonicalImproved, true); assert.equal(published.eventImproved, true);
   assert.deepEqual(commits.at(-1), { reads: 14, writes: 11 });
   assert(commits.every(c => c.reads <= 16 && c.writes <= 16));
-  assert.equal(data.get(`${C.receipts}/d_test_${accountId}`).status, 'verified');
+  assert.equal(data.get(`${C.receipts}/${periodId}_${accountId}`).status, 'verified');
   assert.equal(data.get(`${C.profiles}/${accountId}`).pbCount, 1);
   assert.equal(data.get(`${C.canonical}/${accountId}_${trackId}`).timeMs, 20402);
-  const retained = await (await handleRequest(request(`d_test/replays/${accountId}`), env)).json();
-  assert.equal(retained.periodId, 'd_test'); assert.equal(retained.accountId, accountId);
+  const retained = await (await handleRequest(request(`${periodId}/replays/${accountId}`), env)).json();
+  assert.equal(retained.periodId, periodId); assert.equal(retained.accountId, accountId);
   assert.equal(retained.trackId, trackId); assert.equal(retained.timeMs, 20402); assert.equal(retained.replay, 'AAAA');
   assert.equal(retained.frames, retained.timeMs); assert.equal(retained.carStyle, '');
   assert.equal(retained.source, 'verified-event-recording');

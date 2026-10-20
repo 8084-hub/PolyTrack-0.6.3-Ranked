@@ -11,3 +11,12 @@ test('visible time is attributed to the observed release without inventing older
 test('current timestamps survive storage reload without counter clamping',()=>{const at=1792280000000;let value;const storage={getItem:()=>value,setItem:(_,v)=>value=v};const first=createLocalInsights({storage,revision:156,now:()=>at});first.play(a);first.flush(true);const saved=createLocalInsights({storage,revision:156,now:()=>at+1000}).report();assert.equal(saved.startedAt,at);assert.equal(saved.revisions[0].firstAt,at);assert.equal(saved.tracks[a].lastAt,at);});
 
 test('failed storage writes stay throttled without deleting game data',()=>{let writes=0;const h=createLocalInsights({now:()=>100000,storage:{getItem:()=>null,setItem(){writes++;throw Error('quota');}}});for(let n=0;n<100;n++)h.action('planner-open');assert.equal(writes,1);assert.equal(h.report().actions['planner-open'],100);});
+test('extreme latency outliers are counted but capped in the average and maximum',()=>{
+ let value;const storage={getItem:()=>value,setItem:(_,next)=>value=next};
+ const h=createLocalInsights({storage});h.measure('TRACK',100);h.measure('TRACK',3600000);h.flush(true);
+ const metric=createLocalInsights({storage}).report().metrics.TRACK;
+ assert.equal(createLocalInsights({storage}).report().latencyCapMs,30000);
+ assert.equal(metric.count,2);assert.equal(metric.totalMs,30100);assert.equal(metric.averageMs,15050);
+ assert.equal(metric.maxMs,30000);assert.equal(metric.over5s,1);assert.equal(metric.over30s,1);
+ assert.equal(metric.over5sPercent,50);assert.equal(metric.over30sPercent,50);
+});

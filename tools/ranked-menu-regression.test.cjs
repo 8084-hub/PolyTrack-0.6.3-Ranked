@@ -259,14 +259,15 @@ test('favorite ranking buttons mark the active category for visible highlighting
  ctx.overallCategory='community';assert.match(ctx.leaderboardArcadeMarkup(),/class="selected" aria-pressed="true" data-leaderboard-shortcut="tracks"/);
 });
 
-test('favorite rankings form two equal columns with clearly labeled local usage counts',()=>{
+test('favorite rankings form two equal columns with shortcut numbers and usage tooltips',()=>{
  const ctx=vm.createContext({readJsonStorage:()=>({overall:3,tracks:2,playtime:1,average:1}),LEADERBOARD_USAGE_KEY:'usage',LEADERBOARD_LABELS:{overall:'Overall RP',tracks:'Tracks completed',playtime:'Active time',average:'Average place'},overallCategory:'overall',escapeHtml:String});
  vm.runInContext(extract('overallFooterLayoutCss')+';'+extract('leaderboardArcadeMarkup'),ctx);
  const css=ctx.overallFooterLayoutCss();assert.match(css,/leaderboard-arcade>div[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)!important/);
  assert.match(css,/leaderboard-arcade button[^}]*min-height:40px!important/);
  assert.equal((ctx.leaderboardArcadeMarkup().match(/data-leaderboard-shortcut=/g)||[]).length,4);
  assert.match(ctx.leaderboardArcadeMarkup(),/<small aria-hidden="true">3<\/small>/);
- assert.match(ctx.leaderboardArcadeMarkup(),/opened 3 times/);
+ assert.match(ctx.leaderboardArcadeMarkup(),/title="Opened 3 times on this device"/);
+ assert.match(ctx.leaderboardArcadeMarkup(),/aria-keyshortcuts="4"/);
 });
 
 test('track scope is reset for every ranking change and follows tracks categories',()=>{

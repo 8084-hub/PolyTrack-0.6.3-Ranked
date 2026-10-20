@@ -44,6 +44,7 @@ test('toolbar groups stay adjacent with expanded filters at requested sizes and 
    assert.deepEqual(layout.labels,['My favorites','Curated only']);
    assert.ok(Math.abs(layout.checks[0].top-layout.checks[1].top)<1,'quick filters share a row');
    for(const control of [layout.sort,layout.reset,...layout.checks])assert.ok(control.left>=0&&control.right<=width&&control.height>=44,'toolbar controls fit and retain touch height');
+   if(width===390&&process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR){await page.evaluate(()=>document.querySelector('.sq-extra-menu').scrollTop=0);await page.screenshot({path:process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR+'/catalog-toolbar-390.png'});}
    await page.getByRole('searchbox').fill('no matching track');
    assert.equal(await page.locator('.sq-extra-empty h3').textContent(),'No matching tracks');
    await page.locator('.sq-extra-sort-controls button').click();

@@ -7,18 +7,18 @@ const start=patch.indexOf('  async function openKodubWeeklyFromEvents(');
 const end=patch.indexOf('  async function focusTrackFromRanked(',start);
 const source=patch.slice(start,end).trim();
 function fixture({available=true,visible=false}={}){
-  let clicks=0,waits=0,closed=0;
+  let clicks=0,waits=0,closed=0,remembered=0,pendingReveal=false;
   const weekly={click(){clicks++;},visible};
-  const community={textContent:'Community tracks',visible:true,classList:{contains:()=>false},click(){if(available)weekly.visible=true;}};
-  const document={getElementById:()=>null,querySelector:()=>weekly.visible?weekly:null,querySelectorAll:selector=>selector.includes('main-buttons')?[]:[community]};
-  const launch=new Function('document','nativeWeeklySelection','closeOverallPanel','isElementVisible','setTimeout',source+';return openKodubWeeklyFromEvents;')(document,{trackId:'a'},()=>closed++,node=>node.visible,resolve=>{waits++;resolve();});
-  return {launch,stats:()=>({clicks,waits,closed})};
+  const community={textContent:'Community tracks',visible:true,classList:{contains:()=>false},click(){if(available)pendingReveal=true;}};
+  const document={getElementById:()=>null,querySelector:selector=>selector.includes('sq-kodub-weekly')?(weekly.visible?weekly:null):selector.includes('image-button-container')?community:null,querySelectorAll:selector=>selector.includes('main-buttons')?[]:[community]};
+  const launch=new Function('document','nativeWeeklySelection','closeOverallPanel','isElementVisible','setTimeout','rememberEventTrackSelection',source+';return openKodubWeeklyFromEvents;')(document,{trackId:'a'},()=>closed++,node=>node.visible,resolve=>{waits++;if(pendingReveal)weekly.visible=true;resolve();},()=>remembered++);
+  return {launch,stats:()=>({clicks,waits,closed,remembered})};
 }
 test('weekly event uses the existing native track button without an import',async()=>{
-  const f=fixture({visible:true});await f.launch();assert.deepEqual(f.stats(),{clicks:1,waits:0,closed:1});
+  const f=fixture({visible:true});await f.launch();assert.deepEqual(f.stats(),{clicks:1,waits:0,closed:1,remembered:1});
 });
 test('weekly event opens Community before selecting its native card',async()=>{
-  const f=fixture();await f.launch();assert.deepEqual(f.stats(),{clicks:1,waits:1,closed:1});
+  const f=fixture();await f.launch();assert.deepEqual(f.stats(),{clicks:1,waits:1,closed:1,remembered:1});
 });
 test('missing weekly card fails after a bounded wait instead of polling forever',async()=>{
   const f=fixture({available:false});await assert.rejects(f.launch(),/could not load/);assert.equal(f.stats().waits,40);assert.equal(f.stats().clicks,0);

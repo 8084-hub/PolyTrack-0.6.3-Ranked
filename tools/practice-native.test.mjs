@@ -23,7 +23,7 @@ function fixture(options={}){
  if(options.noMotion)delete Car.prototype.getPosition;
  const history=createPracticeHistory({now:()=>at});
  const physics=new Physics();
- const observer=installPracticeObserver({require:id=>({A:id===5220?Physics:Car}),history,accountId:()=>owner,clock:()=>at,visible:()=>shown,schedule:fn=>{tick=fn;},cancel(){},placementAfterFinish:options.placementAfterFinish});
+ const observer=installPracticeObserver({require:id=>({A:id===5220?Physics:Car}),history,accountId:()=>owner,bestMs:()=>options.bestMs||0,clock:()=>at,visible:()=>shown,schedule:fn=>{tick=fn;},cancel(){},placementAfterFinish:options.placementAfterFinish});
  function car(){const c=new Car(physics.createCar(null,null,null,{getId:()=>track}).carState);assert.equal(c.addResetCallback(()=>{}),'reset-registered');return c;}
  return {history,observer,car,step(c,{ms=1000,frames=ms,x=c.state.x}={}){at+=ms;c.state.frames+=frames;c.state.x=x;tick();},hide(){shown=false;},show(){shown=true;},switchAccount(){owner='c'.repeat(64);}};
 }
@@ -77,4 +77,13 @@ test('late async placement after observer stop is ignored',async()=>{
  let resolve;const f=fixture({placementAfterFinish:()=>new Promise(r=>resolve=r)});
  const car=f.car();f.step(car,{x:1});for(const fn of car.finish)fn();f.observer.stop();
  resolve({accountId:account,trackId:track,timeMs:1000,at:101000,rank:1,total:100,exact:true,complete:true,authoritative:true});await Promise.resolve();assert.equal(f.history.get(account,track).firstPlacement,null);
+});
+test('native finish records a slower-than-PB result once',()=>{
+ const f=fixture({bestMs:900});try{
+  const car=f.car();f.step(car,{frames:1200,x:1});for(const fn of car.finish){fn();fn();}
+  const row=f.history.get(account,track);
+  assert.equal(row.finishes,1);assert.equal(row.pbs,0);assert.equal(row.bestMs,900);
+  assert.equal(row.trackedBestMs,1200);assert.equal(row.lastObservedFinishMs,1200);
+  assert.equal(row.recentFinishes[0].timeMs,1200);
+ }finally{f.observer.stop();}
 });

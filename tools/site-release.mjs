@@ -6,7 +6,7 @@ export function stampClientRelease(patch, index, revision) {
   patch = patch.replace(/installSiteUpdates\(\{revision:\d+/, `installSiteUpdates({revision:${revision}`)
     .replace(/(filter-(?:runtime|menu|groups)\.(?:mjs|css)|site-updates\.mjs)\?v=\d+/g, `$1?v=${revision}`)
     .replace(/(events\/client\.mjs)(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`)
-    .replace(/(tools\/(?:public-snapshot-client|record-placement|snapshot-metadata-recovery|ranked-live-snapshot|practice-history|practice-native|developer-diagnostics|practice-profile|local-diagnostics|local-insights)\.mjs)(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`)
+    .replace(/(tools\/(?:public-snapshot-client|record-placement|snapshot-metadata-recovery|ranked-live-snapshot|practice-history|practice-native|developer-diagnostics|practice-profile|local-diagnostics|local-insights|leaderboard-latency-hook)\.mjs)(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`)
     .replace(/(kodub-weekly\.mjs)(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`)
     .replace(/(const extraCatalogRevision=)['"]\d+['"]/, `$1'${revision}'`);
   patch = patch.replace(/createLocalInsights\(\{storage,revision:\d+\}\)/g, `createLocalInsights({storage,revision:${revision}})`);

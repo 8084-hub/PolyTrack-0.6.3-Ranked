@@ -37,10 +37,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=168',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=169',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='168';
+  const extraCatalogRevision='169';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -76,7 +76,7 @@
     return kodubHistoryLoad;
   }
   async function nativeWeeklyFeed(){
-    kodubAdapter=await import(new URL('./kodub-weekly.mjs?v=168',eventsModuleUrl).href);
+    kodubAdapter=await import(new URL('./kodub-weekly.mjs?v=169',eventsModuleUrl).href);
     await ensureEventUi();
     const response=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
     nativeWeeklySelection=response.current;
@@ -103,7 +103,7 @@
     if(localWeeklyCatalogRequest||Date.now()<localWeeklyCatalogUntil)return localWeeklyCatalogRequest;
     localWeeklyCatalogUntil=Date.now()+60000;
     const request=(async()=>{
-      kodubAdapter ||= await import(new URL('./kodub-weekly.mjs?v=168',eventsModuleUrl).href);
+      kodubAdapter ||= await import(new URL('./kodub-weekly.mjs?v=169',eventsModuleUrl).href);
       const feed=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
       const current=feed.current,end=Date.parse(current?.endTime||'');
       localWeeklyCatalogUntil=current&&end>Date.now()?end:Date.now()+60000;
@@ -210,7 +210,7 @@
         if(!response.headers.get('content-type')?.includes('application/json'))throw Error('Event service unavailable');
         if(!response.ok){const error=Error('Event service unavailable');error.serviceResponse=true;throw error;}
         let payload=await response.json();
-        if(payload?.pagination){const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=168');const saved=await readPublicSnapshotBackup(id==='totals'?'event-totals':'event',id);payload=await completeRankedSnapshot(payload,{saved,kind:id==='totals'?'event-totals':'event',trackId:id,endpoint:rankedBrokerUrl()});}
+        if(payload?.pagination){const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=169');const saved=await readPublicSnapshotBackup(id==='totals'?'event-totals':'event',id);payload=await completeRankedSnapshot(payload,{saved,kind:id==='totals'?'event-totals':'event',trackId:id,endpoint:rankedBrokerUrl()});}
         return {...payload,_eventLiveCheckedAt:Date.now()};
         }
       }catch(error){eventCloudRetryAt.set(path,Date.now()+5*60000);log('warn','[EVENT403] Event refresh failed; retaining saved standings',String(error?.message||error));}
@@ -246,13 +246,7 @@
       try{
         const saved=await readPublicSnapshotBackup('archive-month',month);
         if(saved){entry.value=saved;entry.until=Date.now()+10*60000;entry.retryAt=0;return saved;}
-        if(snapshotOnlyForNewAccount())throw Error('This archive is not in the snapshot yet. Live archive access unlocks after 15 minutes and your first saved finish.');
-        const database=await db();
-        const result=await database.collection('0.6.2_event_public').doc('archive_'+month.replace('-','')).get();
-        const value=result.exists?result.data():{periods:[]};
-        if(!value||!Array.isArray(value.periods))throw Error('Invalid archive data');
-        entry.value=value;entry.until=Date.now()+10*60000;entry.retryAt=0;
-        return value;
+        throw Error('This archive is not included in the saved data yet. Try again after the next snapshot update.');
       }catch(error){
         noteFirebaseQuota(error);entry.retryAt=Date.now()+60000;
         if(entry.value)return entry.value;
@@ -293,19 +287,28 @@
       eventUi=installEvents({supportsEventGhost:()=>window.__pt062NativeEventGhostVersion===1,trackInfo,displayName:canonicalDisplayName,thumbnail:trackThumbnailMarkup,formatTime:formatRaceTime,accountId:activeRankedAccountId,require:__pt062WebpackRequire,ready:async()=>{},openTrack:id=>{if(id===nativeWeeklySelection?.trackId){const button=document.querySelector('.sq-kodub-weekly > button');if(!button||!isElementVisible(button))return openKodubWeeklyFromEvents(function(){return eventUi.isEntered(id);});button.click();}else focusTrackFromRanked(id,{event:true});},startEventRace,watchEvent:(context,ghosts)=>{const root=document.querySelector('.track-info-ui'),watch=root?.__pt062EventWatch;if(!watch||watch.version!==1||watch.trackId!==context.trackId||activeRankedAccountId()!==context.accountId||Date.now()>=context.endsAt)throw Error('Event replay context changed');watch.open(ghosts);},openRankedEvents:()=>window.__pt062OpenRankedEvents?.(),
         identityRevision:()=>cosmeticEpoch+':'+overallCacheGeneration,racerIdentity:rankedIdentityForRacer,dataNotice:()=>snapshotOnlyForNewAccount()?snapshotAccessNotice():'',prepareArchive:loadKodubTrackHistory,racerActions:function(row,event){return openPersonalRacerActions(row.accountId||row.userId,event);},decorateRacer:(button,row)=>{const identity=rankedIdentityForRacer(row);button.classList.add('sq-racer-cosmetic',...racerCosmeticClasses(identity).split(/\s+/).filter(Boolean));button.classList.toggle('sq-racer-top',Number(row.rank)>0&&Number(row.rank)<=3);decorateNativeLeaderboardIdentity(button,identity);},filterRows:(rows,context)=>applyPersonalFilters(rows,context),filterRevision:()=>personalFilterRuntime?.getRevision()||0,filterButton:personalFilterButton,filterNotice:personalFilterNoticeNode,
         restoreTrackSelection:restoreEventTrackSelection,
+        eventLayoutChanged:syncEventLoadingScaffold,
         readCatalog:()=>eventCloudRead('/v1/events/catalog','0.6.2_event_public','catalog'),
         readSnapshot:id=>eventCloudRead('/v1/events/'+encodeURIComponent(id)+'/snapshot','0.6.2_event_public',id),
         readReplay:readEventReplay,
-        readArchivedTrack:async period=>{
-          if(!/^[A-Za-z0-9_-]{1,64}$/.test(period.id)||Date.now()<period.endsAt)throw Error('Only closed event tracks can be imported.');
-          const response=await fetch(rankedBrokerUrl()+'/v1/events/'+encodeURIComponent(period.id)+'/track',{signal:eventRequestSignal(8000)});
-          if(!response.ok||Number(response.headers.get('content-length'))>550000)throw Error('Archived track is unavailable.');
-          const raw=await response.text();if(raw.length>550000)throw Error('Archived track is too large.');
-          const asset=JSON.parse(raw);
-          if(asset.periodId!==period.id||asset.trackId!==period.trackId||asset.archived!==true||asset.scoringDisabled!==true||typeof asset.trackCode!=='string'||asset.trackCode.length>524288||!/^PolyTrack[0-9A-Za-z+/_=-]+$/.test(asset.trackCode))throw Error('Archived track identity changed.');
-          const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(asset.trackCode));
-          if([...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('')!==asset.trackCodeHash)throw Error('Archived track integrity failed.');
-          return asset.trackCode;
+        readArchivedSnapshot:async id=>{
+          if(!/^[A-Za-z0-9_-]{1,64}$/.test(id))return null;
+          const board=await readPublicSnapshotBackup('event',id);
+          return board?.archived===true&&(board.period?.id||board.id)===id?board:null;
+        },
+        readArchivedReplay:async(periodId,accountId)=>{
+          if(!/^[A-Za-z0-9_-]{1,64}$/.test(periodId)||!/^[a-f0-9]{64}$/.test(accountId))return null;
+          const replay=await readPublicSnapshotBackup('event-replay',periodId,accountId);
+          return replay?.periodId===periodId&&replay.accountId===accountId?replay:null;
+        },
+        readStaticArchiveCatalog:async()=>{
+          const url=new URL('./public-catalog.json',eventsModuleUrl);
+          if(url.origin!==location.origin)throw Error('Saved archive catalog must be same-origin.');
+          const response=await fetch(url,{cache:'default',signal:eventRequestSignal(5000)});
+          if(!response.ok)throw Error('Saved archive catalog is unavailable.');
+          const catalog=await response.json();
+          if(!Array.isArray(catalog?.archives))throw Error('Saved archive catalog is invalid.');
+          return catalog;
         },
         importTrackCode:code=>{
           eventUi?.leave();
@@ -1636,8 +1639,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   async function openDeveloperInformation(practiceOnly=false,returnFocus=document.activeElement){
     await initializePracticeHistory();
-    const module=await import('./tools/developer-diagnostics.mjs?v=168');
-    const {collectLocalDiagnostics}=await import('./tools/local-diagnostics.mjs?v=168');
+    const module=await import('./tools/developer-diagnostics.mjs?v=169');
+    const {collectLocalDiagnostics}=await import('./tools/local-diagnostics.mjs?v=169');
     const localData=await collectLocalDiagnostics({storage:localStorage,hashToken:sha256Hex,localRows:readLocalRaceRows(),trackInfo,practiceRows:id=>practiceHistory?.list(id)||[],profileInfo:id=>overallEntriesCache.find(row=>cleanUserId(row.userId||row.accountId)===id)||{name:getLastKnownName(id)},activeId:activeRankedAccountId()});
     module.openDiagnostics({practiceOnly,returnFocus,report:includePublicId=>{
       const account=activeRankedAccountId(),entry=overallEntriesCache.find(row=>cleanUserId(row.userId||row.accountId)===account);
@@ -1671,12 +1674,12 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function initializePracticeHistory(){
     if(practiceInitPromise)return practiceInitPromise;
     practiceInitPromise=(async()=>{
-      const module=await import('./tools/practice-history.mjs?v=168');
+      const module=await import('./tools/practice-history.mjs?v=169');
       let storage;try{storage=window.localStorage;}catch{}
       practiceHistory=module.createPracticeHistory({storage});practiceAdviceFor=module.practiceAdvice;
-      const insightsModule=await import('./tools/local-insights.mjs?v=168');
-      localInsights=insightsModule.createLocalInsights({storage,revision:168});
-      const profileModule=await import('./tools/practice-profile.mjs?v=168');renderPracticeProfile=profileModule.renderPracticeProfile;installPracticeProfileControls=profileModule.installPracticeProfileControls;
+      const insightsModule=await import('./tools/local-insights.mjs?v=169');
+      localInsights=insightsModule.createLocalInsights({storage,revision:169});
+      const profileModule=await import('./tools/practice-profile.mjs?v=169');renderPracticeProfile=profileModule.renderPracticeProfile;installPracticeProfileControls=profileModule.installPracticeProfileControls;
       document.addEventListener('toggle',event=>{if(event.target.matches?.('.profile-guide')&&event.target.open)localInsights.action('planner-open');},true);
       window.addEventListener('error',()=>localInsights.action('runtime-error'));
       window.addEventListener('unhandledrejection',()=>localInsights.action('unhandled-rejection'));
@@ -1684,7 +1687,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible')localInsights.flush(true);});
       const account=activeRankedAccountId(),own=overallEntriesCache.find(row=>cleanUserId(row.userId||row.accountId)===account);
       practiceHistory.observeCoverage(account,Math.max(currentPlaytimeMs(),Number(own?.totalPlaytimeMs||0)));
-      const native=await import('./tools/practice-native.mjs?v=168');
+      const native=await import('./tools/practice-native.mjs?v=169');
       for(let attempt=0;attempt<10;attempt++){
         const require=__pt062WebpackRequire();
         if(require){
@@ -1730,8 +1733,9 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function leaderboardArcadeMarkup(){
     const usage=readJsonStorage(LEADERBOARD_USAGE_KEY,{overall:1})||{overall:1};
-    const rows=Object.entries(usage).filter(([key])=>LEADERBOARD_LABELS[key]&&!['official','community'].includes(key)).sort((a,b)=>b[1]-a[1]).slice(0,4);
-    return `<div class="leaderboard-arcade" role="group" aria-label="Most-used rankings"><span>MOST USED</span><div>${rows.map(([key,count])=>`<button type="button" class="${key===overallCategory||(key==='tracks'&&['official','community'].includes(overallCategory))?'selected':''}" aria-pressed="${key===overallCategory||(key==='tracks'&&['official','community'].includes(overallCategory))}" data-leaderboard-shortcut="${escapeHtml(key)}" aria-label="${escapeHtml(LEADERBOARD_LABELS[key])}, opened ${escapeHtml(String(Math.min(1000000000,Math.max(0,Math.floor(Number(count)||0)))))} times" title="Opened ${escapeHtml(String(Math.min(1000000000,Math.max(0,Math.floor(Number(count)||0)))))} times on this device">${escapeHtml(LEADERBOARD_LABELS[key])}<small aria-hidden="true">${escapeHtml(String(Math.min(1000000000,Math.max(0,Math.floor(Number(count)||0)))))}</small></button>`).join('')}</div></div>`;
+    const rows=Object.entries(usage).filter(([key,count])=>LEADERBOARD_LABELS[key]&&!['official','community'].includes(key)&&Number.isFinite(count)&&count>0).sort((a,b)=>b[1]-a[1]).slice(0,4);
+    for(const key of ['overall','events','topTracks','tracks'])if(rows.length<4&&!rows.some(row=>row[0]===key))rows.push([key,0]);
+    return `<div class="leaderboard-arcade" role="group" aria-label="Most-used rankings, keyboard shortcuts 1 to 4"><span>QUICK RANKINGS</span><div>${rows.map(([key,count],index)=>`<button type="button" class="${key===overallCategory||(key==='tracks'&&['official','community'].includes(overallCategory))?'selected':''}" aria-pressed="${key===overallCategory||(key==='tracks'&&['official','community'].includes(overallCategory))}" data-leaderboard-shortcut="${escapeHtml(key)}" aria-keyshortcuts="${index+1}" aria-label="${escapeHtml(LEADERBOARD_LABELS[key])}, shortcut ${index+1}" title="${count?'Opened '+Math.min(1000000000,Math.floor(count))+' times on this device':'Suggested ranking'}">${escapeHtml(LEADERBOARD_LABELS[key])}<small aria-hidden="true">${index+1}</small></button>`).join('')}</div></div>`;
   }
 
   const MIN_RANKED_TRACKS=3;
@@ -1795,7 +1799,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const streakWord=daily.streak===1?'day':'days';
     const weeklyResult=weekly.result&&weekly.result!=='Not entered'?`${weekly.result}${weekly.field?` of ${weekly.field}`:''}`:'Not entered';
     const challenge=(kind,kicker,track,result,note)=>`<section class="${kind}" aria-label="${escapeHtml(kicker)}: ${escapeHtml(track.name)}"><button class="competition-feature-button" type="button" data-track-id="${escapeHtml(track.id)}" aria-label="Play ${escapeHtml(track.name)}. ${escapeHtml(kicker)}"><span class="competition-feature-image" aria-hidden="true">${trackThumbnailMarkup(track.id)}</span><span class="competition-feature-copy"><span class="competition-kicker">${escapeHtml(kicker)}</span><strong class="competition-track-name">${escapeHtml(track.name)}</strong><span class="competition-result">${result}</span></span></button><small>${note}</small></section>`;
-    return `<footer class="overall-competition" id="overallDailyGrid"><div class="overall-challenge-stack">${challenge('weekly-cup','FEATURED THIS WEEK',weekly.track,escapeHtml(weeklyResult),resetTimeMarkup(true))}${challenge('daily-card',"TODAY'S TARGET",daily.track,daily.completed?'Goal complete':`${runProgress} · ${pbProgress}${improvement}`,`${daily.streak} ${streakWord} streak · ${resetTimeMarkup(false)}`)}</div><div class="overall-center-tools"><nav class="overall-pager" aria-label="Ranked leaderboard pages"><button id="overallFirstPage" class="overall-page-button overall-page-edge" type="button" aria-label="First ranked page">&#171;</button><button id="overallPrevPage" class="overall-page-button" type="button" aria-label="Previous ranked page">&#8249;</button><span class="overall-page-position"><label class="overall-page-jump-label"><span>Page</span><input id="overallPageJump" type="number" inputmode="numeric" min="1" step="1" aria-label="Go to ranked page" title="Shift + number: go to page. Shift + plus, then number: add pages. Shift + minus, then number: subtract pages."></label><span id="overallPageStatus" class="overall-page-status" aria-live="polite">of 1</span></span><button id="overallNextPage" class="overall-page-button" type="button" aria-label="Next ranked page">&#8250;</button><button id="overallLastPage" class="overall-page-button overall-page-edge" type="button" aria-label="Last ranked page">&#187;</button></nav><span id="overallFieldSummary" class="overall-field-summary"></span><button id="overallFreshness" class="overall-freshness" type="button" aria-label="Refresh standings">Checking ranked data</button></div><div class="overall-footer-right"><div class="overall-category-control"><label class="overall-category-select"><span>RANK BY</span><select id="overallCategorySelect" aria-label="Choose a Ranked leaderboard"><optgroup label="Main rankings"><option value="overall">Overall RP</option><option value="casual">Casual RP</option><option value="average">Average place</option><option value="competitiveAverage">Competitive average</option><option value="tracks">Tracks completed</option><option value="medals">Podium points</option><option value="rising">Rising racers</option><option value="topTracks">Top Tracks</option></optgroup><optgroup label="More..."><option value="skill">Best 10 skill</option><option value="consistency">All-track depth</option><option value="wins">Track wins</option><option value="podiumRate">Podium rate</option><option value="weight">Total track weight</option><option value="pbs">PBs set</option><option value="playtime">Active time</option><option value="veterans">Racing longest</option></optgroup></select></label></div><div id="overallTrackScope" class="overall-track-scope" hidden aria-label="Filter completed tracks by type"><button class="active" type="button" data-track-scope="all" aria-pressed="true">All</button><button type="button" data-track-scope="official" aria-pressed="false">Official</button><button type="button" data-track-scope="community" aria-pressed="false">Community</button></div>${leaderboardArcadeMarkup()}</div></footer>`;
+    return `<footer class="overall-competition" id="overallDailyGrid"><div class="overall-challenge-stack">${challenge('weekly-cup','FEATURED THIS WEEK',weekly.track,escapeHtml(weeklyResult),resetTimeMarkup(true))}${challenge('daily-card',"TODAY'S TARGET",daily.track,daily.completed?'Goal complete':`${runProgress} · ${pbProgress}${improvement}`,`${daily.streak} ${streakWord} streak · ${resetTimeMarkup(false)}`)}</div><div class="overall-center-tools"><nav class="overall-pager" aria-label="Ranked leaderboard pages"><button id="overallFirstPage" class="overall-page-button overall-page-edge" type="button" aria-label="First ranked page">&#171;</button><button id="overallPrevPage" class="overall-page-button" type="button" aria-label="Previous ranked page">&#8249;</button><span class="overall-page-position"><label class="overall-page-jump-label"><span>Page</span><input id="overallPageJump" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="8" aria-label="Go to ranked page" title="Shift + number: go to page. Shift + plus, then number: add pages. Shift + minus, then number: subtract pages."></label><span id="overallPageStatus" class="overall-page-status" aria-live="polite">of 1</span></span><button id="overallNextPage" class="overall-page-button" type="button" aria-label="Next ranked page">&#8250;</button><button id="overallLastPage" class="overall-page-button overall-page-edge" type="button" aria-label="Last ranked page">&#187;</button></nav><span id="overallFieldSummary" class="overall-field-summary"></span><button id="overallFreshness" class="overall-freshness" type="button" aria-label="Refresh standings">Checking ranked data</button></div><div class="overall-footer-right"><div class="overall-category-control"><label class="overall-category-select"><span>RANK BY</span><select id="overallCategorySelect" aria-label="Choose a Ranked leaderboard"><optgroup label="Main rankings"><option value="overall">Overall RP</option><option value="casual">Casual RP</option><option value="average">Average place</option><option value="competitiveAverage">Competitive average</option><option value="tracks">Tracks completed</option><option value="medals">Podium points</option><option value="rising">Rising racers</option><option value="topTracks">Top Tracks</option></optgroup><optgroup label="More..."><option value="skill">Best 10 skill</option><option value="consistency">All-track depth</option><option value="wins">Track wins</option><option value="podiumRate">Podium rate</option><option value="weight">Total track weight</option><option value="pbs">PBs set</option><option value="playtime">Active time</option><option value="veterans">Racing longest</option></optgroup></select></label></div><div id="overallTrackScope" class="overall-track-scope" hidden aria-label="Filter completed tracks by type"><button class="active" type="button" data-track-scope="all" aria-pressed="true">All</button><button type="button" data-track-scope="official" aria-pressed="false">Official</button><button type="button" data-track-scope="community" aria-pressed="false">Community</button></div>${leaderboardArcadeMarkup()}</div></footer>`;
   }
   function normalizeCarColorId(colors){
     const fallback = 'ffffff8ec7ff28346a212b58';
@@ -2471,11 +2475,22 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const close=document.createElement('button');close.type='button';close.textContent='Dismiss';close.style.cssText='margin-left:12px;min-height:36px';close.onclick=()=>notice.remove();notice.append(copy,close);document.body.appendChild(notice);
   }
   const FIREBASE_QUOTA_PAUSE_KEY='polytrack-firebase-quota-pause-v1';
+  function firebaseQuotaRetryAt(now=Date.now()){
+    const usual=now+15*60*1000;
+    try{
+      const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'America/Los_Angeles',hourCycle:'h23',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(now);
+      const value=type=>Number(parts.find(part=>part.type===type)?.value);
+      const seconds=value('hour')*3600+value('minute')*60+value('second');
+      // The free tier resets around Pacific midnight, not the player's local midnight.
+      // Allow a small reset grace period; this schedules one retry, not a quota poll.
+      return Math.min(usual,now+(86400-seconds+120)*1000);
+    }catch{return usual;}
+  }
   function firebaseQuotaPaused(){return Date.now()<Number(readJsonStorage(FIREBASE_QUOTA_PAUSE_KEY,0)||0);}
   function noteFirebaseQuota(error){
     if(error?.code==='local-quota-cooldown')return;
     if(!/resource-exhausted|quota|429/i.test(String(error?.code||'')+' '+String(error?.message||error)))return;
-    writeJsonStorage(FIREBASE_QUOTA_PAUSE_KEY,Date.now()+15*60*1000);
+    writeJsonStorage(FIREBASE_QUOTA_PAUSE_KEY,firebaseQuotaRetryAt());
   }
   let compatibilityOnlineAllowed=true;
   function assertOnlineCompatibility(){
@@ -3013,7 +3028,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=168',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=169',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -3704,6 +3719,12 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const panel=document.getElementById('overallLeaderboardPanel');
     if(!isElementVisible(panel)||isElementVisible(panel.querySelector('#overallProfilePopup'))||isElementVisible(panel.querySelector('#overallHelpPopup')))return false;
     const key=String(event.key||'').toLowerCase();
+    const favorite=!event.shiftKey?shortcutDigit(event):null;
+    if(favorite&&favorite<=4){
+      const button=panel.querySelectorAll('[data-leaderboard-shortcut]')[favorite-1];
+      if(!button||!isElementVisible(button)||button.disabled)return false;
+      button.click();event.preventDefault();event.stopPropagation();return true;
+    }
     if(event.shiftKey&&(event.code==='Equal'||event.code==='NumpadAdd'||key==='+'||key==='='||event.code==='Minus'||event.code==='NumpadSubtract'||key==='-'||key==='_')){
       overallPageOffset=event.code==='Minus'||event.code==='NumpadSubtract'||key==='-'||key==='_'?-1:1;
       event.preventDefault();event.stopPropagation();return true;
@@ -4004,11 +4025,68 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     });
   }
 
+  function rankedHelpMarkup(){
+    const groups=[
+      ['Rankings and pages',[
+        ['1 / 2 / 3 / 4','Open the matching Quick Ranking.'],
+        ['Left / Right or A / D','Previous / next page. Also works in track boards, Extra Tracks and archives.'],
+        ['Shift + 1..9 / 0','Jump to page 1..9 / 10.'],
+        ['Shift + plus / minus, then number','Move that many pages in Overall Rankings. Release Shift to reset.'],
+        ['Page field + Enter','Go to a typed page. Left and right buttons also switch pages.'],
+        ['Right-click Filters','Pause or resume your Ranked filters.'],
+        ['Arrow keys / Home / End','Move within a ranking-category menu. Enter selects; Escape closes.']
+      ]],
+      ['Track selection',[
+        ['Left / Right','Switch Official, Community and Custom tabs.'],
+        ['Shift + 1 / 2 / 3','Open Official / Community / Custom tracks.'],
+        ['1..9 / 0','Open Summer 1..9 / 10, when present.'],
+        ['S / W / D, then number','Open a Summer / Winter / Desert track from Official tracks.'],
+        ['1..9 / 0 in an Extra Track rating','Rate 1..9 / 10. Focus Difficulty to rate difficulty instead.'],
+        ['Enter in search','Apply the Extra Tracks search.']
+      ]],
+      ['Track boards and ghosts',[
+        ['Click a racer / 1..9 / 0','Toggle that row as a ghost. Zero selects row 10.'],
+        ['Hold two number keys','Select the inclusive range of rows.'],
+        ['T, then number','Select the top racers up to that number.'],
+        ['C','Clear ghost selections.'],
+        ['Equals / Backspace','Select leading racers and your own ghost where available.'],
+        ['Minus','Select the racer immediately ahead of you.'],
+        ['Enter / Space','Play the track. A focused button keeps its normal action.']
+      ]],
+      ['Driving: default keys',[
+        ['W / Up','Accelerate.'],['S / Down','Brake / reverse.'],['A / Left; D / Right','Steer.'],
+        ['R / Enter','Reset to checkpoint.'],['T / Backspace','Restart from the start.'],
+        ['C / M','Toggle cockpit camera.'],['P / Space','Pause.'],['H','Toggle race UI.'],
+        ['Equals','Toggle FPS counter.']
+      ]],
+      ['Replay and spectator: default keys',[
+        ['Slash','Toggle spectator camera.'],['WASD / arrows','Move spectator camera.'],
+        ['Z / C','Move spectator camera up / down.'],['Shift','Spectator speed modifier.'],
+        ['Period / comma','Step preview forward / backward.']
+      ]],
+      ['Track editor: default keys',[
+        ['R / Space','Rotate a part.'],['Shift','Height modifier.'],['Delete / X','Delete.'],
+        ['WASD / arrows','Move around the editor.'],['Y / H','Rotate view up / down.'],
+        ['Q / E','Rotate view left / right.'],['Z / C','Move down / up.'],
+        ['T','Test the track.'],['G','Pick a part.']
+      ]],
+      ['Menus and accessibility',[
+        ['Tab / Shift + Tab','Move focus forward / backward.'],
+        ['Enter / Space','Activate a focused button.'],
+        ['Escape','Close the top dialog or return from a menu.'],
+        ['Touch controls','Use the on-screen driving buttons; adjust touch controls in Settings.'],
+        ['Settings > Controls','View or change game key bindings. Custom bindings override the defaults above.']
+      ]]
+    ];
+    const sections=groups.map(([title,rows],index)=>`<details class="ranked-help-controls"${index===0?' open':''}><summary>${escapeHtml(title)}</summary><dl>${rows.map(([keys,action])=>`<div><dt><kbd>${escapeHtml(keys)}</kbd></dt><dd>${escapeHtml(action)}</dd></div>`).join('')}</dl></details>`).join('');
+    return `<div class="overall-help-grid"><section><b>Scores</b><p>Lower Overall RP is better. Higher Event and Casual RP is better. A checkmark means the replay was verified.</p></section><section><b>Your next improvement</b><p>Your profile combines saved results and local practice to suggest tracks.</p><button class="button" type="button" data-help-action="profile">Your profile</button></section><section><b>Filters</b><p>Normal filters hide racers. Smart filters calculate a separate group score.</p><button class="button" type="button" data-help-action="filters">Open Filters</button></section></div><h4>Controls and shortcuts</h4><p class="ranked-help-note">Shortcuts apply to the open screen, not while typing. Expand a section below.</p><div class="ranked-help-sections">${sections}</div>`;
+  }
+
   function ensurePanel(){
     if (document.getElementById('overallLeaderboardPanel')) return;
     const panel = document.createElement('div');
     panel.id = 'overallLeaderboardPanel';
-    panel.innerHTML = `<div class="overall-shell"><div class="overall-top"><div class="overall-title-group"><h2>${tRankingsTitle()}</h2></div><div id="overallFilterPanel" class="overall-filter-host"></div><div class="overall-actions"><button id="overallFindMeBtn" class="button overall-action-btn" type="button">Find me</button><button id="overallHelpBtn" class="button overall-action-btn" type="button">Help</button><button id="closeOverallLeaderboard" class="button overall-action-btn" type="button">${tr('close')}</button></div></div><div class="overall-columns" aria-hidden="true"><span>Place</span><span>Driver</span><span>Movement & bests</span><span>Score</span></div><div id="overallLeaderboardList"></div>${dailySpotlightMarkup()}<div id="overallProfilePopup"><div class="overall-profile-card" role="dialog" aria-modal="true" aria-label="Racer profile"><div class="profile-dialog-toolbar"><span>Racer profile</span><button id="overallProfileClose" class="button" type="button">Close</button></div><div id="overallProfileContent"></div></div></div><div id="overallHelpPopup"><div class="overall-help-card" role="dialog" aria-modal="true" aria-labelledby="overallHelpTitle"><div class="overall-help-head"><h3 id="overallHelpTitle">How Ranked works</h3></div><div class="overall-help-content"><div class="overall-help-grid"><section><b>Scores and replays</b><p>Lower Overall RP is better. Higher Event and Casual RP is better.</p><p>A checkmark means verified. Waiting replays can be watched, but their scores may change after review.</p></section><section><b>Your group</b><p>Normal filters hide racers. Smart filters calculate a separate group score. Missing saved data is marked.</p><button class="button" type="button" data-help-action="filters">Open Filters</button></section><section><b>Improve</b><p>Your profile suggests routes from saved results. Thin data means fewer reliable suggestions.</p><button class="button" type="button" data-help-action="profile">Your profile</button></section><section><b>Your look</b><p>Open your profile to customize your racer and see unlock goals.</p></section><section><b>Controls</b><p>Arrows or A/D switch pages. Shift + number jumps to a page; Shift + plus/minus, then number moves that many pages. Right-click Filters pauses them.</p></section></div><div class="overall-help-actions"><button id="overallHelpClose" class="button overall-action-btn" type="button">Close help</button></div></div></div></div></div>`;
+    panel.innerHTML = `<div class="overall-shell"><div class="overall-top"><div class="overall-title-group"><h2>${tRankingsTitle()}</h2></div><div id="overallFilterPanel" class="overall-filter-host"></div><div class="overall-actions"><button id="overallFindMeBtn" class="button overall-action-btn" type="button">Find me</button><button id="overallHelpBtn" class="button overall-action-btn" type="button">Help</button><button id="closeOverallLeaderboard" class="button overall-action-btn" type="button">${tr('close')}</button></div></div><div class="overall-columns" aria-hidden="true"><span>Place</span><span>Driver</span><span>Movement & bests</span><span>Score</span></div><div id="overallLeaderboardList"></div>${dailySpotlightMarkup()}<div id="overallProfilePopup"><div class="overall-profile-card" role="dialog" aria-modal="true" aria-label="Racer profile"><div class="profile-dialog-toolbar"><span>Racer profile</span><button id="overallProfileClose" class="button" type="button">Close</button></div><div id="overallProfileContent"></div></div></div><div id="overallHelpPopup"><div class="overall-help-card" role="dialog" aria-modal="true" aria-labelledby="overallHelpTitle"><div class="overall-help-head"><h3 id="overallHelpTitle">Help and controls</h3><button id="overallHelpClose" class="button overall-action-btn" type="button" aria-label="Close help">Close</button></div><div class="overall-help-content">${rankedHelpMarkup()}</div></div></div></div>`;
     document.body.appendChild(panel);
     panel.querySelector('.overall-columns')?.insertAdjacentHTML('beforebegin','<div id="overallDataNotice" role="status" hidden></div>');
     void ensureRankedFiltersUi();
@@ -4017,8 +4095,9 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     panel.addEventListener('keydown',(event)=>{
       if(handleOverallPageInput(event))return;
       if(event.key!=='Enter'||event.target?.id!=='overallPageJump')return;
-      const page=Number(event.target.value);
-      if(jumpOverallPage(page)){event.preventDefault();event.stopPropagation();}
+      if(/^\d+$/.test(event.target.value))jumpOverallPage(Number(event.target.value));
+      event.target.value=String(overallPage+1);
+      event.preventDefault();event.stopPropagation();
     });
     panel.addEventListener('click', (event)=>{
       const helpAction=event.target.closest?.('[data-help-action]');
@@ -5340,7 +5419,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=168',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=169',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -5360,8 +5439,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=168',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=168',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=168',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=169',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=169',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=169',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
@@ -5817,19 +5896,9 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function handleOverallPageInput(event){
     const input=event.target;
     if(input?.id!=='overallPageJump')return false;
-    if(event.type==='keydown'){
-      if(event.key!=='ArrowUp'&&event.key!=='ArrowDown')return false;
-      event.preventDefault();event.stopPropagation();
-      const direction=event.key==='ArrowUp'?1:-1;
-      const page=Number(input.value);
-      const pending=input.value!==''&&Number.isSafeInteger(page)?page-overallPage-1:0;
-      changeOverallPage(pending+direction);
+    if(event.type==='change'){
+      if(/^\d+$/.test(input.value))jumpOverallPage(Number(input.value));
       input.value=String(overallPage+1);
-      return true;
-    }
-    // Spinner buttons emit input without waiting for blur or Enter.
-    if(event.type==='change'||event.type==='input'&&!['insertText','deleteContentBackward','deleteContentForward','insertFromPaste','insertCompositionText'].includes(event.inputType)){
-      jumpOverallPage(Number(input.value));
       return true;
     }
     return false;
@@ -5897,7 +5966,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const menu=document.querySelector('.track-info-ui');if(!menu)return;
     const eventActive=document.body.classList.contains('sq-event-active');
     const board=menu.querySelector(':scope > .leaderboard-ui');
-    menu.classList.toggle('sq-event-scaffold-needed',eventActive&&(!board||!isElementVisible(board)));
+    const hasLayoutSlot=board?.isConnected&&getComputedStyle(board).display!=='none'&&board.getClientRects().length>0;
+    menu.classList.toggle('sq-event-scaffold-needed',eventActive&&!hasLayoutSlot);
   }
   async function openKodubWeeklyFromEvents(isCurrent=()=>true){
     const id=nativeWeeklySelection?.trackId;
@@ -7122,8 +7192,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   let snapshotTrackStatistics = {};
   let metadataRecovery=null;
   async function readPublicSnapshotBackup(kind,id='',accountId=''){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=168').then(async module=>{
-      const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=168');
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=169').then(async module=>{
+      const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=169');
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]')),bootstrap:true,optimizedIndex:true,onRead:metric=>noteDeveloperEvent('snapshot',String(metric.kind).toUpperCase(),metric.durationMs,metric.source==='failed'?0:200),onGenerationChange:()=>{
         metadataRecovery.reset();
         snapshotTrackStatistics={};snapshotCosmeticEntries={};snapshotRacerDirectoryEntries={};publicSnapshotCapturedAt=0;
@@ -7183,7 +7253,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       if(!contentType.includes('application/json'))throw new Error('Ranked edge was replaced by a network filter');
       let payload=await response.json();
       if(payload?.pagination){
-        const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=168');
+        const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=169');
         payload=await completeRankedSnapshot(payload,{saved,kind,trackId,endpoint});
       }
       clearRankedEdgeFailure();
@@ -7321,7 +7391,8 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     const item=readCosmeticPublishQueue().entries[accountId];
     const uid=window.firebase?.auth?.().currentUser?.uid||'';
     if(!cosmeticPublishIdentityMatches(item,accountId,uid))return;
-    const wait=Math.min(3600000,Math.max(0,Number(item.nextAttemptAt||0)-Date.now()));
+    const quotaDelay=firebaseQuotaPaused()?Number(readJsonStorage(FIREBASE_QUOTA_PAUSE_KEY,0))-Date.now():0;
+    const wait=Math.min(3600000,Math.max(0,quotaDelay,Number(item.nextAttemptAt||0)-Date.now()));
     cosmeticPublishTimer=setTimeout(()=>{cosmeticPublishTimer=0;flushPendingCosmeticPublishes().catch(()=>{});},wait);
   }
   async function flushPendingCosmeticPublishes({force=false}={}){
@@ -7353,7 +7424,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
           if(!cosmeticPublishIdentityMatches(item,activeRankedAccountId(),window.firebase?.auth?.().currentUser?.uid||'')){const error=new Error('Active account changed before publish.');error.code='cosmetic-account-switched';throw error;}
           assertCloudOwner(item.accountId,item.ownerUid,previous.exists?previous.data():null);
           tx.set(profileRef,{profileCosmetics:item.cosmetics,cosmeticsUpdatedAt:now,cosmeticsSyncedAt:window.firebase.firestore.FieldValue.serverTimestamp(),updatedAt:now},{merge:true});
-        });
+        },{maxAttempts:1});
         const latest=readCosmeticPublishQueue().entries[item.accountId];
         const superseded=Boolean(latest&&latest.draftId!==item.draftId);
         if(!superseded)transitionCosmeticPublishQueue({type:'ack',accountId:item.accountId,draftId:item.draftId});
@@ -7394,6 +7465,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       }
       return {...outcome,queued:Boolean(readCosmeticPublishQueue().entries[activeRankedAccountId()])};
     })().catch((error)=>{
+      noteFirebaseQuota(error);
       if(error?.code==='cosmetic-account-switched')return {published:false,queued:true,switched:true,message:'Saved on this device. Switch back to this racer to retry publishing.'};
       if(attempted){
         const current=readCosmeticPublishQueue().entries[attempted.accountId];
@@ -7935,7 +8007,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       log('error','[FB499] Race mirror failed; cached locally',{error:String(error&&(error.message||error)),trackId,accountId});
       const permissionBlocked=/permission|insufficient/i.test(String(error&&(error.message||error)));
       if(error?.code==='account-session-conflict')showCloudOwnerConflict();
-      else scheduleLocalPbCloudReconcile(accountId,permissionBlocked?600000:firebaseQuotaPaused()?15*60*1000:60000);
+      else scheduleLocalPbCloudReconcile(accountId,permissionBlocked?600000:firebaseQuotaPaused()?Math.max(1000,Number(readJsonStorage(FIREBASE_QUOTA_PAUSE_KEY,0))-Date.now()):60000);
       return {accountId,trackId,uploadId,timeMs,frames,name,carStyle,saved:false,localSaved:true};
     }
   }
@@ -7983,16 +8055,24 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function scheduleLocalPbCloudReconcile(accountId,delay=900){
     const safeId=cleanUserId(accountId);
     if(!safeId||!isCurrentLocalPbReconcileIdentity(safeId))return;
+    if(navigator.onLine===false||document.visibilityState==='hidden')return;
     const state=readJsonStorage(LOCAL_PB_RECONCILE_STATE_KEY,{})||{};
     const retryDelay=Math.max(0,Number(state[safeId]?.retryAt||0)-Date.now());
     delay=Math.max(Number(delay)||0,retryDelay,firebaseQuotaPaused()?Number(readJsonStorage(FIREBASE_QUOTA_PAUSE_KEY,0)||0)-Date.now():0);
     clearTimeout(localPbReconcileTimers.get(safeId));
     localPbReconcileTimers.set(safeId,setTimeout(()=>{
       localPbReconcileTimers.delete(safeId);
-      if(!isCurrentLocalPbReconcileIdentity(safeId))return;
+      if(!isCurrentLocalPbReconcileIdentity(safeId)||navigator.onLine===false||document.visibilityState==='hidden')return;
       reconcileLocalPersonalBestsToCloud(safeId).catch((error)=>log('warn','[SYNC409] Local PB reconciliation failed',String(error&&(error.message||error))));
     },Math.max(0,delay)));
   }
+  function resumeLocalPbCloudReconcile(){
+    if(document.visibilityState!=='visible'||navigator.onLine===false||!compatibilityOnlineAllowed)return;
+    scheduleLocalPbCloudReconcile(activeRankedAccountId());
+  }
+  window.addEventListener('online',resumeLocalPbCloudReconcile);
+  window.addEventListener('pageshow',resumeLocalPbCloudReconcile);
+  document.addEventListener('visibilitychange',resumeLocalPbCloudReconcile);
 
   const LOCAL_PB_RECONCILE_BATCH_SIZE=16;
   const LOCAL_PB_RECONCILE_BACKOFF_MS=60000;
@@ -8140,7 +8220,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     }catch(error){
       noteFirebaseQuota(error);
       const latest=readJsonStorage(LOCAL_PB_RECONCILE_STATE_KEY,{})||{};
-      latest[safeId]={...(latest[safeId]||{}),retryAt:Date.now()+(firebaseQuotaPaused()?15:5)*60*1000};
+      latest[safeId]={...(latest[safeId]||{}),retryAt:firebaseQuotaPaused()?Number(readJsonStorage(FIREBASE_QUOTA_PAUSE_KEY,0)):Date.now()+5*60*1000};
       writeJsonStorage(LOCAL_PB_RECONCILE_STATE_KEY,latest);
       throw error;
     }
@@ -9270,7 +9350,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=168',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:168,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=169',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:169,document,
       onCompatibilityChange:state=>{compatibilityOnlineAllowed=state.onlineAllowed!==false;},
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
@@ -9323,7 +9403,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       if(event.target.closest?.('[data-open-practice]')){const section=document.querySelector('#overallProfileContent .polytrack-practice-profile');if(section){section.open=true;section.querySelector('summary')?.focus({preventScroll:true});section.scrollIntoView({block:'nearest'});}return;}
       const clear=event.target.closest?.('[data-clear-practice-history]');if(!clear)return;
       const account=activeRankedAccountId();
-      void import('./tools/developer-diagnostics.mjs?v=168').then(module=>module.openClearPracticeConfirmation({returnFocus:clear,onConfirm:()=>{if(activeRankedAccountId()!==account)throw Error('Racer changed; nothing cleared');practiceHistory?.clear(account);const section=document.querySelector('#overallProfileContent .polytrack-practice-profile');if(section)section.outerHTML=renderPracticeProfile({rows:[],coverage:practiceHistory?.coverage(account)});void refreshOpenProfilePlanner();}})).catch(()=>{if(clear.isConnected)clear.textContent='History controls unavailable - try again';});
+      void import('./tools/developer-diagnostics.mjs?v=169').then(module=>module.openClearPracticeConfirmation({returnFocus:clear,onConfirm:()=>{if(activeRankedAccountId()!==account)throw Error('Racer changed; nothing cleared');practiceHistory?.clear(account);const section=document.querySelector('#overallProfileContent .polytrack-practice-profile');if(section)section.outerHTML=renderPracticeProfile({rows:[],coverage:practiceHistory?.coverage(account)});void refreshOpenProfilePlanner();}})).catch(()=>{if(clear.isConnected)clear.textContent='History controls unavailable - try again';});
     });
     for(const type of ['pointerover','focusin'])document.addEventListener(type,event=>{const info=event.target.closest?.('.planner-explanation');if(info)info.open=true;});
     for(const type of ['pointerout','focusout'])document.addEventListener(type,event=>{const info=event.target.closest?.('.planner-explanation');if(info&&!info.contains(event.relatedTarget))info.open=false;});
@@ -9349,6 +9429,10 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       openNativeTrackRacerProfile(button);
     });
   }
+
+  const nativeLeaderboardLatencyUrl = new URL('./tools/leaderboard-latency-hook.mjs?v=169', document.currentScript?.src || location.href).href;
+  void import(nativeLeaderboardLatencyUrl).then(({installNativeInitialOpenLatencyHook})=>installNativeInitialOpenLatencyHook())
+    .catch(error=>console.warn('[NATIVE-LATENCY] Initial-open hook unavailable',error));
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once:true });
   else boot();

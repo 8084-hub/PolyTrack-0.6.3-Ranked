@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {handleRequest} from '../src/index.js';
+import {eventEncode} from '../src/events-store.js';
+import {preparePublicationPages, PUBLIC_MANIFEST_COLLECTION, publicationManifestId} from '../src/paged-publication.js';
 
 const origin = 'https://staticquasar931.github.io';
 const request = (suffix = '', source = origin, ip = '203.0.113.1') => new Request('https://ranked.example/v1/status' + suffix,
@@ -132,14 +134,14 @@ test('warm status cache hits skip even a denying limiter', async () => {
 });
 
 
-test('public leaderboards share a one-minute cache without caching failures', async () => {
+test('public leaderboards share a five-minute cache without caching failures', async () => {
   const previous = globalThis.caches, stored = new Map(), fills = [];
   let reads = 0, now = 0;
   globalThis.caches = {default: {
     match: async key => {const item = stored.get(key.url); return item && item.until > now ? item.response.clone() : null;},
     put: async (key, response) => {
-      assert.equal(response.headers.get('Cache-Control'), 'public, max-age=60, stale-while-revalidate=30');
-      stored.set(key.url, {until: now + 60000, response: response.clone()});
+      assert.equal(response.headers.get('Cache-Control'), 'public, max-age=300, stale-while-revalidate=30');
+      stored.set(key.url, {until: now + 300000, response: response.clone()});
     }
   }};
   const env = {ALLOWED_ORIGINS: origin, __TEST_FIRESTORE: async () => {
@@ -150,17 +152,49 @@ test('public leaderboards share a one-minute cache without caching failures', as
   try {
     const first = await handleRequest(boardRequest(''), env, context);
     assert.equal(first.status, 200); await Promise.all(fills);
-    now = 59999;
+    now = 299999;
     assert.equal((await (await handleRequest(boardRequest('?cachebuster=1'), env, context)).json()).revision, 1);
     assert.equal(reads, 1);
-    now = 60001;
+    now = 300001;
     assert.equal((await (await handleRequest(boardRequest(''), env, context)).json()).revision, 2);
     await Promise.all(fills);
-    now = 120002;
+    now = 600002;
     env.__TEST_FIRESTORE = async () => {throw Error('synthetic failure');};
     await assert.rejects(handleRequest(boardRequest(''), env, context), /synthetic failure/);
     env.__TEST_FIRESTORE = async () => {reads++; return {fields: {revision: {integerValue: String(reads)}}};};
     assert.equal((await (await handleRequest(boardRequest(''), env, context)).json()).revision, 3);
     await Promise.all(fills);
   } finally {if (previous === undefined) delete globalThis.caches; else globalThis.caches = previous;}
+});
+
+test('immutable ranked pages stay cached for a day and changing generation reads its own manifest', async()=>{
+  const prior = globalThis.caches, stored = new Map(), pending = [];
+  let reads = 0, now = 0;
+  globalThis.caches = {default:{
+    match:async key=>{const row=stored.get(key.url);return row&&row.until>now?row.response.clone():null;},
+    put:async(key,response)=>{
+      assert.equal(response.headers.get('Cache-Control'),'public, max-age=86400, immutable');
+      stored.set(key.url,{response:response.clone(),until:now+86400000});
+    }
+  }};
+  const pages = await preparePublicationPages('overall','main',[{userId:'racer',rank:1}],{sourceRevision:7});
+  const data = new Map(pages.documents.map(row=>[row.collection+'/'+row.id,row.data]));
+  data.set(PUBLIC_MANIFEST_COLLECTION+'/'+publicationManifestId('overall','main',pages.pagination.generation),pages.pagination);
+  const env = {ALLOWED_ORIGINS:origin,__TEST_FIRESTORE:async route=>{
+    reads++; const value=data.get(route.slice(1));
+    return value?{fields:eventEncode(value).mapValue.fields}:null;
+  }};
+  const url='https://ranked.example/v1/snapshot/overall/page?generation='+pages.pagination.generation+'&page=0';
+  const get=url=>handleRequest(new Request(url,{headers:{Origin:origin}}),env,{waitUntil:p=>pending.push(p)});
+  try {
+    assert.equal((await get(url)).status,200); await Promise.all(pending.splice(0));
+    assert.equal(reads,2);
+    now=86399999;
+    assert.equal((await get(url+'&ignored=1')).status,200); assert.equal(reads,2);
+    assert.equal((await get(url.replace(pages.pagination.generation,'f'.repeat(64)))).status,404);
+    assert.equal(reads,3,'missing generation reads only its own manifest');
+    now=86400001;
+    assert.equal((await get(url)).status,200); await Promise.all(pending);
+    assert.equal(reads,5);
+  } finally {if(prior===undefined)delete globalThis.caches;else globalThis.caches=prior;}
 });

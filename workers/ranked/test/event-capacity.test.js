@@ -232,6 +232,20 @@ test('repeated blocked combined refreshes never query finite totals or read stag
  assert.equal(f.data.get(C.public+'/totals_full').dynamicComponents.permanentRollingHills.sourceRevision,2);
 });
 
+test('one blocked combined source does not rewrite its cursor on every scheduled pass',async()=>{
+ const f=await combinedFixture();await f.improve();
+ f.data.get(R.collection+'/'+R.trackId).complete=false;
+ assert.equal((await publishEventCapacity(f.runtime)).reason,'permanent_source_unavailable');
+ const cursorPath=C.cursors+'/public_capacity';
+ f.data.set(cursorPath,Object.fromEntries(Object.entries(f.data.get(cursorPath)).reverse()));
+ const start=f.calls.length,transactions=f.counts.length;
+ for(let i=0;i<20;i++)assert.equal((await publishEventCapacity(f.runtime)).reason,'permanent_source_unavailable');
+ assert.equal(f.counts.length,transactions,'no cursor transaction or write on unchanged deferral');
+ assert.equal(f.calls.slice(start).filter(path=>path==='/'+C.public+'/totals').length,20,'one root read per invocation');
+ f.data.get(R.collection+'/'+R.trackId).complete=true;
+ assert.equal((await publishEventCapacity(f.runtime)).published,true,'no timer delays recovery');
+});
+
 test('legacy completed jobs without an explicit scan-complete checkpoint rescan safely',async()=>{
  const f=await combinedFixture();
  delete f.data.get('0.6.2_event_publication_jobs/event_totals_main').scanComplete;

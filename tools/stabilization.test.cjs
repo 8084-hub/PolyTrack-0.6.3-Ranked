@@ -71,7 +71,7 @@ function overallContext({firestoreData=null,workerData=null,offline=false,failFi
  const saved={entries:[{userId:'a',rank:1},{userId:'b',rank:2}],trackSummaries:[{trackId:'saved'}],fetchedAt:1,serverUpdatedAt:1,signature:'saved'};
  // These refresh/fallback cases model an established, unlocked account; age-gate behavior is tested separately.
  const ctx={Date,console,overallCloudRetryAt:0,overallCloudCheckedAt:0,publicSnapshotRetryAt:0,noteFirebaseQuota:()=>{},readOverallSnapshotCache:()=>saved,TOTAL_TRACKS:78,OVERALL_REFRESH_CHECK_MS:120000,overallTrackSummariesCache:[],overallLoadState:{},snapshotOnlyForNewAccount:()=>false,
- fetchRankedSnapshot:async()=>{if(workerData)return workerData;throw Error('blocked')},
+ fetchRankedSnapshot:async()=>{if(workerData)return workerData;throw Error('blocked')},readPublicSnapshotBackup:async()=>null,
  db:async()=>{if(failFirestore)throw Error('quota');return {collection:()=>({doc:()=>({get:async()=>({data:()=>firestoreData,metadata:{fromCache:offline}})})})}},
  expandRankedResults:async data=>run('decodeRankedResults')(data),normalizeEntries:x=>x,annotateOverallMovement:x=>x,writeOverallSnapshotCache:(rows,meta)=>{ctx.written={rows,meta}},log:()=>{},isLocalApiCapableHost:()=>false,
  COLLECTIONS:{leaderboardsOverall:'overall'},AVERAGE_PLACEMENT_VERSION:1,AVERAGE_FINISH_VERSION:1,RANK_MODEL:'test',TRACK_CACHE_SCHEMA:1};ctx.readDirectPublicSnapshot=async(collection,id)=>(await ctx.db()).collection(collection).doc(id).get();return ctx;
@@ -388,6 +388,15 @@ test('large planner sidecar is used only with exact snapshot binding',async()=>{
   const ctx=overallContext({workerData:data});let reads=0;ctx.db=async()=>({collection:()=>({doc:id=>({get:async()=>{assert.equal(id,'main_results');reads++;return{data:()=>({algorithmVersion:'test',sourceRevision:2+offset,builtRevision:2,updatedAt:2,resultBundle:'bundle',resultBundleVersion:1})}}})})});
   let seen;ctx.expandRankedResults=async d=>{seen=d;return d.entries};await run('loadOverallEntries',ctx)(true);assert.equal(reads,1);assert.equal(seen.resultBundle,offset?undefined:'bundle');
  }
+});
+test('matching saved planner sidecar avoids a direct Firebase read',async()=>{
+ const data={entries:[{userId:'me',rankModel:'test',averageFinishVersion:1,averagePlacementVersion:1}],trackSummaries:[],algorithmVersion:'test',schemaVersion:1,revision:2,builtRevision:2,sourceRevision:2,updatedAt:2,resultBundleLocation:'main_results'};
+ const ctx=overallContext({workerData:data});let reads=0,seen;
+ ctx.readPublicSnapshotBackup=async kind=>kind==='overall-results'?{algorithmVersion:'test',sourceRevision:2,builtRevision:2,updatedAt:2,resultBundle:'saved-bundle',resultBundleVersion:1}:null;
+ ctx.readDirectPublicSnapshot=async()=>{reads++;throw Error('Unexpected Firebase read');};
+ ctx.expandRankedResults=async value=>{seen=value;return value.entries;};
+ await run('loadOverallEntries',ctx)(true);
+ assert.equal(reads,0);assert.equal(seen.resultBundle,'saved-bundle');
 });
 
 test('weekly reset is next Monday UTC even when local weekday differs',()=>{

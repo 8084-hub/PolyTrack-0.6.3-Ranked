@@ -53,9 +53,10 @@ test('Extra Track profile previews use the catalog thumbnail, not a community pa
 test('Extra Track profile links call the native importer on the selected Custom tab',async()=>{
   const entry={trackId:'extra'};let imported=null,left=0,closed=0;
   const tab={classList:{contains:()=>true},click:()=>{throw Error('Already selected tab should not be clicked');}};
-  const context=vm.createContext({localInsights:null,warmPracticeTrack:()=>{},eventUi:{leave:()=>left++},trackInfo:()=>({type:'extra'}),loadExtraTracksCatalog:async()=>[entry],document:{getElementById:()=>({}),querySelectorAll:()=>[],querySelector:()=>tab},closeOverallPanel:()=>closed++,importExtraTrack:async row=>{imported=row;},isElementVisible:()=>true});
+  const context=vm.createContext({eventTrackReturnContext:{},eventTrackReturnEpoch:0,localInsights:null,warmPracticeTrack:()=>{},eventUi:{leave:()=>left++},trackInfo:()=>({type:'extra'}),loadExtraTracksCatalog:async()=>[entry],document:{getElementById:()=>({}),querySelectorAll:()=>[],querySelector:()=>tab},closeOverallPanel:()=>closed++,importExtraTrack:async row=>{imported=row;},isElementVisible:()=>true});
   const start=source.indexOf('  async function focusTrackFromRanked('),end=source.indexOf('    const tabIndex=',start);
   vm.runInContext(source.slice(start,end)+'  }',context);
   await context.focusTrackFromRanked('extra');
   assert.equal(imported,entry);assert.equal(left,1);assert.equal(closed,1);
+  assert.equal(context.eventTrackReturnContext,null);assert.equal(context.eventTrackReturnEpoch,1);
 });

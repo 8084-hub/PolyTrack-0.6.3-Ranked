@@ -17,7 +17,8 @@ test('0.6.3 version navigation and event cards stay within desktop and portrait 
   assert(featured.x+featured.width<=width+1,'Section must fit the page');
   const rects=[];for(const card of await page.locator('.sq-kodub-weekly,.sq-permanent-track,.sq-event-card').all())rects.push(await card.boundingBox());
   assert.equal(rects.length,4);for(const rect of rects)assert(rect.x>=featured.x-1&&rect.x+rect.width<=featured.x+featured.width+1,'Every event card stays in the section');
-  assert(rects[0].width>rects[1].width,'Kodub is wider than the supporting cards: '+JSON.stringify({width,rects}));
+  if(width<=480)assert(rects.every(rect=>Math.abs(rect.width-featured.width)<=1),'Phone cards use the full section width: '+JSON.stringify({width,rects}));
+  else assert(rects[0].width>rects[1].width,'Kodub is wider than the supporting cards: '+JSON.stringify({width,rects}));
   for(const rect of rects.slice(2))assert(Math.abs(rect.width-rects[1].width)<=1,'Supporting cards share a coherent native width');
   if(width>1200)for(const rect of rects)assert.equal(Math.round(rect.y),Math.round(rects[0].y));
   else assert(rects.slice(1).every(rect=>rect.y>rects[0].y),'Responsive layouts place supporting cards below Kodub');
@@ -25,7 +26,7 @@ test('0.6.3 version navigation and event cards stay within desktop and portrait 
   assert.equal(titleBoxes.length,3);const titleOffset=titleBoxes[0].y-rects[1].y;for(const [index,box] of titleBoxes.entries())assert(Math.abs(box.y-rects[index+1].y-titleOffset)<=1,'Titles align within their cards');
   const rewardBoxes=[];for(const e of await page.locator('.sq-permanent-track .record,.sq-event-card .sq-event-record').all())rewardBoxes.push(await e.boundingBox());
   const thumbBoxes=[];for(const e of await page.locator('.sq-permanent-track .thumbnail,.sq-event-card .sq-event-thumb').all())thumbBoxes.push(await e.boundingBox());
-  assert.equal(rewardBoxes.length,3);assert.equal(thumbBoxes.length,3);for(const [index,box] of rewardBoxes.entries()){assert(box.y>=thumbBoxes[index].y+thumbBoxes[index].height-1,'Record row must not overlap its artwork');assert(box.y+box.height<=rects[index+1].y+rects[index+1].height+1,'Record row stays inside its card');}
+  assert.equal(rewardBoxes.length,3);assert.equal(thumbBoxes.length,3);for(const [index,box] of rewardBoxes.entries()){if(width<=480)assert(box.x>=thumbBoxes[index].x+thumbBoxes[index].width-1,'Phone record sits beside artwork');else assert(box.y>=thumbBoxes[index].y+thumbBoxes[index].height-1,'Record row must not overlap its artwork');assert(box.y+box.height<=rects[index+1].y+rects[index+1].height+1,'Record row stays inside its card');}
   if(width>=1366)for(const rect of rects)assert(rect.x+rect.width<=width+1);
   const tabs=await page.locator('.community-track-versions>.button').all();
   assert.equal((await tabs[0].boundingBox()).width,(await tabs[1].boundingBox()).width);

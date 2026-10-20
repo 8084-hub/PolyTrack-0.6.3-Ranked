@@ -6,6 +6,60 @@ import {createRequire} from 'node:module';
 const require=createRequire(new URL('../tools/verifier/package.json',import.meta.url));
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const css=fs.readFileSync(new URL('./events.css',import.meta.url),'utf8');
+const responsive=fs.readFileSync(new URL('../responsive-ui.css',import.meta.url),'utf8');
+const patch=fs.readFileSync(new URL('../polytrack_062_patch.js',import.meta.url),'utf8');
+const scaffold=patch.slice(patch.indexOf('  function syncEventLoadingScaffold('),patch.indexOf('  async function openKodubWeeklyFromEvents('));
+
+test('first event frame reserves exactly one board slot before mount and adoption',async()=>{
+ const browser=await chromium.launch({headless:true});
+ try{const page=await browser.newPage({viewport:{width:1366,height:768}});
+  await page.setContent('<style>body{margin:0}.track-info-ui{display:flex;gap:18px;width:100vw;height:600px;padding:20px;box-sizing:border-box}.leaderboard-ui{flex:0 0 600px;width:600px;min-width:0}.side-panel{flex:0 0 320px}</style><div id="ui"><main class="track-info-ui"><aside class="side-panel">Event track details</aside></main></div>');
+  await page.addStyleTag({content:css+responsive});
+  await page.evaluate(source=>{
+   window.syncScaffold=Function(source+';return syncEventLoadingScaffold')();
+   document.body.classList.add('sq-event-active');window.syncScaffold();
+  },scaffold);
+  const first=await page.locator('.side-panel').boundingBox();
+  assert.equal(await page.locator('.leaderboard-ui').count(),0);
+  assert(first.x>600,'the missing first-frame board already reserves the left slot');
+  await page.evaluate(()=>{
+   document.documentElement.classList.add('sq-track-leaderboard-loading');
+   const board=document.createElement('section');board.className='leaderboard-ui';
+   document.querySelector('.track-info-ui').prepend(board);
+   window.syncScaffold();
+  });
+  const loading=await page.locator('.side-panel').boundingBox();
+  assert.equal(loading.x,first.x,'mounting a visibility-hidden board replaces, not duplicates, the slot');
+  assert.equal(await page.locator('.sq-event-scaffold-needed').count(),0);
+  assert.equal(await page.locator('.leaderboard-ui').evaluate(node=>getComputedStyle(node).visibility),'hidden');
+  await page.locator('.leaderboard-ui').evaluate(node=>{node.classList.add('sq-event-board');window.syncScaffold();});
+  const adopted=await page.locator('.side-panel').boundingBox();
+  assert.equal(adopted.x,loading.x,'adoption does not move the panel after the loading slot exists');
+ }finally{await browser.close();}
+});
+
+test('event active-state changes synchronously notify the parent scaffold',()=>{
+ const client=fs.readFileSync(new URL('./client.mjs',import.meta.url),'utf8');
+ assert.match(client,/if\(activeChanged\)bridge\.eventLayoutChanged\?\.\(\)/);
+ assert.match(patch,/eventLayoutChanged:syncEventLoadingScaffold/);
+});
+
+test('native event board keeps its layout slot during loading and adoption',async()=>{
+ const browser=await chromium.launch({headless:true});
+ try{const page=await browser.newPage({viewport:{width:1366,height:768}});
+  await page.setContent('<style>body{margin:0}.track-info-ui{display:flex;gap:18px;width:100vw;height:600px;padding:20px;box-sizing:border-box}.leaderboard-ui{flex:1;min-width:0}.side-panel{flex:0 0 320px}</style><div id="ui"><main class="track-info-ui"><section class="leaderboard-ui"><h2>Loading leaderboard</h2><div class="container"></div></section><aside class="side-panel">Event track details</aside></main></div>');
+  await page.addStyleTag({content:css});
+  const measure=()=>page.evaluate(()=>{const board=document.querySelector('.leaderboard-ui'),side=document.querySelector('.side-panel'),b=board.getBoundingClientRect(),s=side.getBoundingClientRect();return {boardWidth:b.width,sideX:s.x,sideRight:s.right,display:getComputedStyle(board).display,visibility:getComputedStyle(board).visibility};});
+  const normal=await measure();
+  await page.evaluate(()=>{document.documentElement.classList.add('sq-track-leaderboard-loading');document.body.classList.add('sq-event-active');});
+  const loading=await measure();
+  assert.notEqual(loading.display,'none');assert(loading.boardWidth>0);
+  assert.equal(loading.sideX,normal.sideX);assert(loading.sideRight<=1366);
+  await page.evaluate(()=>document.querySelector('.leaderboard-ui').classList.add('sq-event-board'));
+  const adopted=await measure();
+  assert.equal(adopted.sideX,normal.sideX);assert.equal(adopted.visibility,'visible');
+ }finally{await browser.close();}
+});
 
 test('live overview keeps four cards balanced without overflowing phones or desktops',async()=>{
  const browser=await chromium.launch({headless:true});
