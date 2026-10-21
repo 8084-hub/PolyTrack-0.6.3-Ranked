@@ -121,7 +121,7 @@ function markerValid(marker, scopeHash, now) {
 }
 function requestBudget(max) {
   if (!Number.isSafeInteger(max) || max < 3 || max > 45) fail('REQUEST_BUDGET_INVALID');
-  const stats = {total: 0, max, cacheReads: 0, cacheWrites: 0, batchReads: 0, scanRequests: 0, pageReads: 0};
+  const stats = {total: 0, max, cacheReads: 0, cacheWrites: 0, publishedReads: 0, recoveryReads: 0, batchReads: 0, scanRequests: 0, pageReads: 0};
   return {stats, async run(kind, fn) {
     if (stats.total >= max) fail('REQUEST_BUDGET_EXHAUSTED');
     stats.total++; stats[kind]++;
@@ -138,11 +138,16 @@ function requestBudget(max) {
  * Cache operations count against maxRequests (default40, hard cap45). Reserve the rest
  * of the Worker's assumed 50 for root/entitlement/publication/etc; parent must budget
  * those too. A scan callback is one logical scan, NOT necessarily one subrequest.
+ * readPublishedBundle(marker): ONE batchGet request for the committed companion.
+ * Reject malformed companion data with sourcePublicationRejected=true; infrastructure
+ * errors must propagate, not amplify a quota failure into a full source scan.
+ * beforeRecoveryScan(): ONE fresh trusted-meta read before any corruption scan;
+ * reject superseded builds or failed reads without retry/fallback.
  * Candidates must be persisted ONLY with the successful overall+meta CAS commit.
  */
 export async function loadOverallSources({meta, scope, readDocuments, scanSources, loadEntries, readPage,
   cache = globalThis.caches?.default, memory, now = Date.now(), forceScan = false,
-  maxRequests = SOURCE_REQUEST_DEFAULT_BUDGET, maxBundleBytes = SOURCE_BUNDLE_MAX_BYTES}) {
+  maxRequests = SOURCE_REQUEST_DEFAULT_BUDGET, maxBundleBytes = SOURCE_BUNDLE_MAX_BYTES, readPublishedBundle, beforeRecoveryScan}) {
   if (typeof scope !== 'string' || !scope.length || scope.length > 1024 || !uint(now) ||
       !uint(maxBundleBytes) || maxBundleBytes < 1 || maxBundleBytes > SOURCE_BUNDLE_MAX_BYTES) fail('OPTIONS_INVALID');
   const budget = requestBudget(maxRequests), scopeHash = await hash(scope);
@@ -155,11 +160,10 @@ export async function loadOverallSources({meta, scope, readDocuments, scanSource
   const cacheKey = digest => `https://overall-source-cache.invalid/bundle-v1/${scopeHash}/${digest}`;
 
   // At most ONE Cache API match for the last successfully committed bundle.
-  if (!needsScan && markerValid(marker, scopeHash, now) &&
-      now - marker.createdAt < SOURCE_CACHE_TTL_SECONDS * 1000) {
+  if (!forceScan && sourceCatalogIsReady(current) && markerValid(marker, scopeHash, now)) {
     const key = cacheKey(marker.digest);
     let body = memory?.get(key);
-    if (body === undefined && cache) {
+    if (body === undefined && cache && now - marker.createdAt < SOURCE_CACHE_TTL_SECONDS * 1000) {
       const response = await budget.run('cacheReads', async () => {
         try { return await cache.match(key); } catch { return undefined; }
       });
@@ -170,7 +174,16 @@ export async function loadOverallSources({meta, scope, readDocuments, scanSource
         } catch { cacheRejected = true; }
       }
     }
-    if (body !== undefined) {
+    for (let attempt = 0; attempt < 2 && !previous; attempt++) {
+      if (attempt === 1) {
+        if (typeof readPublishedBundle !== 'function' || !marker.publication) break;
+        try { body = await budget.run('publishedReads', () => readPublishedBundle(marker)); }
+        catch (error) {
+          if (error?.sourcePublicationRejected !== true) throw error;
+          body = undefined; cacheRejected = true;
+        }
+      }
+      if (body === undefined) continue;
       try {
       const record = JSON.parse(body);
       const payload = record?.payload;
@@ -186,7 +199,7 @@ export async function loadOverallSources({meta, scope, readDocuments, scanSource
       }
       previous = payload;
       } catch {
-        // Reject the entire bundle, then perform ONE budgeted authoritative scan.
+        // Reject the entire bundle. Try the committed companion before one recovery scan.
         // No cached subset is ever mixed into this recovery build.
         cacheRejected = true;
       }
@@ -209,6 +222,10 @@ export async function loadOverallSources({meta, scope, readDocuments, scanSource
   }
   let catalog;
   if (needsScan || !previous) {
+    // Fixed publication slots can advance after our meta read. Distinguish that
+    // ordinary race from corruption before paying for a full recovery scan.
+    if (cacheRejected && typeof beforeRecoveryScan === 'function')
+      await budget.run('recoveryReads', beforeRecoveryScan);
     scanned = true;
     if (typeof scanSources !== 'function') fail('SCAN_REQUIRED');
     const before = budget.stats.scanRequests;
@@ -251,7 +268,7 @@ export async function loadOverallSources({meta, scope, readDocuments, scanSource
   }
 
   // One expanded board per id: no duplicate raw/unpaged entries in the bundle.
-  let sourceBundle = null;
+  let sourceBundle = null, bundleBody;
   if (catalog) {
     const payload = {version: 1, scopeHash, createdAt: now, catalog, boards};
     const body = JSON.stringify({version: 1, expiresAt: now + SOURCE_CACHE_TTL_SECONDS * 1000, payload});
@@ -268,7 +285,9 @@ export async function loadOverallSources({meta, scope, readDocuments, scanSource
         });
         saved ||= stored;
       }
-      if (saved) sourceBundle = {version: 1, scopeHash, digest, catalogHash, createdAt: now};
+      bundleBody = body;
+      // A durable companion may be committed even when the optional edge cache is unavailable.
+      if (saved || typeof readPublishedBundle === 'function') sourceBundle = {version: 1, scopeHash, digest, catalogHash, createdAt: now};
     }
   }
   // A scan that cannot replace a marker must not leave the previous bundle authoritative.
@@ -277,6 +296,9 @@ export async function loadOverallSources({meta, scope, readDocuments, scanSource
   const ids = Object.keys(boards).sort();
   return {boards: ids.map(id => boards[id]), trackCatalog: ids.flatMap(id => /^[a-f0-9]{64}$/.test(id) ? [{
     trackId: id, updatedAt: uint(boards[id].updatedAt) ? boards[id].updatedAt : uint(boards[id].builtAt) ? boards[id].builtAt : 0
-  }] : []), limitReached, sourceCatalog, sourceBundle, usedSourceCatalog: !needsScan && Boolean(previous),
+  }] : []), limitReached, sourceCatalog, sourceBundle, bundleBody,
+    unchanged: Boolean(previous && catalog && await hash(catalog.tracks) === await hash(previous.catalog.tracks) &&
+      (!scanned || await hash(boards) === await hash(previous.boards))),
+    usedSourceCatalog: !needsScan && Boolean(previous),
     recoveredCorruptBundle: cacheRejected, requests: {...budget.stats}};
 }

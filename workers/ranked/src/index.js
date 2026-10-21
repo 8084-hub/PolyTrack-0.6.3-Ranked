@@ -13,6 +13,7 @@ import { aggregateServerAchievements, BEAT_OWNER_STAGES, OWNER_PUBLIC_ID, SERVER
 import { EXTRA_TRACK_IDS } from './extra-track-ids.js';
 import { recordFirestoreReads } from './firestore-read-cost.js';
 import {loadOverallSources, sourceCatalogAfterTrackWrite, sourceCatalogNeedsScan, sourceCatalogIsReady, SOURCE_CATALOG_RESCAN_MS} from './overall-source-cache.js';
+import {SOURCE_PUBLICATION_COLLECTION, sourcePublicationIds, prepareSourcePublication, decodeSourcePublication} from './overall-source-publication.js';
 const FIREBASE_JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
 const FIREBASE_JWKS_REFRESH_COOLDOWN_MS = 30000;
 const FIREBASE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -1518,9 +1519,11 @@ async function loadOverallRebuild(env, force = false) {
   if (!force && !metricsOutdated && (coolingDown || incompleteCoolingDown || !catalogScanDue && !meta.dirty))
     return {rebuilt:false, reason:!catalogScanDue && !meta.dirty ? 'clean' : incompleteCoolingDown ? 'incomplete_cooldown' : coolingDown ? 'cooldown' : 'clean', revision:Number(meta.builtRevision || 0)};
   try {
-    return await buildOverallSnapshot(env, metaDoc, meta, now, force);
+    return await buildOverallSnapshot(env, metaDoc, meta, now, force, !meta.dirty && !metricsOutdated);
   } catch (error) {
-    await recordOverallRebuildFailure(env, meta, error);
+    // Recovery could not prove this build still owns the metadata generation.
+    // Do not reread or write backoff onto potentially newer state.
+    if (error?.sourceRecoveryGuardFailed !== true) await recordOverallRebuildFailure(env, meta, error);
     throw error;
   }
 }
@@ -1552,7 +1555,7 @@ async function recordOverallRebuildFailure(env, initialMeta, sourceError) {
   }
 }
 
-async function buildOverallSnapshot(env, metaDoc, meta, now, force = false) {
+async function buildOverallSnapshot(env, metaDoc, meta, now, force = false, allowUnchangedAudit = false) {
   const sourceCache = env.__TEST_OVERALL_SOURCE_CACHE ?? globalThis.caches?.default;
   const cache = sourceCache ? {
     match: key => { takeOverallRequest(env); return sourceCache.match(key); },
@@ -1563,7 +1566,31 @@ async function buildOverallSnapshot(env, metaDoc, meta, now, force = false) {
     scanSources:({request})=>scanOverallSourceDocuments(env,request),
     readDocuments:async ids=>(await readDocumentsForCollections(env,[[COLLECTIONS.track,ids]])).get(COLLECTIONS.track),
     loadEntries:(root,id,read)=>loadPublicationEntries(root,'track',id,read),
-    readPage:(collection,id)=>readDocument(env,collection,id)});
+    readPage:(collection,id)=>readDocument(env,collection,id),
+    readPublishedBundle:async marker=>{
+      const documents=(await readDocumentsForCollections(env,[[SOURCE_PUBLICATION_COLLECTION,sourcePublicationIds(marker)]]))
+        .get(SOURCE_PUBLICATION_COLLECTION);
+      try {return await decodeSourcePublication(marker,documents);}
+      catch(error){error.sourcePublicationRejected=true;throw error;}
+    },
+    beforeRecoveryScan:async()=>{
+      try {
+        const latest=await readDocument(env,COLLECTIONS.meta,'current');
+        if(!metaDoc?.updateTime || latest?.updateTime!==metaDoc.updateTime)
+          throw Error('OVERALL_BUILD_SUPERSEDED');
+      } catch(error) {error.sourceRecoveryGuardFailed=true;throw error;}
+    }});
+  const publication = await prepareSourcePublication(sources.bundleBody, sources.sourceBundle);
+  if (publication) sources.sourceBundle = publication.marker;
+  const sourceWrites = publication?.documents || [];
+  const sourceMeta = {...meta,
+    ...(sources.sourceCatalog ? {sourceCatalog:sources.sourceCatalog} : {}),
+    ...(sources.sourceBundle ? {sourceBundle:sources.sourceBundle} : {})};
+  if (!force && allowUnchangedAudit && sources.unchanged) {
+    // A fresh source audit is not a score change. CAS still fences concurrent writers.
+    await commitDocuments(env,[...sourceWrites,{collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data:sourceMeta}]);
+    return {rebuilt:false,reason:'sources_unchanged',revision:Number(meta.builtRevision || 0),sourceRequests:sources.requests};
+  }
   const {boards, trackCatalog, limitReached: boardLimitReached} = sources;
   const priorDoc = await readOverallSnapshot(env);
   const prior = priorDoc?.data || {};
@@ -1675,9 +1702,7 @@ async function buildOverallSnapshot(env, metaDoc, meta, now, force = false) {
     Object.assign(snapshot, packed);
   }
   if (plannerDocumentBytes(snapshot) >= PLANNER_DOCUMENT_BUDGET) throw Error('OVERALL_DOCUMENT_CAP');
-  const successMeta = {...meta,
-    ...(sources.sourceCatalog ? {sourceCatalog:sources.sourceCatalog} : {}),
-    ...(sources.sourceBundle ? {sourceBundle:sources.sourceBundle} : {})};
+  const successMeta = {...sourceMeta};
   delete successMeta.overallRebuildFailureAttempts;
   delete successMeta.overallRebuildRetryAt;
   while(entitlementWrites.length>450){
@@ -1687,7 +1712,13 @@ async function buildOverallSnapshot(env, metaDoc, meta, now, force = false) {
     metaDoc=updateTime?{data:meta,updateTime}:await readDocument(env,COLLECTIONS.meta,'current');
     if(JSON.stringify(metaDoc?.data)!==JSON.stringify(meta))throw Error('OVERALL_SOURCE_CHANGED');
   }
-  await commitDocuments(env,[...entitlementWrites,...resultWrites,{collection:COLLECTIONS.overall,id:'main',prior:priorDoc,data: snapshot},{collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data: { ...successMeta, plannerPublicationVersion:PLANNER_PUBLICATION_VERSION, plannerBundleVersion:PLANNER_BUNDLE_VERSION, cosmeticEntitlementVersion:COSMETIC_ENTITLEMENT_VERSION, serverAchievementVersion:SERVER_ACHIEVEMENT_VERSION,
+  // The optional source projection must never push a previously valid score commit
+  // over Firestore's request-size ceiling. Leave headroom for write envelopes.
+  const commitData=[...sourceWrites,...entitlementWrites,...resultWrites,{data:snapshot},{data:successMeta}];
+  if(sourceWrites.length && commitData.reduce((size,doc)=>size+1024+new TextEncoder().encode(JSON.stringify(encodeFields(doc.data))).length,0)>8*1024*1024){
+    sourceWrites.length=0;successMeta.sourceBundle={version:1,ready:false};
+  }
+  await commitDocuments(env,[...entitlementWrites,...resultWrites,...sourceWrites,{collection:COLLECTIONS.overall,id:'main',prior:priorDoc,data: snapshot},{collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data: { ...successMeta, plannerPublicationVersion:PLANNER_PUBLICATION_VERSION, plannerBundleVersion:PLANNER_BUNDLE_VERSION, cosmeticEntitlementVersion:COSMETIC_ENTITLEMENT_VERSION, serverAchievementVersion:SERVER_ACHIEVEMENT_VERSION,
     dirty: incompleteRetryPending, overallComplete: snapshot.complete, overallSourceComplete: sourceTracksComplete,
     overallIncompleteReason, overallIncompleteRevision: sourceIncomplete ? revision : 0,
     overallIncompleteObservations: incompleteObservations, overallRetryPending: incompleteRetryPending,

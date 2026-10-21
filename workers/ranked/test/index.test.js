@@ -1265,7 +1265,7 @@ test('200-racer entitlement initialization uses one atomic batch within the Free
   if(path.includes('s1_release_meta'))return {fields:wire({dirty:true,revision:10}).mapValue.fields,updateTime:'2026-09-09T00:00:00Z'};
   return null;
  }},true);
-   assert.equal(result.racers,200);assert.equal(commit.writes.length,202);assert.equal(requests,6);
+   assert.equal(result.racers,200);assert.equal(commit.writes.length,203);assert.equal(requests,6);
  assert.ok(commit.writes.slice(0,200).every(w=>w.update.name.includes('cosmetic_entitlements')&&!w.currentDocument));
  assert.equal(commit.writes.at(-1).currentDocument.updateTime,'2026-09-09T00:00:00Z');
  assert.ok(JSON.stringify(commit).length<10*1024*1024);

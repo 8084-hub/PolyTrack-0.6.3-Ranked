@@ -110,6 +110,10 @@ jobs:
         if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 10 * * *'
         # Only changed/missing trusted normal replays are fetched; bounded to 100 documents.
         run: node tools/update-public-snapshot.mjs --refresh-replays
+      - name: Index all saved frozen event periods
+        if: steps.snapshot.outcome == 'success'
+        # Local files only. Recover history omitted by the live catalog's recent window.
+        run: node tools/merge-frozen-event-catalog.mjs
       - name: Retain validated private replay retry ledger
         id: retry_checkpoint
         if: always() && !cancelled() && steps.retry_prepare.outcome == 'success' && (steps.snapshot.outcome == 'success' || steps.snapshot.outcome == 'failure')

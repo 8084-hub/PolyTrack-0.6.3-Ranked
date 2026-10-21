@@ -5,7 +5,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 
 const source=fs.readFileSync(path.join(__dirname,'../polytrack_062_patch.js'),'utf8');
-const start=source.indexOf('  async function eventCloudRead(path,collection,id){');
+const start=source.indexOf('  function chooseEventReadValue(');
 const end=source.indexOf('  const archiveMonthReads=new Map();',start);
 const edgeStart=source.indexOf('  let rankedEdgeState = (()=>{');
 const edgeEnd=source.indexOf('  const jsonStorageCache=new Map();',edgeStart);
@@ -18,10 +18,10 @@ function harness({status=200,fetchError=null,backup=null,snapshotOnly=false}={})
   const context={
     Date:{now:()=>now},Math,Number,Error,Promise,Map,JSON,Array,String,
     eventCloudRequests:new Map(),eventCloudCache:new Map(),eventCloudRetryAt:new Map(),
-    AbortSignal:{timeout:()=>({})},rankedBrokerUrl:()=> 'https://worker.test',
+    eventRequestSignal:()=>({}),AbortSignal:{timeout:()=>({})},rankedBrokerUrl:()=> 'https://worker.test',
     fetch:async url=>{workerCalls++;if(fetchError)throw fetchError;const responseStatus=typeof status==='function'?status(String(url)):status;return {status:responseStatus,ok:responseStatus>=200&&responseStatus<300,headers:{get:name=>name==='Retry-After'?'120':'application/json'},json:async()=>({worker:true})};},
-    RANKED_EDGE_STATE_KEY:'ranked-edge',RANKED_EDGE_BACKOFF_MS:300000,
-    sessionStorage:{getItem:()=>null,setItem:()=>{},removeItem:()=>{}},log:()=>{},noteFirebaseQuota:()=>{quotaNotes++;},
+    RANKED_EDGE_STATE_KEY:'ranked-edge',RANKED_EDGE_BACKOFF_MS:300000,compatibilityOnlineAllowed:true,
+    sessionStorage:{getItem:()=>null,setItem:()=>{},removeItem:()=>{}},log:()=>{},noteFirebaseQuota:error=>{if(/resource-exhausted|quota/i.test(String(error?.code||'')+' '+String(error?.message||'')))quotaNotes++;},
     snapshotOnlyForNewAccount:()=>snapshotOnly,
     readPublicSnapshotBackup:async(kind,id)=>{backupReads.push({kind,id});return typeof backup==='function'?backup(kind,id):backup;},
     db:async()=>({collection:()=>({doc:()=>({get:async()=>{firestoreReads++;return {exists:true,data:()=>({firestore:true})};}})})}),
@@ -43,7 +43,7 @@ test('event Worker 429 without backup sets cooldown and never reads Firestore or
 
 test('event Worker 429 serves available public backup without Firestore',async()=>{
   const backup={periods:[{id:'event'}]};const h=harness({status:429,backup});
-  const value=await h.context.eventCloudRead('/v1/events/test/snapshot','events','test');
+  const value=await h.context.eventCloudRead('/v1/events/test/snapshot','events','test',true);
   assert.deepEqual(JSON.parse(JSON.stringify(value)),{...backup,_publicBackup:true,_eventRefreshFailed:true});
   assert.equal(h.firestoreReads,0);assert.equal(h.quotaNotes,0);
 });
@@ -57,18 +57,18 @@ test('event 429 leaves shared edge available for a different event path',async()
   assert.equal(h.workerCalls,2);assert.equal(h.firestoreReads,0);
 });
 
-test('genuine Worker fetch failure retains direct Firestore fallback',async()=>{
+test('genuine Worker failure never falls through to direct Firestore',async()=>{
   const h=harness({fetchError:Error('network unavailable')});
-  const value=await h.context.eventCloudRead('/v1/events/test/snapshot','events','test');
-  assert.deepEqual(JSON.parse(JSON.stringify(value)),{firestore:true,_eventLiveCheckedAt:100000});
-  assert.equal(h.firestoreReads,1);assert.equal(h.quotaNotes,0);
+  await assert.rejects(h.context.eventCloudRead('/v1/events/test/snapshot','events','test'),/not included in the current snapshot/);
+  assert.equal(h.firestoreReads,0);assert.equal(h.quotaNotes,0);
 });
 
 for(const condition of ['blocked','limited'])test('Event RP totals use the correct static backup when Worker is '+condition,async()=>{
  const backup={updatedAt:100,entries:[{accountId:'racer',eventRp:400}]};
  const h=harness({fetchError:condition==='blocked'?Error('network unavailable'):null,status:condition==='limited'?429:200,backup:kind=>kind==='event-totals'?backup:null});
  const value=await h.context.eventCloudRead('/v1/events/totals','0.6.2_event_public','totals');
- assert.deepEqual(JSON.parse(JSON.stringify(value)),{...backup,_publicBackup:true,_eventRefreshFailed:true});
+ assert.deepEqual(JSON.parse(JSON.stringify(value)),backup);
+ assert.equal(h.workerCalls,0);
  assert.deepEqual(h.backupReads,[{kind:'event-totals',id:'totals'}]);
  assert.equal(h.firestoreReads,0,'existing static totals avoid a billable fallback read');
 });
@@ -83,8 +83,17 @@ test('protected accounts use event totals snapshot without contacting either liv
 test('failed refresh and retry cooldown retain the last successful check without claiming success',async()=>{
  const h=harness();const route='/v1/events/test/snapshot';
  const first=await h.context.eventCloudRead(route,'events','test');assert.equal(first._eventLiveCheckedAt,100000);
- h.advance(60001);h.context.loadEventCloudRead=async()=>{throw Error('offline');};
+ h.advance(300001);h.context.loadEventCloudRead=async()=>{throw Error('offline');};
  const failed=await h.context.eventCloudRead(route,'events','test');assert.equal(failed._eventRefreshFailed,true);assert.equal(failed._eventLiveCheckedAt,100000);
  const retry=await h.context.eventCloudRead(route,'events','test');assert.equal(retry._eventRefreshFailed,true);assert.equal(retry._eventLiveCheckedAt,100000);
  assert.equal(h.workerCalls,1);assert.equal(h.firestoreReads,0);
+});
+
+test('mature accounts read active event snapshots without Worker requests',async()=>{
+ const backup={period:{id:'test',kind:'daily'},updatedAt:100,entries:[]};const h=harness({backup});
+ assert.deepEqual(await h.context.eventCloudRead('/v1/events/test/snapshot','events','test'),backup);assert.equal(h.workerCalls,0);assert.equal(h.firestoreReads,0);
+});
+test('even an explicit refresh cannot turn a frozen archive into a live read',async()=>{
+ const backup={period:{id:'test',kind:'kodub'},archived:true,updatedAt:100,entries:[]};const h=harness({backup});
+ assert.deepEqual(await h.context.eventCloudRead('/v1/events/test/snapshot','events','test',true),backup);assert.equal(h.workerCalls,0);assert.equal(h.firestoreReads,0);
 });

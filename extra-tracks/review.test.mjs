@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {reviewTagOptions, normalizeReviewFeedback, effectiveReviewTags, hasTagEdits, reviewExportRow, hasReviewExportData, tagLabel} from './review.mjs';
+import {reviewTagOptions, normalizeReviewFeedback, effectiveReviewTags, hasTagEdits, hasLocalReview, reviewExportRow, hasReviewExportData, tagLabel} from './review.mjs';
 
 test('tag choices keep Kacky and new review categories, without Slide or difficulty aliases', () => {
   const options = reviewTagOptions([{tags: ['slide', 'technical', 'difficulty-7', 'kacky', 'easy']}]);
@@ -51,4 +51,10 @@ test('malformed device data is bounded and cannot introduce markup or fake PBs',
   }, personalBestMs: -1});
   assert.deepEqual(row.addedTags, ['mini']); assert.deepEqual(row.removedTags, []);
   assert.equal(row.rating, 0); assert.equal(row.vote, 0); assert.equal(row.played, false);
+});
+
+test('local review includes ratings, votes and tag deltas, but not bookmarks or malformed values',()=>{
+ const track={tags:['technical']};
+ for(const feedback of [{rating:8},{difficultyRating:5},{vote:1},{vote:-1},{addedTags:['mini']},{removedTags:['technical']}])assert.equal(hasLocalReview(track,feedback),true);
+ for(const feedback of [{},{favorite:true},{rating:0,difficultyRating:0,vote:0},{rating:'8',difficultyRating:99,vote:2},{addedTags:['technical'],removedTags:['missing']}])assert.equal(hasLocalReview(track,feedback),false);
 });

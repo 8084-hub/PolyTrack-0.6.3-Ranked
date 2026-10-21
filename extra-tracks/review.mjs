@@ -50,6 +50,12 @@ export function hasTagEdits(entry, value) {
   return review.addedTags.length > 0 || review.removedTags.length > 0;
 }
 
+export function hasLocalReview(entry, value) {
+  const review = normalizeReviewFeedback(entry, value);
+  return review.vote !== 0 || review.rating > 0 || review.difficultyRating > 0
+    || review.addedTags.length > 0 || review.removedTags.length > 0;
+}
+
 export function reviewExportRow(entry, {feedback, imported = false, personalBestMs = null} = {}) {
   const review = normalizeReviewFeedback(entry, feedback);
   const best = Number.isFinite(personalBestMs) && personalBestMs > 0 ? personalBestMs : null;

@@ -45,16 +45,16 @@ test('Kodub weekly card labels unconfirmed rewards honestly and does not invent 
  assert.match(markup,/Event RP details unavailable/);
  assert.doesNotMatch(markup,/Up to 0 Event RP|Up to 0 racers/);
 });
-test('schedule-only cards offer practice without advertising RP or cached verified results',()=>{
+test('scheduled cards show their reward cap without pretending results are verified',()=>{
  const ui=render({board:{racerCount:12,totalRp:420,entries:[{accountId:'a',name:'Leader',timeMs:123}]}});
  for(const kind of ['daily','weekly','kodub']){
   const markup=ui.cards([{id:kind,kind,trackId,trackName:'Practice track',endsAt:200,maxRp:700,scheduleOnly:true}],{details:true});
   const visible=markup.replace(/<[^>]*>/g,' ');
-  assert.match(visible,/Practice only · scoring unconfirmed/);
+  assert.match(visible,/Up to 700 Event RP/);
   assert.doesNotMatch(visible,/Event results unavailable/);
-  assert.doesNotMatch(visible,/Up to \d+ Event RP|verified|awarded|confirmation pending|assignment/i);
-  assert.match(markup,/title="Saved schedule only\. The event service has not confirmed scoring or results\."/);
-  assert.match(markup,/class="sq-event-reward"[^>]*>Practice only/);
+  assert.doesNotMatch(visible,/verified|awarded|confirmation pending|assignment|Practice only/i);
+  assert.match(markup,/title="Scheduled reward cap\. Scoring and published standings await event service confirmation\."/);
+  assert.match(markup,/class="sq-event-reward"[^>]*>Up to 700/);
  }
 });
 

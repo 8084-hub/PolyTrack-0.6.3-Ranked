@@ -10,7 +10,7 @@ test('event leaderboards remove the normal weight/player infocard before paintin
 });
 test('event takeover removes an already visible normal-track infocard immediately',()=>{
  const client=fs.readFileSync(path.join(__dirname,'../events/client.mjs'),'utf8');
- assert.match(client,/board.classList.add\('sq-event-board'\);\s*document.getElementById\('polytrackTrackFreshness'\)\?\.remove\(\)/);
+ assert.match(client,/board.classList.add\('sq-event-board'\);root.classList.add\('sq-event-layout-ready'\);\s*document.getElementById\('polytrackTrackFreshness'\)\?\.remove\(\)/);
  assert.match(client,/points.textContent=Math.round\(Number\(row.groupRp\?\?row.rp\)\|\|0\)/);
 });
 

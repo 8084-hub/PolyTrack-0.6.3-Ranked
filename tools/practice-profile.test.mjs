@@ -146,6 +146,18 @@ test('attempt-only tracks omit empty evidence panels and retain meaningful time 
   assert.deepEqual(rows, before);
 });
 
+test('offers only observed finish and hunt sorts and marks their selected metrics', () => {
+  const html = renderPracticeProfile({ rows: [row({ finishes: 2, longestHuntMs: 90000 })] });
+  assert.match(html, /value="finishes">Finishes/);
+  assert.match(html, /value="longest-hunt">Longest hunt/);
+  assert.match(html, /data-finishes="2"/);
+  assert.match(html, /data-longest-hunt-ms="90000"/);
+  assert.match(html, /pp-sort-finishes/);
+  assert.match(html, /pp-sort-longest-hunt/);
+  const noMeasurements = renderPracticeProfile({ rows: [row({ finishes: 0, longestHuntMs: 0 })] });
+  assert.doesNotMatch(noMeasurements, /value="finishes"|value="longest-hunt"/);
+});
+
 test('measured active time switches to one-decimal days at 100 hours', () => {
   const hours = renderPracticeProfile({ rows: [row({ activeMs: (99 * 60 + 59) * 60000 })] });
   const days = renderPracticeProfile({ rows: [row({ activeMs: 100 * 3600000 })] });
@@ -198,9 +210,9 @@ test('practice identity and controls survive injected popup CSS in narrow grid a
         renderPracticeProfile({
         coverage: { coverageFraction: .02 },
         rows: [
-          { trackId: 'a', trackName: 'Alpha with a very long track name', activeMs: 1000, attempts: 3, lastPlayedAt: 100, improvementMs: 50 },
-          { trackId: 'b', trackName: 'Beta', activeMs: 9000, attempts: 1, lastPlayedAt: 200 },
-          { trackId: 'c', trackName: 'C'.repeat(100), activeMs: 9000, attempts: 2, lastPlayedAt: 300, finishes: 1, trackedBestMs: 10200 }
+          { trackId: 'a', trackName: 'Alpha with a very long track name', activeMs: 1000, attempts: 3, finishes: 2, longestHuntMs: 6000, lastPlayedAt: 100, improvementMs: 50 },
+          { trackId: 'b', trackName: 'Beta', activeMs: 9000, attempts: 1, longestHuntMs: 3000, lastPlayedAt: 200 },
+          { trackId: 'c', trackName: 'C'.repeat(100), activeMs: 9000, attempts: 2, finishes: 5, longestHuntMs: 9000, lastPlayedAt: 300, trackedBestMs: 10200 }
         ],
         results: [{ trackId: 'a', source: 'snapshot', timeMs: 9800, snapshotCapturedAt: Date.now() }]
       });
@@ -216,6 +228,8 @@ test('practice identity and controls survive injected popup CSS in narrow grid a
       ['recent', ['c', 'b', 'a'], ['a', 'b', 'c']],
       ['active', ['b', 'c', 'a'], ['a', 'b', 'c']],
       ['attempts', ['a', 'c', 'b'], ['b', 'c', 'a']],
+      ['finishes', ['c', 'a', 'b'], ['b', 'a', 'c']],
+      ['longest-hunt', ['c', 'a', 'b'], ['b', 'a', 'c']],
       ['improvement', ['a', 'b', 'c'], ['b', 'c', 'a']],
       ['name', ['c', 'b', 'a'], ['a', 'b', 'c']]
     ]) {
@@ -231,6 +245,10 @@ test('practice identity and controls survive injected popup CSS in narrow grid a
     assert.equal(await page.locator('.pp-sort-active strong').first().evaluate(el => getComputedStyle(el).fontWeight), '700');
     await page.locator('[data-pp-sort]').selectOption('attempts');
     assert.equal(await page.locator('.pp-sort-attempts').first().evaluate(el => getComputedStyle(el).fontWeight), '700');
+    await page.locator('[data-pp-sort]').selectOption('finishes');
+    assert.equal(await page.locator('.pp-sort-finishes').first().evaluate(el => getComputedStyle(el).fontWeight), '700');
+    await page.locator('[data-pp-sort]').selectOption('longest-hunt');
+    assert.equal(await page.locator('.pp-sort-longest-hunt').first().evaluate(el => getComputedStyle(el).fontWeight), '700');
     await page.locator('[data-pp-sort]').selectOption('improvement');
     assert.equal(await page.locator('.pp-sort-improvement.pp-zero').first().isVisible(), true);
     const clickTargets = await page.locator('.pp-track').first().evaluate(el => ({
@@ -256,7 +274,7 @@ test('practice identity and controls survive injected popup CSS in narrow grid a
     await page.locator('[data-pp-search]').fill('Beta');
     assert.deepEqual(await ids(), ['b']);
     await page.locator('[data-pp-search]').fill('');
-    for (const [width, height] of [[320, 568], [568, 320], [844, 390], [1024, 768]]) {
+    for (const [width, height] of [[320, 568], [390, 844], [568, 320], [844, 320], [844, 390], [1024, 768], [1366, 600]]) {
       await page.setViewportSize({ width, height });
       for (const view of ['grid', 'list']) {
         await page.locator('[data-pp-view="' + view + '"]').click();
@@ -267,6 +285,10 @@ test('practice identity and controls survive injected popup CSS in narrow grid a
         const controlsFit = await page.locator('.pp-toolbar input, .pp-toolbar select, .pp-toolbar button').evaluateAll(items =>
           items.every(item => { const r = item.getBoundingClientRect(); return r.width >= 44 && r.height >= 44 && r.left >= 0 && r.right <= innerWidth; }));
         assert.equal(controlsFit, true, 'touch controls fit ' + width);
+        if (width >= 1366) {
+          const sortWidth = await page.locator('[data-pp-sort]').evaluate(item => item.getBoundingClientRect().width);
+          assert.ok(sortWidth >= 200 && sortWidth <= 260, 'desktop sort selector stays compact but readable');
+        }
         const palette = await page.evaluate(() => {
           const style = selector => getComputedStyle(document.querySelector(selector));
           return {
@@ -310,15 +332,15 @@ test('practice identity and controls survive injected popup CSS in narrow grid a
     assert.equal(await page.locator('[data-pp-track-id="b"] .pp-results').count(), 0);
     assert.match(await page.locator('[data-pp-track-id="c"] .pp-results').textContent(), /best 10.20s/);
     if (process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR) {
-      await page.setViewportSize({ width: 1024, height: 768 });
       await page.locator('[data-pp-sort]').selectOption('active');
       await page.locator('[data-pp-view="grid"]').click();
       await page.locator('.pp-coverage-details > summary').click();
       await page.addStyleTag({ content: '#overallProfilePopup, #overallProfilePopup .overall-profile-card{' +
         'position:static!important;height:auto!important;max-height:none!important;overflow:visible!important}' });
-      await page.screenshot({ path: process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR + '/practice-171.png', fullPage: true });
-      await page.setViewportSize({ width: 390, height: 844 });
-      await page.screenshot({ path: process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR + '/practice-171-mobile.png', fullPage: true });
+      for (const [width, height] of [[1366, 600], [390, 844], [844, 320]]) {
+        await page.setViewportSize({ width, height });
+        await page.screenshot({ path: process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR + `/practice-${width}x${height}.png` });
+      }
     }
     await page.evaluate(() => window.disposePractice());
     const before = await ids();

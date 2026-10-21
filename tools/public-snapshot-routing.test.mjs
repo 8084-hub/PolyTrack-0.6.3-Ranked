@@ -266,12 +266,14 @@ test('actual event bridge serves finalized static archives without a Worker or F
   assert.equal(result,saved);assert.equal(cloud,0);
 });
 
-test('actual event bridge still gets authoritative live standings from the Worker',async()=>{
+test('actual event bridge reads live only on explicit refresh',async()=>{
   let cloud=0;const live={id:'d_live',archived:false};
   const context=vm.createContext({snapshotOnlyForNewAccount:()=>false,readPublicSnapshotBackup:async()=>live,eventCloudRetryAt:new Map(),rankedEdgeAvailable:()=>true,
     rankedBrokerUrl:()=> 'https://example.test',eventRequestSignal:()=>undefined,log:()=>{},AbortSignal,fetch:async()=>{cloud++;return {status:200,ok:true,headers:new Headers({'content-type':'application/json'}),json:async()=>live};}});
   vm.runInContext(section('  async function loadEventCloudRead(', '  const archiveMonthReads='),context);
-  const result=await context.loadEventCloudRead('/v1/events/d_live/snapshot','0.6.2_event_public','d_live');
+  const saved=await context.loadEventCloudRead('/v1/events/d_live/snapshot','0.6.2_event_public','d_live');
+  assert.equal(saved,live);assert.equal(cloud,0);
+  const result=await context.loadEventCloudRead('/v1/events/d_live/snapshot','0.6.2_event_public','d_live',true);
   assert.deepEqual(JSON.parse(JSON.stringify(result)),{...live,_eventLiveCheckedAt:result._eventLiveCheckedAt});
   assert.ok(Number.isSafeInteger(result._eventLiveCheckedAt)&&result._eventLiveCheckedAt>0);
   assert.equal(live._eventLiveCheckedAt,undefined,'source data is not mutated');
@@ -343,4 +345,13 @@ test('expired cached boards check live in background and manual refresh joins th
  assert.equal((await context.getTrackEntries('track',10)).length,1);
  assert.equal(context.trackEntryRequests.get('track').ptForceCloud,true);
  const manual=context.getTrackEntries('track',10,true);release();await manual;assert.equal(calls,1);
+});
+
+test('an old immutable snapshot board does not start a live background refresh',async()=>{
+ let loads=0;const cached={source:'public-backup',entries:[{accountId:'saved'}],fetchedAt:0};
+ const context=vm.createContext({Date:{now:()=>1000000},TRACK_REFRESH_MS:1,unrankedExtraTrackIds:new Set(),readTrackSnapshotCache:()=>cached,
+  trackSnapshotMetadataIsNewer:()=>false,trackEntryRequests:new Map(),trackCacheBackgroundRefreshAt:new Map(),loadTrackEntries:()=>{loads++;throw Error('unexpected live read');}});
+ vm.runInContext(section('  async function getTrackEntries(', '  const nativeTrackSnapshotRefreshes='),context);
+ await context.getTrackEntries('track',10);await context.getTrackEntries('track',10);
+ assert.equal(loads,0);assert.equal(context.trackEntryRequests.size,0);
 });

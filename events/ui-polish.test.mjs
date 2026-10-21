@@ -29,9 +29,9 @@ test('event verification uses exact run creation or PB time, never publication t
 });
 test('reward caps stay distinct from personal PB points and never invent zero capacity',()=>{
  assert.equal(eventRewardLabel({maxRp:500,rp:42,runAt:1}),'Up to 500 Event RP');
- assert.equal(eventRewardLabel({maxRp:500,scheduleOnly:true}),'Practice only · scoring unconfirmed');
+ assert.equal(eventRewardLabel({maxRp:500,scheduleOnly:true}),'Up to 500 Event RP');
  for(const maxRp of [undefined,0,-1,NaN])assert.equal(eventRewardLabel({maxRp}),'Event RP details unavailable');
- const html=cards();assert.match(html,/Practice only · scoring unconfirmed/);assert.doesNotMatch(html,/Awaiting|\bOpen\b|verified|earned|Up to \d+ Event RP|Server confirmation pending|Results offline/);
+ const html=cards();assert.match(html,/Up to 500 Event RP/);assert.doesNotMatch(html,/Awaiting|\bOpen\b|verified|earned|Practice only|Server confirmation pending|Results offline/);
 });
 test('permanent incentive remains a capacity label even when a personal result exists',()=>{
  const start=source.indexOf('    if(permanentNote){'),end=source.indexOf('    if(group&&!group.querySelector',start);

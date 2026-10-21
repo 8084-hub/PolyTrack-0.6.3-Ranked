@@ -1,4 +1,4 @@
-const { effectiveReviewTags, hasTagEdits, reviewTagOptions, tagLabel, reviewExportRow, hasReviewExportData } =
+const { effectiveReviewTags, hasTagEdits, hasLocalReview, reviewTagOptions, tagLabel, reviewExportRow, hasReviewExportData } =
   await import(new URL(`review.mjs${new URL(import.meta.url).search}`, import.meta.url));
 
 const SUBMIT_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSel-vg-VwzQuA2dRTEPoKiLIUgDvJ4bCvjMI8u4hqB33gkvrQ/viewform';
@@ -197,7 +197,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   const difficultyField = selectField('Difficulty', [['', 'Any level'], ...DIFFICULTY_LABELS.slice(1).map((label, index) => [String(index + 1), label])]);
   const progressLabels = {all: 'All tracks', activity: 'Has my activity', untouched: 'No activity yet', completed: 'Completed', uncompleted: 'Not completed', loaded: 'Imported, not completed'};
   const completionField = selectField('Progress', Object.entries(progressLabels));
-  const reviewField = selectField('Review status', [['all', 'All tracks'], ['edited', 'Locally edited'], ['not-edited', 'Not edited']]);
+  const reviewField = selectField('Review status', [['all', 'All tracks'], ['edited', 'Locally reviewed'], ['not-edited', 'Not reviewed']]);
   const baseSortChoices = [['recommended', 'Recommended'], ['name', 'Name A-Z'], ['author', 'Author A-Z']];
   const sortField = selectField('Sort', baseSortChoices);
   sortField.count.remove();
@@ -343,7 +343,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     if (all.some(entry => Number.isSafeInteger(entry.sourceCopies) && entry.sourceCopies >= 0 || Number.isSafeInteger(entry.sourcePlays) && entry.sourcePlays >= 0)) choices.push(['plays', 'Most plays']);
     if (all.some(entry => forumActivity(entry) !== null)) choices.push(['forum', 'Forum activity']);
     if (typeof getLocalRating === 'function') choices.push(['my-rating', 'My ratings']);
-    choices.push(['edited-first', 'Locally edited first'], ['unedited-first', 'Not edited first']);
+    choices.push(['edited-first', 'Reviewed first'], ['unedited-first', 'Not reviewed first']);
     if (all.some(entry => Number.isFinite(Date.parse(entry.submittedAt || entry.codeModifiedAt)))) choices.push(['date-newest', 'Newest Track'], ['date-oldest', 'Oldest Track']);
 
     const capabilityKey = choices.map(([value]) => value).join('|');
@@ -889,7 +889,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       const searchable = [entry.name, entry.author, entry.codeName, entry.codeAuthor, entry.source, entry.description, ...effectiveTags]
         .map(value => text(value).toLowerCase()).join(' ');
       return {
-        entry, best, loaded, favorite, effectiveTags, edited: hasTagEdits(entry, feedback),
+        entry, best, loaded, favorite, effectiveTags, edited: hasLocalReview(entry, feedback),
         activity: hasReviewExportData(reviewExportRow(entry, {feedback, imported: loaded, personalBestMs: best})),
         rating: Number.isFinite(rating) && rating >= 1 && rating <= 10 ? rating : null,
         searchName, searchNameWords: searchWords(searchName), searchable, searchableWords: searchWords(searchable)
@@ -938,12 +938,12 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     const reviewCounts = new Map([['all', cachedRecords.length], ['edited', 0], ['not-edited', 0]]);
     for (const record of cachedRecords) reviewCounts.set(record.edited ? 'edited' : 'not-edited', reviewCounts.get(record.edited ? 'edited' : 'not-edited') + 1);
     for (const option of reviewField.select.children) {
-      const name = option.value === 'edited' ? 'Locally edited' : option.value === 'not-edited' ? 'Not edited' : 'All tracks';
+      const name = option.value === 'edited' ? 'Locally reviewed' : option.value === 'not-edited' ? 'Not reviewed' : 'All tracks';
       option.textContent = `${name} (${reviewCounts.get(option.value) || 0})`;
     }
     filterCount(reviewField, reviewCounts.get(state.review) || 0);
     const selectedReview = [...reviewField.select.children].find(option => option.value === state.review);
-    if (selectedReview) selectedReview.textContent = state.review === 'edited' ? 'Locally edited' : state.review === 'not-edited' ? 'Not edited' : 'All tracks';
+    if (selectedReview) selectedReview.textContent = state.review === 'edited' ? 'Locally reviewed' : state.review === 'not-edited' ? 'Not reviewed' : 'All tracks';
     let records = sortedRecordsCache.ordered.filter(({ entry, best, loaded, favorite, searchable, searchableWords, effectiveTags, edited, activity }) => {
       const matchesSearch = !query || searchable.includes(query) || queryTokens.length > 0 && queryTokens.every(token => searchableWords.has(token));
       // A curator can mark a track by tier or by the curated tag.

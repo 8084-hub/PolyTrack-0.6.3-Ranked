@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {persistTrackSnapshot, rebuildOverall} from '../src/index.js';
+import {SOURCE_PUBLICATION_COLLECTION} from '../src/overall-source-publication.js';
 import {encode, decode} from '../../../tools/verifier/firestore.mjs';
 import {createSourceMemoryCache, loadOverallSources, sourceBinding, sourceCatalogAfterTrackWrite,
   sourceCatalogFromScan, sourceCatalogIsReady, sourceCatalogNeedsScan, SOURCE_CACHE_TTL_SECONDS,
@@ -56,7 +57,7 @@ test('385 sources: warm build uses ONE bundle match, ONE put, zero source DB rea
   assert.equal(f.state.sourceDocumentsRead, 0);
   assert.equal(f.state.batchCalls, 0);
   assert.deepEqual(result.requests, {total: 2, max: 40, cacheReads: 1,
-    cacheWrites: 1, batchReads: 0, scanRequests: 0, pageReads: 0});
+    cacheWrites: 1, publishedReads: 0, recoveryReads: 0, batchReads: 0, scanRequests: 0, pageReads: 0});
   assert.equal(f.state.cache.calls.match, 1);
   assert.equal(f.state.cache.calls.put, 2);
   const stored = JSON.parse([...f.state.cache.values.values()].at(-1));
@@ -266,7 +267,7 @@ test('six-hour/forced scans find administrative additions/deletions; track write
     const result = await loadOverallSources({...options, ...overrides});
     assert.equal(result.usedSourceCatalog, false);
     assert.deepEqual(result.trackCatalog.map(row => row.trackId), [B, C]);
-    assert.equal(result.requests.cacheReads, 0);
+    assert.equal(result.requests.cacheReads, overrides.forceScan || overrides.now >= options.now + SOURCE_CACHE_TTL_SECONDS * 1000 ? 0 : 1);
   }
   assert.equal(f.state.scans, 4);
   assert.equal(sourceCatalogAfterTrackWrite(options.meta.sourceCatalog, A, doc(A, 2)).scannedAt,
@@ -491,7 +492,7 @@ test('Worker E2E: accepted concurrent writer fences full-scan publication and ca
   assert.equal(f.data.get(META).overallRebuildFailureAttempts, undefined);
 });
 
-test('Worker E2E: clean six-hour/forced/cold scans discover out-of-band additions and deletions; cooldown stays 30m', async () => {
+test('Worker E2E: six-hour/forced scans discover out-of-band writes; cold builds use publication; cooldown stays 30m', async () => {
   const f = workerFixture(); await rebuildOverall(f.env, true);
   f.mutate(META, {...f.data.get(META), dirty: true, lastOverallBuildAt: Date.now() - 20 * 60 * 1000});
   let start = f.calls.length;
@@ -508,7 +509,8 @@ test('Worker E2E: clean six-hour/forced/cold scans discover out-of-band addition
   start = f.calls.length; await rebuildOverall(f.env, true);
   assert.equal(f.calls.slice(start).filter(c => c.path === ':runQuery').length, 1);
   f.cache.values.clear(); f.readyToBuild(); start = f.calls.length; await rebuildOverall(f.env);
-  assert.equal(f.calls.slice(start).filter(c => c.path === ':runQuery').length, 1);
+  assert.equal(f.calls.slice(start).filter(c => c.path === ':runQuery').length, 0);
+  assert.equal(sourceReadNames(f.calls.slice(start)).length, 0);
 });
 
 test('Worker E2E: exact 500 EOF enables catalog; 501-source ceiling explicitly invalidates it', async () => {
@@ -566,12 +568,12 @@ test('Worker E2E: forced admin request joining a warm non-forced build still per
   assert.equal(f.calls.slice(start).filter(call => call.path === ':runQuery').length, 1);
 });
 
-test('Worker E2E: corrupt bundle recovers by one full scan; failed recovery invalidates marker with guarded backoff', async () => {
+test('Worker E2E: corrupt cache uses publication; both corrupt trigger scan and guarded failure backoff', async () => {
   const f = workerFixture(); await rebuildOverall(f.env, true); f.readyToBuild();
   const key = f.cache.values.keys().next().value;
   f.cache.values.set(key, '{corrupt');
   let start = f.calls.length; await rebuildOverall(f.env);
-  assert.equal(f.calls.slice(start).filter(call => call.path === ':runQuery').length, 1);
+  assert.equal(f.calls.slice(start).filter(call => call.path === ':runQuery').length, 0);
   assert.equal(sourceReadNames(f.calls.slice(start)).length, 0);
   assert.equal(f.data.get(OVERALL).sourceComplete, true);
   f.readyToBuild();
@@ -579,6 +581,7 @@ test('Worker E2E: corrupt bundle recovers by one full scan; failed recovery inva
   const adopted = f.data.get(META).sourceBundle;
   const adoptedKey = [...f.cache.values.keys()].find(k => k.endsWith('/' + adopted.digest));
   f.cache.values.set(adoptedKey, '{corrupt');
+  f.mutate(SOURCE_PUBLICATION_COLLECTION + '/main_0', {version:1,digest:'0'.repeat(64),part:0,bundle:'bad'});
   f.afterQuery = () => { throw Error('RECOVERY_QUERY_FAILED'); };
   const before = clone(f.data.get(OVERALL));
   await assert.rejects(rebuildOverall(f.env), /RECOVERY_QUERY_FAILED/);
@@ -590,4 +593,183 @@ test('Worker E2E: corrupt bundle recovers by one full scan; failed recovery inva
   await rebuildOverall(f.env);
   assert.equal(f.cache.calls.match, matches, 'invalidated marker bypasses poisoned cache');
   assert.equal(f.calls.slice(start).filter(call => call.path === ':runQuery').length, 1);
+});
+
+
+test('Worker E2E: cold dirty build reads committed publication plus exactly changed source; no source query', async () => {
+  const f=workerFixture(385); await rebuildOverall(f.env,true);
+  const original=clone(f.data.get(META).sourceBundle);
+  assert.equal(original.publication.parts,1);
+  const prior=f.prior(WORKER_TRACK),entries=clone(prior.data.entries); entries[0].timeMs--;
+  await persistTrackSnapshot(f.env,WORKER_TRACK,entries,prior);
+  f.cache.values.clear(); f.readyToBuild(); const start=f.calls.length;
+  await rebuildOverall(f.env);
+  const calls=f.calls.slice(start);
+  assert.equal(calls.some(c=>c.path===':runQuery'),false);
+  assert.equal(sourceReadNames(calls).length,1);
+  assert.equal(calls.filter(c=>c.path===':batchGet'&&c.body.documents.some(n=>n.includes('/'+SOURCE_PUBLICATION_COLLECTION+'/'))).length,1);
+  assert.equal(entitlementNames(calls).length,2,'authoritative entitlement reads remain');
+  assert.notEqual(f.data.get(META).sourceBundle.digest,original.digest);
+});
+
+test('Worker E2E: immutable publication is adopted only in final CAS and conflict leaves old snapshot usable', async () => {
+  const f=workerFixture();await rebuildOverall(f.env,true);
+  const published=clone(f.data.get(SOURCE_PUBLICATION_COLLECTION+'/main_0'));
+  f.readyToBuild();
+  f.beforeCommit=writes=>{
+    if(!writes.some(w=>w.update.name.endsWith('/'+OVERALL)))return;
+    f.beforeCommit=null; f.mutate(META,{...f.data.get(META),revision:999,dirty:true});
+  };
+  await assert.rejects(rebuildOverall(f.env),/FIRESTORE_409/);
+  assert.deepEqual(f.data.get(SOURCE_PUBLICATION_COLLECTION+'/main_0'),published);
+  f.mutate(META,{...f.data.get(META),overallRebuildRetryAt:0});f.cache.values.clear();
+  const start=f.calls.length;await rebuildOverall(f.env);
+  assert.equal(f.calls.slice(start).some(c=>c.path===':runQuery'),false);
+});
+
+test('Worker E2E: clean unchanged six-hour audit skips overall, migration and all entitlement reads', async () => {
+  const f=workerFixture(385);await rebuildOverall(f.env,true);
+  const before=clone(f.data.get(OVERALL));
+  f.mutate(META,{...f.data.get(META),sourceCatalog:{...f.data.get(META).sourceCatalog,scannedAt:Date.now()-SOURCE_CATALOG_RESCAN_MS}});
+  f.cache.values.clear();const start=f.calls.length;
+  const result=await rebuildOverall(f.env);
+  assert.equal(result.reason,'sources_unchanged');
+  assert.equal(f.calls.slice(start).filter(c=>c.path===':runQuery').length,4);
+  assert.equal(entitlementNames(f.calls.slice(start)).length,0);
+  assert.equal(f.calls.slice(start).some(c=>c.path==='/'+OVERALL||c.path.endsWith('/release_migration')),false);
+  assert.deepEqual(f.data.get(OVERALL),before);
+  assert.equal(f.data.get(META).dirty,false);
+});
+
+for(const mode of ['dirty','metrics','forced'])test('unchanged sources do not suppress '+mode+' rebuild',async()=>{
+  const f=workerFixture();await rebuildOverall(f.env,true);
+  if(mode==='dirty')f.readyToBuild();
+  if(mode==='metrics')f.mutate(META,{...f.data.get(META),derivedMetricsVersion:0});
+  assert.equal((await rebuildOverall(f.env,mode==='forced')).rebuilt,true);
+  assert.equal(f.data.get(META).derivedMetricsVersion,3);
+});
+
+test('24h: 48 dirty cold-cache builds read 44 changed roots plus four 385-root audits, not 48 full scans', async t=>{
+  let now=Date.parse('2026-10-21T00:00:00Z'); t.mock.method(Date,'now',()=>now);
+  const f=workerFixture(385);await rebuildOverall(f.env,true);
+  let estimates=0,sourceRoots=0,publishedParts=0;
+  for(let i=1;i<=48;i++){
+    now+=30*60000;
+    const prior=f.prior(WORKER_TRACK),entries=clone(prior.data.entries);entries[0].timeMs--;
+    await persistTrackSnapshot(f.env,WORKER_TRACK,entries,prior);
+    f.cache.values.clear();const start=f.calls.length;
+    const audit={httpRequests:0,failedRequests:0,documentReadEstimate:0,collections:{}};
+    f.env.__FIRESTORE_READ_AUDIT=audit;
+    await rebuildOverall(f.env);
+    delete f.env.__FIRESTORE_READ_AUDIT;
+    const calls=f.calls.slice(start);
+    const scanned=calls.filter(c=>c.path===':runQuery').length>0;
+    sourceRoots+=scanned?385:sourceReadNames(calls).length;
+    publishedParts+=calls.flatMap(c=>c.path===':batchGet'?c.body.documents:[]).filter(n=>n.includes('/'+SOURCE_PUBLICATION_COLLECTION+'/')).length;
+    estimates+=audit.documentReadEstimate;
+  }
+  assert.equal(sourceRoots,1584);assert.equal(publishedParts,48);
+  assert.equal(estimates,1920,'builds only: sources1584+parts48+48*(meta1+overall1+migration1+entitlements2+group1)');
+  // Before: every cold build scanned 385 sources plus six authority docs: 18768 reads.
+  assert.equal(48*(385+6)-estimates,16848);
+});
+
+
+test('Worker E2E: unchanged-audit optimization detects out-of-band content edits even with identical binding',async()=>{
+  const f=workerFixture();await rebuildOverall(f.env,true);
+  const board=clone(f.prior(WORKER_TRACK).data);board.entries[0].timeMs--;
+  f.mutate(TRACKS+'/'+WORKER_TRACK,board);
+  f.mutate(META,{...f.data.get(META),sourceCatalog:{...f.data.get(META).sourceCatalog,scannedAt:Date.now()-SOURCE_CATALOG_RESCAN_MS}});
+  assert.equal((await rebuildOverall(f.env)).rebuilt,true);
+});
+
+test('Worker E2E: published-source quota/network failure stops before source scan and keeps last publication',async()=>{
+  const f=workerFixture();await rebuildOverall(f.env,true);f.readyToBuild();f.cache.values.clear();
+  const before=clone(f.data.get(OVERALL)),request=f.env.__TEST_FIRESTORE;
+  let attempts=0;
+  f.env.__TEST_FIRESTORE=async(path,init)=>{
+    if(path===':batchGet'&&JSON.parse(init.body).documents.some(n=>n.includes('/'+SOURCE_PUBLICATION_COLLECTION+'/'))){attempts++;throw Error('FIRESTORE_429');}
+    return request(path,init);
+  };
+  const start=f.calls.length;
+  await assert.rejects(rebuildOverall(f.env),/FIRESTORE_429/);
+  assert.equal(attempts,1);
+  assert.equal(f.calls.slice(start).some(c=>c.path===':runQuery'),false);
+  assert.deepEqual(f.data.get(OVERALL),before);
+  assert.equal(f.data.get(META).overallRebuildFailureAttempts,1);
+});
+
+
+test('24h quiet cold polls: four unchanged audits retain discovery without entitlement rereads',async t=>{
+  let now=Date.parse('2026-10-21T00:00:00Z');t.mock.method(Date,'now',()=>now);
+  const f=workerFixture(385);await rebuildOverall(f.env,true);
+  let reads=0,audits=0;
+  for(let i=0;i<288;i++){
+    now+=5*60000;f.cache.values.clear();
+    const audit={httpRequests:0,failedRequests:0,documentReadEstimate:0,collections:{}};
+    f.env.__FIRESTORE_READ_AUDIT=audit;
+    const result=await rebuildOverall(f.env);if(result.reason==='sources_unchanged')audits++;
+    reads+=audit.documentReadEstimate;delete f.env.__FIRESTORE_READ_AUDIT;
+  }
+  assert.equal(audits,4);assert.equal(reads,1832,'288 meta +1540 scan sources +4 companion parts');
+});
+
+
+test('Worker E2E: concurrent ordinary cold publication replacement aborts loser before any source recovery scan',async t=>{
+  let now=Date.parse('2026-10-21T00:00:00Z');t.mock.method(Date,'now',()=>now);
+  const f=workerFixture(385);await rebuildOverall(f.env,true);f.readyToBuild();f.cache.values.clear();
+  const originalMarker=clone(f.data.get(META).sourceBundle),raw=f.env.__TEST_FIRESTORE;
+  let intercepted=false,winnerState,loserStart=-1;
+  f.env.__TEST_FIRESTORE=async(path,init)=>{
+    if(!intercepted && path===':batchGet' && JSON.parse(init.body).documents.some(n=>n.includes('/'+SOURCE_PUBLICATION_COLLECTION+'/'))){
+      intercepted=true;now++;
+      // A distinct root models a second isolate without sharing the in-flight coalescer.
+      const competing={...f.env,__TEST_FIRESTORE:raw,__FIRESTORE_ROOT_ENV:{}};
+      const winnerStart=f.calls.length;
+      assert.equal((await rebuildOverall(competing)).rebuilt,true);
+      assert.equal(f.calls.slice(winnerStart).some(c=>c.path===':runQuery'),false);
+      winnerState=clone([...f.data]);loserStart=f.calls.length;
+    }
+    return raw(path,init);
+  };
+  await assert.rejects(rebuildOverall(f.env),/OVERALL_BUILD_SUPERSEDED/);
+  assert.equal(intercepted,true);
+  assert.notEqual(f.data.get(META).sourceBundle.digest,originalMarker.digest);
+  assert.deepEqual(f.calls.slice(loserStart).map(c=>c.path),[':batchGet','/'+META],
+    'only the replaced companion read and one fresh metadata guard, no recovery/authority/backoff work');
+  assert.deepEqual(clone([...f.data]),winnerState,'loser cannot alter winner publication or metadata');
+});
+
+for(const mode of ['advanced','deleted','unversioned','read_error'])test('Worker E2E: corrupt recovery guard '+mode+' aborts conservatively with no fallback',async()=>{
+  const f=workerFixture();await rebuildOverall(f.env,true);f.readyToBuild();
+  f.cache.values.clear();
+  f.mutate(SOURCE_PUBLICATION_COLLECTION+'/main_0',{version:1,digest:'0'.repeat(64),part:0,bundle:'bad'});
+  const raw=f.env.__TEST_FIRESTORE,calls=[],failure=Error('RECOVERY_META_READ_FAILED');
+  let metaReads=0,expectedState;
+  f.env.__TEST_FIRESTORE=async(path,init)=>{
+    calls.push(path);
+    if(path==='/'+META && ++metaReads===2){
+      if(mode==='advanced')f.mutate(META,{...f.data.get(META),dirty:true,revision:999});
+      if(mode==='deleted')f.data.delete(META);
+      expectedState=clone([...f.data]);
+      if(mode==='read_error')throw failure;
+      if(mode==='unversioned'){const doc=await raw(path,init);delete doc.updateTime;return doc;}
+    }
+    return raw(path,init);
+  };
+  await assert.rejects(rebuildOverall(f.env),error=>mode==='read_error'?error===failure:/OVERALL_BUILD_SUPERSEDED/.test(error.message));
+  assert.equal(metaReads,2,'one original metadata read plus one recovery check, no backoff reread');
+  assert.deepEqual(calls,['/'+META,':batchGet','/'+META]);
+  assert.deepEqual(clone([...f.data]),expectedState,'no bookkeeping or invalidation writes after rejected check');
+});
+
+test('Worker E2E: unchanged metadata permits exactly one corruption scan after the fresh guard',async()=>{
+  const f=workerFixture();await rebuildOverall(f.env,true);f.readyToBuild();f.cache.values.clear();
+  f.mutate(SOURCE_PUBLICATION_COLLECTION+'/main_0',{version:1,digest:'0'.repeat(64),part:0,bundle:'bad'});
+  const start=f.calls.length;
+  assert.equal((await rebuildOverall(f.env)).rebuilt,true);
+  const calls=f.calls.slice(start),scan=calls.findIndex(c=>c.path===':runQuery');
+  assert.equal(calls.filter(c=>c.path===':runQuery').length,1);
+  assert.deepEqual(calls.slice(0,scan).map(c=>c.path),['/'+META,':batchGet','/'+META]);
+  assert.equal(f.data.get(OVERALL).sourceComplete,true);
 });

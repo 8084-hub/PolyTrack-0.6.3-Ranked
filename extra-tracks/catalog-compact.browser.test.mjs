@@ -35,16 +35,21 @@ test('toolbar groups stay adjacent with expanded filters at requested sizes and 
    }
    const layout=await page.locator('.sq-extra-controls').evaluate(el=>{
     const box=node=>{const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height};};
-    return {sort:box(el.querySelector('.sq-extra-sort-controls select')),reset:box(el.querySelector('.sq-extra-sort-controls button')),checks:[...el.querySelectorAll('.sq-extra-check')].map(box),overflow:el.scrollWidth>el.clientWidth+1,labels:[...el.querySelectorAll('.sq-extra-check')].map(n=>n.textContent)};
+    const advanced=el.querySelector('.sq-extra-advanced'),search=el.querySelector('.sq-extra-search-field');
+    return {sort:box(el.querySelector('.sq-extra-sort-controls select')),reset:box(el.querySelector('.sq-extra-sort-controls button')),checks:[...el.querySelectorAll('.sq-extra-check')].map(box),filterToggle:box(el.querySelector('.sq-extra-advanced-toggle')),firstFilter:box(advanced.querySelector('.sq-extra-field')),overflow:el.scrollWidth>el.clientWidth+1,labels:[...el.querySelectorAll('.sq-extra-check')].map(n=>n.textContent),toolbarBackground:getComputedStyle(el).backgroundColor,searchBackground:getComputedStyle(search).backgroundColor,advancedBackground:getComputedStyle(advanced).backgroundColor,advancedBorder:getComputedStyle(advanced).borderWidth};
    });
    assert.equal(layout.overflow,false,'toolbar fits '+width+'x'+height);
    assert.ok(Math.abs(layout.sort.bottom-layout.reset.bottom)<1,'Reset shares Sort row at '+width+'x'+height);
    assert.ok(layout.reset.left>=layout.sort.right,'Reset sits to the right of Sort');
    assert.ok(layout.sort.width>=130,'Sort remains readable at '+width+'x'+height+': '+JSON.stringify(layout));
    assert.deepEqual(layout.labels,['My favorites','Curated only']);
+   assert.equal(layout.searchBackground,'rgba(0, 0, 0, 0)','search shares the toolbar surface');
+   assert.equal(layout.advancedBackground,'rgba(0, 0, 0, 0)','filters share the toolbar surface');
+   assert.equal(layout.advancedBorder,'0px','filters have no separate boxed band');
+   if(width<=600)assert.ok(layout.filterToggle.bottom<=layout.firstFilter.top,'mobile filter toggle precedes its fields');
    assert.ok(Math.abs(layout.checks[0].top-layout.checks[1].top)<1,'quick filters share a row');
    for(const control of [layout.sort,layout.reset,...layout.checks])assert.ok(control.left>=0&&control.right<=width&&control.height>=44,'toolbar controls fit and retain touch height');
-   if(width===390&&process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR){await page.evaluate(()=>document.querySelector('.sq-extra-menu').scrollTop=0);await page.screenshot({path:process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR+'/catalog-toolbar-390.png'});}
+   if([1366,390,844].includes(width)&&process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR){await page.evaluate(()=>document.querySelector('.sq-extra-menu').scrollTop=0);await page.screenshot({path:process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR+`/catalog-toolbar-${width}x${height}.png`});}
    await page.getByRole('searchbox').fill('no matching track');
    assert.equal(await page.locator('.sq-extra-empty h3').textContent(),'No matching tracks');
    await page.locator('.sq-extra-sort-controls button').click();
@@ -105,5 +110,37 @@ test('catalog header, filters and review controls fit small touch screens with e
    assert.equal(await more.evaluate(node=>node===document.activeElement),true);
   }
   assert.equal(await page.evaluate(()=>exportCount),9);
+ }finally{await browser.close();}
+});
+
+test('local review filter and ordering include ratings and update after a review is cleared',{skip:!chromium},async()=>{
+ const browser=await chromium.launch({headless:true});
+ try{
+  const page=await browser.newPage({viewport:{width:1366,height:600}}),unexpected=[];
+  await page.route('**/*',route=>{
+   const url=route.request().url();
+   if(url==='http://review.test/')return route.fulfill({contentType:'text/html',body:'<!doctype html><main id="root"></main>'});
+   if(url==='http://review.test/catalog-ui.mjs')return route.fulfill({contentType:'text/javascript',body:moduleSource});
+   if(url==='http://review.test/review.mjs')return route.fulfill({contentType:'text/javascript',body:reviewSource});
+   unexpected.push(url);return route.abort();
+  });
+  await page.goto('http://review.test/');await page.addStyleTag({content:fontCss+css});
+  await page.evaluate(async()=>{
+   const {mountExtraTracks}=await import('/catalog-ui.mjs');
+   const entries=['Alpha','Beta','Gamma'].map((name,i)=>({id:String(i),name,source:'Community',tags:[]}));
+   window.reviews=[{}, {rating:8}, {favorite:true}];
+   window.catalog=mountExtraTracks({document,root:document.querySelector('#root'),entries,getFeedback:e=>reviews[e.id],getLocalRating:e=>reviews[e.id].rating});catalog.open();
+  });
+  const names=()=>page.locator('.sq-extra-card h3').allTextContents();
+  await page.locator('.sq-extra-review-field select').selectOption('edited');assert.deepEqual(await names(),['Beta']);
+  await page.locator('.sq-extra-review-field select').selectOption('not-edited');assert.deepEqual(await names(),['Alpha','Gamma']);
+  await page.locator('.sq-extra-review-field select').selectOption('all');
+  await page.locator('.sq-extra-sort-controls select').selectOption('edited-first');assert.deepEqual(await names(),['Beta','Alpha','Gamma']);
+  await page.locator('.sq-extra-sort-controls select').selectOption('unedited-first');assert.deepEqual(await names(),['Alpha','Gamma','Beta']);
+  await page.locator('.sq-extra-sort-controls select').selectOption('my-rating');assert.equal((await names())[0],'Beta');
+  await page.evaluate(()=>{reviews[0]={rating:10};catalog.refresh();});assert.equal((await names())[0],'Alpha');
+  await page.evaluate(()=>{reviews[0]={rating:0};catalog.refresh();});assert.equal((await names())[0],'Beta');
+  await page.locator('.sq-extra-sort-controls button').click();assert.equal(await page.locator('.sq-extra-review-field select').inputValue(),'all');
+  assert.deepEqual(await names(),['Alpha','Beta','Gamma']);assert.deepEqual(unexpected,[]);
  }finally{await browser.close();}
 });

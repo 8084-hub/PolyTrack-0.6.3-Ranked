@@ -104,3 +104,20 @@ test('ordinary non-PB finishes retain observed time in the export', () => {
  assert.equal(report.practice[0].lastObservedFinishMs, 1000);
  assert.equal(report.practice[0].recentFinishes[0].timeMs, 1000);
 });
+
+test('compact serialization materially reduces report bytes without dropping v1 fields', () => {
+ const report = buildDeveloperReport({
+  practice: Array.from({ length: 40 }, (_, i) => ({ trackId: id, trackName: `Practice ${i}`, activeMs: i * 1000, attempts: i + 1, recentFinishes: [{ at: i, timeMs: 12000 + i, practiceMs: 15000, timingNote: false }] })),
+  localResults: Array.from({ length: 160 }, (_, i) => ({ trackId: id, timeMs: i + 1000, rank: i + 1, fieldSize: 500 })),
+  extraTracks: Array.from({ length: 240 }, (_, i) => ({ id: `track-${i}`, name: `Extra Track ${i}`, author: 'Builder' })),
+  localData: { profiles: Array.from({ length: 20 }, (_, i) => ({ publicId: `racer-${i}`, name: `Racer ${i}`, personalBests: Array.from({ length: 8 }, (_, n) => ({ trackId: id, trackName: `Track ${n}`, timeMs: 30000 + n })) })) },
+  includePublicId: true
+ });
+ const compact = JSON.stringify(report);
+ const pretty = JSON.stringify(report, null, 2);
+ assert.ok(Buffer.byteLength(compact) < Buffer.byteLength(pretty) * 0.8, `${Buffer.byteLength(compact)} compact bytes vs ${Buffer.byteLength(pretty)} pretty bytes`);
+ assert.equal(report.schema, 'polytrack-developer-diagnostics-v1');
+ for (const key of ['privacy', 'practice', 'loadedResults', 'localResults', 'insights', 'extraTracks', 'localData', 'truncation', 'recentEvents']) assert.ok(Object.hasOwn(report, key), `missing v1 field ${key}`);
+ assert.equal(report.localData.profiles.length, 20);
+ assert.equal(report.localData.profiles[0].personalBests.length, 8);
+});

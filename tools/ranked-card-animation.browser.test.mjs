@@ -9,7 +9,7 @@ const source=fs.readFileSync(new URL('../polytrack_062_patch.js',import.meta.url
 const home=fs.readFileSync(new URL('../home-ui.css',import.meta.url),'utf8');
 const functions=source.slice(source.indexOf('  function triggerRankedButtonSpawn('),source.indexOf('  const MULTIPLAYER_STUN_SERVERS'));
 
-test('Ranked is immediately usable when the native menu appears and on return',async()=>{
+test('Ranked follows the native entrance, never appears during loading, and remains ready on return',async()=>{
   const browser=await chromium.launch({headless:true});
   try{
     const page=await browser.newPage();
@@ -48,6 +48,7 @@ test('Ranked is immediately usable when the native menu appears and on return',a
       sample();
     });
     await page.waitForSelector('#injectedRankingsBtn.ranked-ready');
+    assert.ok(await page.evaluate(()=>rankTest.some(row=>row.rankedStarted>0)),'the native entrance animation actually ran');
     assert.equal(await page.locator('#injectedRankingsBtn').isVisible(),true);
     assert.equal(await page.locator('#injectedRankingsBtn').evaluate(el=>getComputedStyle(el).opacity),'1');
     assert.equal(await page.locator('#injectedRankingsBtn').evaluate(el=>el.classList.contains('ranked-waiting')),false);

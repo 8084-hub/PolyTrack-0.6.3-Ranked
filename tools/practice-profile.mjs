@@ -151,12 +151,14 @@ function card(row, lookup, preview, results) {
   const improvement = num(row.improvedMs ?? row.improvementMs);
   const metrics = [
     attempts ? { sort: 'attempts', text: attempts + (attempts === 1 ? ' attempt' : ' attempts') } : null,
+    count(row.finishes) ? { sort: 'finishes', text: count(row.finishes) + (count(row.finishes) === 1 ? ' finish' : ' finishes') } : null,
     count(row.restarts) ? { text: count(row.restarts) + (count(row.restarts) === 1 ? ' reset' : ' resets') } : null,
     count(row.pbs) ? { text: count(row.pbs) + (count(row.pbs) === 1 ? ' recorded best' : ' recorded bests') } : null,
     count(row.respawns) ? { text: count(row.respawns) + (count(row.respawns) === 1 ? ' checkpoint respawn' : ' checkpoint respawns') } : null,
     improvement ? { sort: 'improvement', text: time(improvement) + ' driven PB gain' } :
       { sort: 'improvement', zero: true, text: 'No driven PB gain recorded' }
   ].filter(Boolean);
+  if (num(row.longestHuntMs)) metrics.push({ sort: 'longest-hunt', text: formatActiveTime(row.longestHuntMs) + ' longest hunt' });
   const lastPlayed = date(row.lastPlayedAt);
   const activeTime = num(row.activeMs) ? formatActiveTime(row.activeMs) : 'Not measured';
   const knownResults = evidence.length
@@ -171,6 +173,8 @@ function card(row, lookup, preview, results) {
     '" data-track-name="' + esc(name.toLocaleLowerCase()) +
     '" data-active-ms="' + num(row.activeMs) +
     '" data-attempts="' + attempts +
+    '" data-finishes="' + finishes +
+    '" data-longest-hunt-ms="' + num(row.longestHuntMs) +
     '" data-last-played="' + num(row.lastPlayedAt) +
     '" data-improvement-ms="' + improvement + '">' +
     '<div class="pp-track-top"><button type="button" class="pp-art pp-track-open" data-track-id="' + esc(row.trackId) +
@@ -261,6 +265,8 @@ export function renderPracticeProfile({ rows = [], coverage = null, trackName, t
       '<div class="pp-sort-control"><label>Sort by <select data-pp-sort>' +
       '<option value="recent">Last played</option><option value="active">Active time</option>' +
       '<option value="attempts">Attempts</option>' +
+      (observed.some(row => count(row.finishes)) ? '<option value="finishes">Finishes</option>' : '') +
+      (observed.some(row => num(row.longestHuntMs)) ? '<option value="longest-hunt">Longest hunt</option>' : '') +
       (observed.some(row => num(row.improvedMs ?? row.improvementMs)) ? '<option value="improvement">Driven PB gain</option>' : '') +
       '<option value="name">Name</option>' +
       '</select></label><button type="button" class="pp-direction" data-pp-direction="desc" aria-label="Sort descending" title="Sort descending">\u2193</button></div>' +
@@ -319,7 +325,7 @@ export function installPracticeProfileControls(root) {
     const visible = items.filter(item => !item.hidden);
     const key = sort?.value || 'recent';
     const sign = direction?.dataset.ppDirection === 'asc' ? 1 : -1;
-    const attribute = { active: 'activeMs', attempts: 'attempts', improvement: 'improvementMs', recent: 'lastPlayed' }[key] || 'lastPlayed';
+    const attribute = { active: 'activeMs', attempts: 'attempts', finishes: 'finishes', 'longest-hunt': 'longestHuntMs', improvement: 'improvementMs', recent: 'lastPlayed' }[key] || 'lastPlayed';
     section.dataset.ppSortKey = key;
     visible.sort((a, b) => {
       const names = (a.dataset.trackName || '').localeCompare(b.dataset.trackName || '');

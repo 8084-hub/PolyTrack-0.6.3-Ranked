@@ -1,4 +1,4 @@
-import {archivePeriodCounts,catalogArchivePeriods,mountArchiveView} from './archive-view.mjs';
+import {archivePeriodCounts,catalogArchivePeriods,mountArchiveView} from './archive-view.mjs?v=172';
 import {preparePublishedEventGhost} from './public-replay.mjs';
 import {eventFinishPlace} from './placement.mjs';
 import {createEventSession,keepEventBest,matchingEventRuns} from './session.mjs';
@@ -14,7 +14,6 @@ export function eventResetLabel(period,locale){
   return new Intl.DateTimeFormat(locale,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(period.endsAt)+' Local';
 }
 export function eventRewardLabel(period){
-  if(period?.scheduleOnly)return 'Practice only · scoring unconfirmed';
   const cap=period?.maxRp;
   return Number.isFinite(cap)&&cap>0?'Up to '+cap+' Event RP':'Event RP details unavailable';
 }
@@ -252,6 +251,7 @@ export function installEvents(bridge){
       snapshotFetching.set(period.id,pending);
       return pending;
     }
+    if(!force&&saved){cache.set(period.id,saved);return saved;}
     const attempt=snapshotAttempts.get(period.id);
     if(attempt&&now()<attempt.nextAt){if(saved)return saved;if(attempt.error)throw attempt.error;}
     if(!force&&saved&&now()-saved.fetchedAt<120000)return saved;
@@ -266,7 +266,7 @@ export function installEvents(bridge){
       cacheWrite(STORE,catalog);catalogAt=now();catalogFreshUntil=eventCatalogFreshUntil(catalog.periods,catalogAt);
     };
     let pending;pending=(async()=>{
-      try{const value=await bridge.readSnapshot(period.id);if(!valid(value))throw Error('Invalid event snapshot');if(value._eventRefreshFailed){state.error=Error('Event refresh failed');state.nextAt=now()+120000;}confirmSchedulePeriod(value);const current=cache.get(period.id)||saved;if(valid(current)&&current.updatedAt>value.updatedAt)return current;const next={...value,fetchedAt:now(),saved:false};cache.set(period.id,next);cacheWrite(STORE+'-'+period.id,next);return next;}
+      try{const value=await bridge.readSnapshot(period.id,{refresh:force});if(!valid(value))throw Error('Invalid event snapshot');if(value._eventRefreshFailed){state.error=Error('Event refresh failed');state.nextAt=now()+120000;}confirmSchedulePeriod(value);const current=cache.get(period.id)||saved;if(valid(current)&&current.updatedAt>value.updatedAt)return current;const next={...value,fetchedAt:now(),saved:false};cache.set(period.id,next);cacheWrite(STORE+'-'+period.id,next);return next;}
       catch(error){state.error=error;state.nextAt=now()+120000;if(saved){const fallback={...saved,saved:true};cache.set(period.id,fallback);return fallback;}throw error;}
       finally{if(snapshotFetching.get(period.id)===pending)snapshotFetching.delete(period.id);}
     })();
@@ -324,7 +324,7 @@ export function installEvents(bridge){
     shell();selected=period;body('<p role="status">Opening event...</p><p>You can cancel with Close. Your saved PBs are unchanged.</p>');message('Preparing event racing.');
     const attempt=++entryRequest,accountId=bridge.accountId();
     let timer,intent=null;
-    try{if(now()>=period.endsAt)throw Error('This event has ended.');await Promise.race([bridge.ready(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Event preparation timed out. Close and try again.')),12000);})]);if(attempt!==entryRequest||accountId!==bridge.accountId()||!dialog||selected?.id!==period.id)return false;ensureCapture();intent=sessions.enter(period,bridge.accountId());eventIntent=intent;close();message('Opening event track...');nativeOpenPermit=true;try{await bridge.openTrack(period.trackId);}finally{nativeOpenPermit=false;}tick();void refreshNativeEventData(period,sessions.current());return true;}
+    try{if(now()>=period.endsAt)throw Error('This event has ended.');await Promise.race([bridge.ready(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Event preparation timed out. Close and try again.')),12000);})]);if(attempt!==entryRequest||accountId!==bridge.accountId()||!dialog||selected?.id!==period.id)return false;ensureCapture();intent=sessions.enter(period,bridge.accountId());eventIntent=intent;tick({cachedOnly:true});close();message('Opening event track...');nativeOpenPermit=true;try{await bridge.openTrack(period.trackId);}finally{nativeOpenPermit=false;}tick();void refreshNativeEventData(period,sessions.current());return true;}
     catch(error){const ownsIntent=!!intent&&sessions.current()===intent&&eventIntent===intent;if(attempt===entryRequest||ownsIntent){if(ownsIntent){sessions.leave();eventIntent=null;}shell();message(error.message);body('<p>The event track could not be opened. Your saved records are unchanged.</p>');}return false;}finally{clearTimeout(timer);}
   }
   async function openEvent({kind,trackId}={}){
@@ -372,7 +372,7 @@ export function installEvents(bridge){
     return '<small class="sq-event-card-summary">'+count+' '+(Number.isInteger(board.racerCount)||Number.isInteger(board.entrantCount)?'racers':'loaded racers')+' · '+entries.length+' verified'+pointTotal+'</small>'+
       (leader?'<small class="sq-event-card-leader">Leader: '+escape(displayName(leader))+' · '+time(leader.timeMs)+'</small>':'');
   }
-  function cards(periods,{details=false}={}){periods.forEach(p=>knownPeriods.set(p.id,p));return periods.map(p=>`<button type="button" class="sq-event-card" data-event-id="${escape(p.id)}" data-event-kind="${escape(p.kind)}"><span class="sq-event-thumb">${bridge.thumbnail(p.trackId)}</span><div class="sq-event-record">${recordMarkup(p)}</div><span><small>${escape(p.kind==='daily'?'DAILY EVENT':p.kind==='weekly'?'WEEKLY EVENT':p.kind==='kodub'?'KODUB WEEKLY':p.label||'EVENT')}</small><strong>${escape(periodName(p))}</strong><span class="sq-event-card-details"><span class="sq-event-reward"${p.scheduleOnly?' title="Saved schedule only. The event service has not confirmed scoring or results."':''}>${escape(eventRewardLabel(p))}</span>${details?cardStandings(p):''}${Number.isInteger(p.entrantLimit)?`<small class="sq-event-capacity">Up to ${p.entrantLimit} racers</small>`:''}<small class="sq-event-reset">${now()<p.endsAt?'Resets':'Ended'} ${escape(reset(p))}</small></span></span></button>`).join('');}
+  function cards(periods,{details=false}={}){periods.forEach(p=>knownPeriods.set(p.id,p));return periods.map(p=>`<button type="button" class="sq-event-card" data-event-id="${escape(p.id)}" data-event-kind="${escape(p.kind)}"><span class="sq-event-thumb">${bridge.thumbnail(p.trackId)}</span><div class="sq-event-record">${recordMarkup(p)}</div><span><small>${escape(p.kind==='daily'?'DAILY EVENT':p.kind==='weekly'?'WEEKLY EVENT':p.kind==='kodub'?'KODUB WEEKLY':p.label||'EVENT')}</small><strong>${escape(periodName(p))}</strong><span class="sq-event-card-details"><span class="sq-event-reward"${p.scheduleOnly?' title="Scheduled reward cap. Scoring and published standings await event service confirmation."':''}>${escape(eventRewardLabel(p))}</span>${details?cardStandings(p):''}${Number.isInteger(p.entrantLimit)?`<small class="sq-event-capacity">Up to ${p.entrantLimit} racers</small>`:''}<small class="sq-event-reset">${now()<p.endsAt?'Resets':'Ended'} ${escape(reset(p))}</small></span></span></button>`).join('');}
   function permanentCard(loading=false){
     const counts=archivePeriodCounts(PERMANENT_ROLLING,permanent),own=counts.verifiedEntries.find(row=>row.accountId===bridge.accountId());
     const record=own?'<time>'+time(own.timeMs)+'</time>'+ (Number.isFinite(own.rp)?'<small>'+Math.round(own.rp)+' Event RP</small>':''):loading?'<small>Loading verified record...</small>':'No verified record';
@@ -380,7 +380,7 @@ export function installEvents(bridge){
     return `<button type="button" class="sq-event-card sq-event-permanent" data-event-permanent><span class="sq-event-thumb">${bridge.thumbnail(ROLLING_TRACK_ID)}</span><div class="sq-event-record">${record}</div><span><small>PERMANENT EVENT</small><strong>Rolling Hills Racer</strong><span class="sq-event-reward">Normal RP + up to 1001 Event RP</span>${count}<small>No reset</small></span></button>`;
   }
   function selectView(view){entryRequest++;message('');for(const button of dialog.querySelectorAll('nav button'))button.setAttribute('aria-pressed',String(button.hasAttribute('data-event-'+view)));}
-  async function open(){shell();selectView('home');selected=null;const token=++requestId;body('<p>Loading events...</p>');try{await loadCatalog();if(!dialog||token!==requestId)return;body('<div class="sq-event-browser-heading"><h3>Live events</h3><p>Choose a track for standings, replays, or your next PB.</p></div><div class="sq-event-cards">'+cards(livePeriods(),{details:true})+permanentCard(true)+'</div>');message(['Event RP is separate from Overall RP.',bridge.dataNotice?.()||''].filter(Boolean).join(' '));void loadPermanent().then(()=>{if(!dialog||token!==requestId||!dialog.querySelector('[data-event-permanent]'))return;const active=document.activeElement;if(active?.closest('[data-event-permanent]'))return;const holder=document.createElement('div');holder.innerHTML=permanentCard(false);dialog.querySelector('[data-event-permanent]')?.replaceWith(holder.firstElementChild);}).catch(()=>{});}catch{if(token===requestId){body('<p>Events are unavailable. Normal racing and your saved PBs still work.</p>');}}}
+  async function open(){shell();selectView('home');selected=null;const token=++requestId;body('<p>Loading events...</p>');try{await loadCatalog();if(!dialog||token!==requestId)return;body('<div class="sq-event-browser-heading"><h3>Live events</h3><p>Choose a track for standings, replays, or your next PB.</p></div><div class="sq-event-cards">'+cards(livePeriods().filter(p=>p.kind==='kodub'),{details:true})+permanentCard(true)+cards(livePeriods().filter(p=>p.kind!=='kodub').sort((a,b)=>['weekly','daily'].indexOf(a.kind)-['weekly','daily'].indexOf(b.kind)),{details:true})+'</div>');message(['Event RP is separate from Overall RP.',bridge.dataNotice?.()||''].filter(Boolean).join(' '));void loadPermanent().then(()=>{if(!dialog||token!==requestId||!dialog.querySelector('[data-event-permanent]'))return;const active=document.activeElement;if(active?.closest('[data-event-permanent]'))return;const holder=document.createElement('div');holder.innerHTML=permanentCard(false);dialog.querySelector('[data-event-permanent]')?.replaceWith(holder.firstElementChild);}).catch(()=>{});}catch{if(token===requestId){body('<p>Events are unavailable. Normal racing and your saved PBs still work.</p>');}}}
   function receiptText(receipt,local,period){
     if(period&&Date.now()>=period.endsAt+(period.graceMs||0)&&receipt?.status==='waiting')return 'This event closed before the run could be scored.';
     if(local&&(local.timeMs<receipt?.timeMs||local.attemptId&&receipt?.attemptId!==local.attemptId&&(!receipt||local.timeMs<=receipt.timeMs)))return 'Event PB saved on this device. Waiting for its cloud status.';
@@ -727,6 +727,7 @@ export function installEvents(bridge){
   }
   function clearNativeView(){
     if(!nativeView)return;
+    if(nativeView.footerClickGuard)nativeView.nativeButtonWrapper?.removeEventListener('click',nativeView.footerClickGuard,true);
     nativeView.carObserver?.disconnect();nativeView.deferredCarRows?.clear();if(nativeView.contextMenuHandler)nativeView.board.removeEventListener('contextmenu',nativeView.contextMenuHandler);
     if(nativeView.nativeButtonWrapper){
       nativeView.eventBack?.replaceWith(nativeView.nativeBack);
@@ -746,12 +747,13 @@ export function installEvents(bridge){
     nativeView.pb?.remove();nativeView.pbTitle?.remove();
     if(nativeView.watch)nativeView.watch.disabled=nativeView.watchDisabled;
     nativeView.opponentsNote?.remove();
+    nativeView.root.classList.remove('sq-event-layout-ready');
     nativeView=null;
   }
   async function refreshNativeEventData(period,session){
     const accountId=bridge.accountId();
     try{await snapshot(period);await readReceipt(period.id,accountId);if(!session||!replayContextActive(session))return;if(nativeView)nativeView.signature='';syncNativeBoard(session);}
-    catch{if(sessions.current()===session)message('Event standings are unavailable. Local event finishes still save.');}
+    catch{if(sessions.current()===session){message('Standings unavailable. Your event runs save locally.');if(nativeView)nativeView.signature='';syncNativeBoard(session);}}
   }
   function eventDisplayRows(period){
     const accountId=bridge.accountId();
@@ -824,7 +826,7 @@ export function installEvents(bridge){
       if(statusText==='Opening event track...')message('');
       const archiveMode=session.archive===true,nativeBack=original.querySelector('button.back'),nativeDisplay={value:original.style.getPropertyValue('display'),priority:original.style.getPropertyPriority('display')},nativeTitle=original.getAttribute('title');
       const nativeMarkup=document.createDocumentFragment();while(original.firstChild)nativeMarkup.append(original.firstChild);
-      const board=original;board.classList.add('sq-event-board');
+      const board=original;board.classList.add('sq-event-board');root.classList.add('sq-event-layout-ready');
       document.getElementById('polytrackTrackFreshness')?.remove();
       board.title=archiveMode?'Frozen archived standings. Practice runs are not submitted.':'A number toggles one event ghost. T then a number selects the top group. Hold two numbers for a range. C clears ghosts.';
       board.style.setProperty('display','flex','important');
@@ -860,6 +862,14 @@ export function installEvents(bridge){
         const findMe=buttonWrapper.querySelector('.sq-event-find-me');findMe.onclick=()=>{const index=eventDisplayRows(period).rows.filter(row=>!view.onlyVerified||!row.pending).findIndex(row=>row.accountId===accountId);if(index<0){message(view.onlyVerified?'Your run is not verified yet. Turn off Only verified to see it.':'Your event result is not in these loaded standings.');return;}view.page=Math.floor(index/20);view.signature='';view.quickSignature='';syncNativeBoard(session);const mine=board.querySelector('button.main.self');mine?.scrollIntoView({block:'nearest'});mine?.focus({preventScroll:true});};
         board.querySelector('.sq-event-refresh').onclick=async()=>{const button=board.querySelector('.sq-event-refresh');button.disabled=true;profilesAt=0;try{await snapshot(period,true);await readReceipt(period.id,accountId,true);if(nativeView!==view||bridge.accountId()!==accountId||sessions.current()!==session)return;view.signature='';syncNativeBoard(session);}catch{if(nativeView===view)message('Event standings could not refresh. Your saved event PB is unchanged.');}finally{button.disabled=false;}};
       }
+      if(!archiveMode&&nativeButtonWrapper){
+        view.footerClickGuard=event=>{
+          const button=event.target.closest?.('.only-verified,.sq-event-find-me');
+          if(!button||!nativeButtonWrapper.contains(button)||nativeView!==view)return;
+          event.preventDefault();event.stopImmediatePropagation();button.onclick?.call(button,event);
+        };
+        nativeButtonWrapper.addEventListener('click',view.footerClickGuard,true);
+      }
       board.querySelector('.back').onclick=()=>{
         if(nativeView!==view||!board.isConnected||bridge.accountId()!==view.accountId)return;
         const request=++entryRequest;
@@ -883,7 +893,7 @@ export function installEvents(bridge){
     const opponentsText=activeGhosts.length?`${activeGhosts.length} event ghost${activeGhosts.length===1?'':'s'} selected`:bridge.supportsEventGhost?.()&&getOwnReplay(period.id)?'Play uses your event PB ghost. Select published racers to add their replays.':'Select published racers to load event ghosts. Normal PB ghosts are not used.';
     if(view.opponentsNote.textContent!==opponentsText)view.opponentsNote.textContent=opponentsText;
 
-    const display=eventDisplayRows(period),{board,filterResult}=display,mine=display.rows.find(row=>row.accountId===accountId),rows=display.rows.filter(row=>!view.onlyVerified||!row.pending);
+    const display=eventDisplayRows(period),{board,filterResult}=display,loading=!board&&!snapshotAttempts.get(period.id)?.error,mine=display.rows.find(row=>row.accountId===accountId),rows=display.rows.filter(row=>!view.onlyVerified||!row.pending);
     if(filterResult?.active){const visible=new Set(rows.map(row=>row.accountId));for(const [id,row] of selectedGhosts)if(row.periodId===period.id&&!visible.has(id))selectedGhosts.delete(id);}
     let place=displayedRecordPlacement(period,mine,board);
     if(mine?.pending&&place===null)place={rank:mine.rank,fieldSize:null,knownFieldSize:rows.length,provisional:true,policy:'all'};
@@ -892,7 +902,7 @@ export function installEvents(bridge){
     const receipt=ownReceipts.get(period.id+'_'+accountId);const statusDescription=receipt?receiptText(receipt,localBest(period),period):statusText;
     // Selection changes do not alter standings. Avoid revalidating every car
     // style and serializing whole result objects on each input/menu tick.
-    const signature=JSON.stringify([bridge.identityRevision?.(),bridge.filterRevision?.(),period.id,board?.updatedAt,board?.saved,Math.floor(now()/120000),view.page,view.onlyVerified,placement,rows.map(row=>[row.accountId,row.rank,row.timeMs,row.runId,row.pending,row.rp,row.name,row.carStyle,row.submittedAt])]);
+    const signature=JSON.stringify([bridge.identityRevision?.(),bridge.filterRevision?.(),period.id,board?.updatedAt,board?.saved,loading,Math.floor(now()/120000),view.page,view.onlyVerified,placement,rows.map(row=>[row.accountId,row.rank,row.timeMs,row.runId,row.pending,row.rp,row.name,row.carStyle,row.submittedAt])]);
     if(signature===view.signature){
       for(const button of view.board.querySelectorAll(':scope > .container > button.main')){
         const selectedRow=selectedGhosts.get(button.dataset.eventAccountId);
@@ -911,11 +921,11 @@ export function installEvents(bridge){
     const styles=rows.map(row=>cachedCarStyle(row,period));
     view.board.querySelector('h3').textContent=eventName(period.kind)+' event · '+periodName(period);
     const waitingCount=rows.filter(row=>row.pending).length,verifiedCount=rows.length-waitingCount;
-    const sourceLabel=board?._publicBackup?'Snapshot data: frozen, not all available':rows.some(row=>row.pending)?'Mixed data':board?.saved?'Cached data':'Fresh data';
+    const sourceLabel=!board?(loading?'Loading standings':'Standings unavailable'):board._publicBackup?'Snapshot data'+(board.complete===false?' · partial':''):board.saved?'Saved standings':'Published standings';
     view.board.querySelector('h3').title=sourceLabel;
-    view.board.querySelector('.total-players').textContent=rows.length+(rows.length===1?' racer':' racers')+' · '+sourceLabel+(board?._publicBackup?` · ${verifiedCount} verified, ${waitingCount} waiting`:waitingCount?` · ${waitingCount} waiting`:'')+(view.onlyVerified?' · verified only':'')+(filterResult?.active?' - personal filters':'');
+    view.board.querySelector('.total-players').textContent=(!board?sourceLabel:rows.length+(rows.length===1?' racer':' racers')+' · '+sourceLabel)+(board?._publicBackup?` · ${verifiedCount} verified, ${waitingCount} waiting`:waitingCount?` · ${waitingCount} waiting`:'')+(view.onlyVerified?' · verified only':'')+(filterResult?.active?' - personal filters':'');
     const count=Math.max(1,Math.ceil(rows.length/20));view.page=Math.min(view.page,count-1);
-     const container=view.board.querySelector('.container');view.carObserver?.disconnect();view.deferredCarRows.clear();container.replaceChildren();
+     const container=view.board.querySelector('.container');container.setAttribute('aria-busy',String(loading));view.carObserver?.disconnect();view.deferredCarRows.clear();container.replaceChildren();
     for(const [index,row] of rows.slice(view.page*20,view.page*20+20).entries()){
       const renderer=view.board.__pt062EventRows;
       if(renderer?.version!==1){const error=document.createElement('p');error.className='error-message';error.textContent='Reload the game to load the native event leaderboard.';container.append(error);break;}
@@ -938,7 +948,7 @@ export function installEvents(bridge){
       else if(style){view.carStyles.set(button,style);if(!renderCachedCar(button,style))view.deferredCarRows.add(button);}
       else renderCachedCar(button,style);
     }
-    if(!rows.length){const empty=document.createElement('p');empty.className='error-message';empty.textContent=view.onlyVerified?'No verified event times yet. Turn off Only verified to see waiting runs.':'No event times yet. Play to set your event PB.';container.append(empty);}
+    if(!rows.length){const empty=document.createElement('p');empty.className='error-message';empty.textContent=!board?(loading?'Loading standings…':'Standings are not in the saved data yet.'):view.onlyVerified?'No verified times yet. Turn off Only verified to see waiting runs.':'No event times yet. Play to set your event PB.';if(loading){empty.classList.add('sq-event-loading');empty.setAttribute('role','status');}container.append(empty);}
     const status=document.createElement('p');status.className='sq-event-inline-status';status.setAttribute('role','status');status.textContent=statusDescription;container.append(status);
     bridge.filterNotice?.(view.board,filterResult);
     const pages=view.board.querySelector('.pages');pages.replaceChildren();

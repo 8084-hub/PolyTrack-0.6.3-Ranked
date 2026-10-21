@@ -149,7 +149,7 @@ html body :is(#overallLeaderboardPanel,#overallProfilePopup,#overallHelpPopup,#o
   outline: 2px solid #a1edff;
   outline-offset: 2px;
 }
-html body .track-info-ui .leaderboard-ui:not(.sq-event-board) > .button-wrapper {
+html body .track-info-ui .leaderboard-ui > .button-wrapper {
   width: calc(100% - 20px) !important;
   max-width: none !important;
 }

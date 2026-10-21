@@ -47,9 +47,9 @@ test('archive month navigation rolls years correctly and returns to recent event
  const {root}=archiveFixture(),months=[];
  mountArchiveView(root,{periods:[],month:'2026-01',onMonthChange:month=>months.push(month)});
  const buttons=descendants(root,node=>node.tagName==='BUTTON');
- for(const label of ['Previous month','Next month','Recent events'])buttons.find(button=>button.textContent===label).emit('click');
+ for(const label of ['Previous month','Next month','All saved events'])buttons.find(button=>button.textContent===label).emit('click');
  assert.deepEqual(months,['2025-12','2026-02','']);
- assert.match(root.textContent,/month an event ended/);
+ assert.match(root.textContent,/Search or filter saved event standings/);
 });
 
 test('archive cards prefer safe period artwork and expose accessible cached standings', () => {
@@ -165,7 +165,7 @@ test('archive UI exposes local page controls and accurate practice label', () =>
 
 test('events UI keeps permanent Rolling live, archives practice-only, and does not publish scoring formulas', () => {
   const source = fs.readFileSync(new URL('./client.mjs', import.meta.url), 'utf8');
-  assert.match(source, /sq-event-cards.*cards\(livePeriods\(\),\{details:true\}\)\+permanentCard\(true\)/);
+  assert.match(source, /cards\(livePeriods\(\)\.filter\(p=>p.kind==='kodub'\),\{details:true\}\)\+permanentCard\(true\)/);
   assert.match(source, /const actions=closed\?'<button class="button" type="button" data-event-practice>/);
   assert.match(source, /snapshot\(period,force&&!closed\)/);
   assert.match(source, /Current leader/);
@@ -183,7 +183,7 @@ test('archive kind checkboxes combine locally and leave unrelated archive kinds 
     { id: 'c', kind: 'custom', endsAt: 100, maxRp: 100, racerCount: 1 }
   ];
   mountArchiveView(root, { periods, snapshots: new Map(periods.map(period => [period.id, { entries: [] }])) });
-  const inputs = descendants(root, node => node.tagName === 'INPUT');
+  const inputs = descendants(root, node => node.tagName === 'INPUT' && node.type === 'checkbox');
   assert.deepEqual(inputs.map(input => [input.value, input.checked]), [['daily', true], ['weekly', true], ['kodub', true]]);
   const visibleKinds = () => descendants(root, node => node.tagName === 'DETAILS').map(node => node.dataset.eventKind);
   assert.deepEqual(visibleKinds(), ['daily', 'weekly', 'kodub', 'custom']);
@@ -324,4 +324,16 @@ test('archive standings deduplicate racers by fastest verified result and identi
     ['b', 1100, 2]
   ]);
   assert.equal(counts.winner.name, 'Winner');
+});
+
+test('archive search and chronological order reuse saved metadata without loading boards',()=>{
+ const {root}=archiveFixture();let loads=0;
+ mountArchiveView(root,{periods:[{id:'older',kind:'daily',trackName:'Alpine',endsAt:100,maxRp:100},{id:'newer',kind:'weekly',trackName:'Canyon',endsAt:200,maxRp:500}],loadSnapshot:()=>{loads++;}});
+ const cards=()=>descendants(root,node=>node.className==='sq-archive-event').map(node=>node.dataset.archiveEventId);
+ assert.deepEqual(cards(),['newer','older']);
+ const search=descendants(root,node=>node.tagName==='INPUT'&&node.type==='search')[0];
+ search.value='canyon';search.emit('input');assert.deepEqual(cards(),['newer']);
+ search.value='';search.emit('input');
+ const order=descendants(root,node=>node.tagName==='SELECT')[0];order.value='oldest';order.emit('change');
+ assert.deepEqual(cards(),['older','newer']);assert.equal(loads,0);
 });

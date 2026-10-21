@@ -26,10 +26,10 @@ test('a newer navigation or closed selection cannot be overwritten by an old ret
 test('event scaffold only fills the missing native board and clears as soon as it is visible',()=>{
   let active=true,board=null,visible=false,placeholder=false;
   const menu={querySelector:()=>board,classList:{toggle:(_,value)=>placeholder=value}};
-  const c=vm.createContext({document:{querySelector:()=>menu,body:{classList:{contains:()=>active}}},isElementVisible:()=>visible});
+  const c=vm.createContext({document:{querySelector:()=>menu,body:{classList:{contains:()=>active}}},isElementVisible:()=>visible,getComputedStyle:()=>({display:visible?'flex':'none'})});
   vm.runInContext(extract('syncEventLoadingScaffold'),c);
   c.syncEventLoadingScaffold();assert.equal(placeholder,true);
-  board={};visible=true;c.syncEventLoadingScaffold();assert.equal(placeholder,false);
+  board={isConnected:true,getClientRects:()=>[{}]};visible=true;c.syncEventLoadingScaffold();assert.equal(placeholder,false);
   active=false;visible=false;c.syncEventLoadingScaffold();assert.equal(placeholder,false);
 });
 test('settings are enhanced in the mutation callback before its general throttled reconciliation',()=>{

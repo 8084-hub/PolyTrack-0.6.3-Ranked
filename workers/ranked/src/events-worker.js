@@ -1,3 +1,4 @@
+import {createPublicReadMemory} from './public-read-memory.js';
 import {publicationPageId} from './paged-publication.js';
 import {staticEventRead} from './event-read-policy.js';
 import {ARCHIVE_EXPORT_PREFIX, exportEventArchive} from './event-archive-export.js';
@@ -13,10 +14,15 @@ function eventPageCacheName(kind,id,generation,page){
 }
 const EVENT_CACHE_FILL_LIMIT = 64;
 const eventCacheFills = new Map();
+const eventPublicMemories = new WeakMap();
+const publicCacheMatch=async(cache,key)=>{try{return await cache?.match(key);}catch{return undefined;}};
 
 export function eventWorkerHandler(env, { request, authenticate, origins, context = {}, now = Date.now }) {
   const runtime = eventRuntime(request, { projectId: env.FIREBASE_PROJECT_ID || 'polytrack-052', now });
   const enabled = () => String(env.EVENTS_ENABLED) === 'true';
+  const memoryOwner=env.__FIRESTORE_ROOT_ENV||env;
+  let memory=eventPublicMemories.get(memoryOwner);
+  if(!memory){memory=createPublicReadMemory();eventPublicMemories.set(memoryOwner,memory);}
   const cachedHits = new WeakMap();
   const admittedRequests = new WeakSet();
   const cacheKeyFor = incoming => {
@@ -47,7 +53,7 @@ export function eventWorkerHandler(env, { request, authenticate, origins, contex
     if (!forceOrigin && incoming.method === 'GET' && ownerUid == null) {
       const key = cacheKeyFor(incoming), cache = typeof caches !== 'undefined' ? caches.default : null;
       if (key && cache) {
-        const hit = await cache.match(key);
+        const hit = await publicCacheMatch(cache,key);
         if (hit) {
           let hits = cachedHits.get(incoming);
           if (!hits) cachedHits.set(incoming, hits = new Map());
@@ -85,21 +91,26 @@ export function eventWorkerHandler(env, { request, authenticate, origins, contex
       const cache = typeof caches !== 'undefined' ? caches.default : null;
       const keyUrl = new URL('/__event_public_cache/' + encodeURIComponent(env.FIREBASE_PROJECT_ID || 'polytrack-052') + '/' + name, url);
       const key = new Request(keyUrl.toString());
-      const hit = cachedHits.get(incoming)?.get(key.url) || cache && await cache.match(key);
+      const remembered=memory.get(key.url,now());
+      if(remembered!==undefined)return JSON.parse(remembered);
+      const hit = cachedHits.get(incoming)?.get(key.url) || cache && await publicCacheMatch(cache,key);
+      // A Cache API hit has an unknown original expiry. Do not renew it in memory.
       if (hit) return hit.json();
       const staleKey = new Request(keyUrl.toString() + '?stale=1');
-      const stale = name === 'catalog' && cache ? await cache.match(staleKey) : null;
+      const stale = name === 'catalog' && cache ? await publicCacheMatch(cache,staleKey) : null;
       try {
         const fill = async () => {
           if (!admittedRequests.has(incoming) && !await allowRequest({ request: incoming, ownerUid: null, forceOrigin: true })) {
             throw new EventError('event_ingress_limit', 429);
           }
+          const loadedAt=now();
           const value = await load();
+          const body = JSON.stringify(value);
+          memory.put(key.url,body,ttl,loadedAt);
           if (cache) {
-            const body = JSON.stringify(value);
             const writes = [cache.put(key, new Response(body, { headers: { 'Cache-Control': 'public, max-age=' + ttl } }))];
             if (name === 'catalog') writes.push(cache.put(staleKey, new Response(body, { headers: { 'Cache-Control': 'public, max-age=86400' } })));
-            const put = Promise.all(writes);
+            const put = Promise.all(writes).catch(() => {});
             if (context.waitUntil) context.waitUntil(put);
             await put;
           }

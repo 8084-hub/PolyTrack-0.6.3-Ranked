@@ -141,34 +141,32 @@
   .sq-extra-favorite{flex-basis:44px;width:44px;height:44px}
 }
 
-/* Keep discovery, personal filters, and ordering in predictable visual bands. */
-.sq-extra-controls{grid-template-columns:minmax(0,1fr);gap:10px;background:linear-gradient(180deg,#243b63,#1c3055)}
-.sq-extra-search-field{grid-column:1/-1;width:min(100%,720px)}
-.sq-extra-advanced{display:grid;grid-column:1/-1;grid-template-columns:repeat(12,minmax(0,1fr));gap:9px 12px;min-width:0;padding:10px 12px 12px;border:1px solid #5779a5;background:#182a4c}
-.sq-extra-advanced::before,.sq-extra-advanced::after{grid-column:1/-1;color:#9fd9ea;font-size:12px;letter-spacing:.12em;text-transform:uppercase}
-.sq-extra-advanced::before{content:"Find a track";grid-row:1}
-.sq-extra-advanced::after{content:"Your view and order";grid-row:3;margin-top:3px;padding-top:10px;border-top:1px solid #4c6a92}
+/* One toolbar surface keeps discovery, filters and ordering visually connected. */
+.sq-extra-controls{grid-template-columns:repeat(12,minmax(0,1fr));gap:10px 12px;background:#20345a}
+.sq-extra-search-field{grid-column:1/-1;min-width:0}
+.sq-extra-advanced{display:contents}
+.sq-extra-advanced::before,.sq-extra-advanced::after{content:none}
 .sq-extra-advanced>.sq-extra-field:nth-child(-n+3){grid-column:span 4;grid-row:2}
-.sq-extra-advanced>.sq-extra-field:nth-child(4),.sq-extra-advanced>.sq-extra-field:nth-child(5){grid-column:span 3;grid-row:4}
-.sq-extra-advanced>.sq-extra-sort-controls{grid-column:span 3;grid-row:4}
-.sq-extra-advanced>.sq-extra-quick-filters{grid-column:span 3;grid-row:4;flex-wrap:wrap;justify-content:flex-start;align-content:end;gap:3px 14px;padding-top:0}
+.sq-extra-advanced>.sq-extra-field:nth-child(4),.sq-extra-advanced>.sq-extra-field:nth-child(5){grid-column:span 3;grid-row:3}
+.sq-extra-advanced>.sq-extra-sort-controls{grid-column:span 3;grid-row:3}
+.sq-extra-advanced>.sq-extra-quick-filters{grid-column:span 3;grid-row:3;flex-wrap:nowrap;justify-content:flex-start;gap:8px;padding-top:21px}
 .sq-extra-advanced>.sq-extra-quick-filters .sq-extra-check{min-height:44px}
 @media(max-width:1100px){
- .sq-extra-advanced{grid-template-columns:repeat(6,minmax(0,1fr))}
- .sq-extra-advanced>.sq-extra-field:nth-child(-n+3){grid-column:span 2}
- .sq-extra-advanced>.sq-extra-field:nth-child(4),.sq-extra-advanced>.sq-extra-field:nth-child(5){grid-column:span 3}
- .sq-extra-advanced>.sq-extra-sort-controls{grid-column:span 4;grid-row:5}
- .sq-extra-advanced>.sq-extra-quick-filters{grid-column:span 2;grid-row:5;gap:8px}
+ .sq-extra-controls{grid-template-columns:repeat(6,minmax(0,1fr))}
+ .sq-extra-advanced>.sq-extra-field:nth-child(-n+3){grid-column:span 2;grid-row:2}
+ .sq-extra-advanced>.sq-extra-field:nth-child(4),.sq-extra-advanced>.sq-extra-field:nth-child(5){grid-column:span 2;grid-row:3}
+ .sq-extra-advanced>.sq-extra-sort-controls,.sq-extra-advanced>.sq-extra-quick-filters{grid-column:span 3;grid-row:4}
 }
 @media(max-width:600px){
- .sq-extra-advanced{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;padding:10px}
- .sq-extra-advanced>.sq-extra-field:nth-child(-n+2){grid-column:span 1;grid-row:2}
- .sq-extra-advanced>.sq-extra-field:nth-child(3){grid-column:1/-1;grid-row:3}
- .sq-extra-advanced::after{grid-row:4}
+ .sq-extra-controls{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+ .sq-extra-controls>.sq-extra-advanced-toggle{grid-column:1/-1;grid-row:2}
+ .sq-extra-search-field{width:auto}
+ .sq-extra-advanced>.sq-extra-field:nth-child(-n+2){grid-column:span 1;grid-row:3}
+ .sq-extra-advanced>.sq-extra-field:nth-child(3){grid-column:1/-1;grid-row:4}
  .sq-extra-advanced>.sq-extra-field:nth-child(4),.sq-extra-advanced>.sq-extra-field:nth-child(5){grid-column:span 1;grid-row:5}
  .sq-extra-advanced>.sq-extra-sort-controls{grid-column:1/-1;grid-row:6}
- .sq-extra-advanced>.sq-extra-quick-filters{grid-column:1/-1;grid-row:7}
- .sq-extra-advanced>.sq-extra-quick-filters .sq-extra-check{min-height:44px}
+ .sq-extra-advanced>.sq-extra-quick-filters{grid-column:1/-1;grid-row:7;flex-wrap:nowrap;gap:12px;padding-top:0}
+ .sq-extra-sort-controls>.sq-extra-clear{min-height:44px;padding:6px 10px;font-size:14px}
 }
 @media(max-height:500px) and (orientation:landscape){
   .sq-extra-header{padding-top:8px;padding-bottom:8px}

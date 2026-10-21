@@ -270,7 +270,7 @@ test('reset review needs confirmation, clears all review fields and keeps PB/imp
   api.destroy();
 });
 
-test('review status filter counts favorite and rating separately from tag edits', async () => {
+test('review status and sorting count ratings and tag edits, not just favorites', async () => {
   const saved = new Map();
   const items = [entry(1), entry(2), entry(3)];
   const { root, api } = fixture(items, {
@@ -284,15 +284,15 @@ test('review status filter counts favorite and rating separately from tag edits'
   const review = tag(cls(root, 'sq-extra-advanced')[0].children[4], 'select')[0];
   const names = () => cls(root, 'sq-extra-card').map(card => tag(card, 'h3')[0].textContent);
   review.value = 'edited'; await review.dispatch('change');
-  assert.deepEqual(names(), ['Track 02']);
+  assert.deepEqual(names(), ['Track 01', 'Track 02']);
   review.value = 'not-edited'; await review.dispatch('change');
-  assert.deepEqual(names(), ['Track 01', 'Track 03']);
+  assert.deepEqual(names(), ['Track 03']);
   const sort = tag(cls(root, 'sq-extra-advanced')[0].children[5], 'select')[0];
   review.value = 'all'; await review.dispatch('change');
   sort.value = 'edited-first'; await sort.dispatch('change');
-  assert.equal(names()[0], 'Track 02');
-  sort.value = 'unedited-first'; await sort.dispatch('change');
   assert.equal(names()[0], 'Track 01');
+  sort.value = 'unedited-first'; await sort.dispatch('change');
+  assert.equal(names()[0], 'Track 03');
   api.destroy();
 });
 
@@ -986,4 +986,23 @@ test('recommended player submissions put TMNF tracks last and show no collection
  assert.deepEqual(cls(root,'sq-extra-card').map(card=>tag(card,'h3')[0].textContent),['Zebra','A01','Normal']);
  assert.equal(cls(root,'sq-extra-pack-open').length,0);assert.equal(cls(root,'sq-extra-pack-links').length,0);
  api.destroy();
+});
+
+test('all local review signals filter and sort consistently after changes and reset',async()=>{
+ const items=Array.from({length:8},(_,i)=>entry(i+1));
+ const feedback=[{}, {rating:8}, {difficultyRating:6}, {vote:-1}, {addedTags:['mini']}, {removedTags:['speed']}, {favorite:true}, {}];
+ const {root,api}=fixture(items,{getFeedback:e=>feedback[items.indexOf(e)],getLocalRating:e=>feedback[items.indexOf(e)].rating,
+  getPersonalBest:e=>e===items[7]?1234:null,isLoaded:e=>e===items[7]});api.open();
+ const fields=cls(root,'sq-extra-field'),review=tag(fields[5],'select')[0],sort=tag(fields[6],'select')[0];
+ const names=()=>cls(root,'sq-extra-card').map(c=>tag(c,'h3')[0].textContent);
+ review.value='edited';await review.dispatch('change');assert.deepEqual(names(),['Track 02','Track 03','Track 04','Track 05','Track 06']);
+ assert.equal(cls(root,'sq-extra-review-field')[0].children.at(-1).textContent,'5');
+ review.value='not-edited';await review.dispatch('change');assert.deepEqual(names(),['Track 01','Track 07','Track 08']);
+ review.value='all';await review.dispatch('change');sort.value='edited-first';await sort.dispatch('change');assert.equal(names()[0],'Track 02');
+ sort.value='my-rating';await sort.dispatch('change');assert.equal(names()[0],'Track 02');
+ feedback[0]={rating:10};api.refresh();assert.equal(names()[0],'Track 01');
+ feedback[0]={rating:0};api.refresh();assert.equal(names()[0],'Track 02');
+ review.value='edited';await review.dispatch('change');const source=tag(fields[1],'select')[0];source.value='Community';await source.dispatch('change');
+ assert.deepEqual(names(),['Track 02','Track 04','Track 06']);
+ await click(tag(root,'button').find(b=>b.textContent==='Reset filters'));assert.equal(names().length,8);assert.equal(review.value,'all');api.destroy();
 });

@@ -232,7 +232,12 @@ export function mountArchiveView(root, options = {}) {
   const document = root.ownerDocument;
   const periods = normalizeArchivePeriods(options.periods);
   const enabledKinds = new Set(['daily', 'weekly', 'kodub']);
-  const visiblePeriods = () => periods.filter(period => !['daily', 'weekly', 'kodub'].includes(period.kind) || enabledKinds.has(period.kind));
+  let searchQuery='',oldestFirst=false;
+  const visiblePeriods = () => {
+    const rows=periods.filter(period => (!['daily', 'weekly', 'kodub'].includes(period.kind) || enabledKinds.has(period.kind)) &&
+      (!searchQuery||[resolveName(period),period.label,period.kind,period.id].join(' ').toLocaleLowerCase().includes(searchQuery)));
+    return oldestFirst?rows.reverse():rows;
+  };
   const snapshots = options.snapshots instanceof Map ? options.snapshots : new Map(Object.entries(options.snapshots || {}));
   const loadSnapshot = typeof options.loadSnapshot === 'function' ? options.loadSnapshot : null;
   const formatTime = typeof options.formatTime === 'function' ? options.formatTime : defaultTime;
@@ -248,7 +253,7 @@ export function mountArchiveView(root, options = {}) {
   toolbar.className = 'sq-archive-toolbar';
   const intro = document.createElement('div');
   appendText(document, intro, 'h3', '', options.title || 'Past events');
-  appendText(document, intro, 'p', '', 'Browse recent events, or choose the month an event ended. Each card shows its full date range.');
+  appendText(document, intro, 'p', '', 'Search or filter saved event standings.');
   toolbar.append(intro);
   if (typeof options.onMonthChange === 'function') {
     const form = document.createElement('form');
@@ -262,7 +267,7 @@ export function mountArchiveView(root, options = {}) {
     label.append(input);
     const submit = appendText(document, form, 'button', 'button', 'View month');
     submit.type = 'submit';
-    for (const [text, offset] of [['Previous month', -1], ['Next month', 1], ['Recent events', 0]]) {
+    for (const [text, offset] of [['Previous month', -1], ['Next month', 1], ['All saved events', 0]]) {
       const button = appendText(document, form, 'button', 'button', text);
       button.type = 'button';
       button.addEventListener('click', () => {
@@ -298,6 +303,13 @@ export function mountArchiveView(root, options = {}) {
     filters.append(wrapper);
   }
   toolbar.append(filters);
+  const searchLabel=appendText(document,toolbar,'label','sq-archive-search','Find event');
+  const search=document.createElement('input');search.type='search';search.placeholder='Track, event or date';search.setAttribute('aria-label','Search saved events');
+  search.addEventListener('input',()=>{searchQuery=search.value.trim().toLocaleLowerCase();currentPage=1;renderPage();});searchLabel.append(search);
+  const orderLabel=appendText(document,toolbar,'label','sq-archive-order','Order');
+  const order=document.createElement('select');order.setAttribute('aria-label','Archive date order');
+  for(const [value,label] of [['newest','Newest first'],['oldest','Oldest first']]){const option=document.createElement('option');option.value=value;option.textContent=label;order.append(option);}
+  order.addEventListener('change',()=>{oldestFirst=order.value==='oldest';currentPage=1;renderPage();});orderLabel.append(order);
   view.append(toolbar);
 
   const stats = document.createElement('dl');

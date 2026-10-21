@@ -14,8 +14,8 @@ test('failed event refresh neither disables normal Ranked nor repeatedly calls i
  const c=vm.createContext({Date:{now:()=>now},eventCloudRetryAt:new Map(),snapshotOnlyForNewAccount:()=>false,readPublicSnapshotBackup:async()=>saved,rankedBrokerUrl:()=> 'https://example.test',AbortSignal,fetch:async()=>{calls++;throw Error('offline');},markRankedEdgeUnavailable:()=>rankedFailures++,log:()=>{},db:async()=>{throw Error('must not query Firebase');}});
  c.eventRequestSignal=milliseconds=>AbortSignal.timeout(milliseconds);
  vm.runInContext(extract('loadEventCloudRead'),c);
- await c.loadEventCloudRead('/v1/events/daily/snapshot','0.6.2_event_public','daily');now+=61000;
- await c.loadEventCloudRead('/v1/events/daily/snapshot','0.6.2_event_public','daily');assert.equal(calls,1);assert.equal(rankedFailures,0);
+ await c.loadEventCloudRead('/v1/events/daily/snapshot','0.6.2_event_public','daily',true);now+=61000;
+ await c.loadEventCloudRead('/v1/events/daily/snapshot','0.6.2_event_public','daily',true);assert.equal(calls,1);assert.equal(rankedFailures,0);
 });
 
 test('successful event checks are shared for five minutes instead of polled every minute',async()=>{

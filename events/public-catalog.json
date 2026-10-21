@@ -45,6 +45,51 @@
   ],
   "archives": [
     {
+      "id": "d_20261018",
+      "trackId": "9f4597449906aa0c2baf9a4737406385c829533e64e9e972b25b4189f4593a54",
+      "kind": "daily",
+      "startsAt": 1792281600000,
+      "endsAt": 1792368000000,
+      "graceMs": 86400000,
+      "maxRp": 100,
+      "label": "Daily 2026-10-18",
+      "entrantLimit": 200,
+      "targetMs": 55727,
+      "racerCount": 2,
+      "archived": true
+    },
+    {
+      "id": "w_20261012",
+      "trackId": "2fe4bd46b0075cc25fc770ce50adbb68447cf493c999635bb272d231811dd264",
+      "kind": "weekly",
+      "startsAt": 1791763200000,
+      "endsAt": 1792368000000,
+      "graceMs": 86400000,
+      "maxRp": 500,
+      "label": "Weekly 2026-10-12",
+      "entrantLimit": 200,
+      "targetMs": 18664,
+      "racerCount": 49,
+      "archived": true
+    },
+    {
+      "id": "kodub_1792353600000",
+      "trackId": "bcc7ad7cd3f7fc536dd6b2e966df5136df78b1567a823b9c67a9ff65dfb5b3ff",
+      "kind": "kodub",
+      "startsAt": 1791748800000,
+      "endsAt": 1792353600000,
+      "graceMs": 86400000,
+      "maxRp": 700,
+      "label": "Event 2026-10-11",
+      "author": "Jurre",
+      "trackName": "Velvoire",
+      "entrantLimit": 200,
+      "targetMs": 186188,
+      "targetPolicy": "official-fastest-verified-at-import",
+      "racerCount": 1,
+      "archived": true
+    },
+    {
       "maxRp": 100,
       "trackId": "66f43b2d2a17f3cee05a127040ca409795058510bd3d1ac7eee224512ec532f5",
       "id": "d_20261017",
@@ -56,7 +101,8 @@
       "kind": "daily",
       "entrantLimit": 200,
       "scoringVersion": "time-gap-v2",
-      "label": "Daily 2026-10-17"
+      "label": "Daily 2026-10-17",
+      "archived": true
     },
     {
       "id": "d_20261016",
@@ -70,7 +116,8 @@
       "targetMs": 42082,
       "kind": "daily",
       "trackId": "a8913b96daceb5b615fe45aad2bb104e04eb7db140242934657111e1d1f55b89",
-      "scoringVersion": "time-gap-v2"
+      "scoringVersion": "time-gap-v2",
+      "archived": true
     },
     {
       "scoringVersion": "time-gap-v2",
@@ -84,7 +131,8 @@
       "targetMs": 79839,
       "maxRp": 100,
       "racerCount": 1,
-      "graceMs": 86400000
+      "graceMs": 86400000,
+      "archived": true
     },
     {
       "id": "d_20261014",
@@ -98,7 +146,8 @@
       "trackId": "3125a5f98c3b43cf1e2604e25e8504bffd714ea5843200fa8ddf0b4c58842f16",
       "entrantLimit": 200,
       "targetMs": 26824,
-      "endsAt": 1792022400000
+      "endsAt": 1792022400000,
+      "archived": true
     },
     {
       "id": "d_20261013",
@@ -112,7 +161,8 @@
       "entrantLimit": 200,
       "targetMs": 28236,
       "racerCount": 7,
-      "maxRp": 100
+      "maxRp": 100,
+      "archived": true
     },
     {
       "kind": "daily",
@@ -126,21 +176,8 @@
       "maxRp": 100,
       "entrantLimit": 200,
       "trackId": "4058e3616fbd79b848e70037adde4f12b4413011050aaf1c9d875cdbe2e33d68",
-      "id": "d_20261012"
-    },
-    {
-      "trackId": "7eac4fee1111152cfba4d3737410264ca0f22c7f5a2211e79f0099589b8b48c0",
-      "kind": "weekly",
-      "startsAt": 1791158400000,
-      "maxRp": 500,
-      "endsAt": 1791763200000,
-      "racerCount": 92,
-      "scoringVersion": "time-gap-v2",
-      "id": "w_20261005",
-      "entrantLimit": 200,
-      "graceMs": 86400000,
-      "label": "Weekly 2026-10-05",
-      "targetMs": 15491
+      "id": "d_20261012",
+      "archived": true
     },
     {
       "kind": "daily",
@@ -154,7 +191,23 @@
       "targetMs": 18661,
       "endsAt": 1791763200000,
       "graceMs": 86400000,
-      "entrantLimit": 200
+      "entrantLimit": 200,
+      "archived": true
+    },
+    {
+      "trackId": "7eac4fee1111152cfba4d3737410264ca0f22c7f5a2211e79f0099589b8b48c0",
+      "kind": "weekly",
+      "startsAt": 1791158400000,
+      "maxRp": 500,
+      "endsAt": 1791763200000,
+      "racerCount": 92,
+      "scoringVersion": "time-gap-v2",
+      "id": "w_20261005",
+      "entrantLimit": 200,
+      "graceMs": 86400000,
+      "label": "Weekly 2026-10-05",
+      "targetMs": 15491,
+      "archived": true
     },
     {
       "author": "Mask",
@@ -171,7 +224,8 @@
       "scoringVersion": "time-ratio-v1",
       "startsAt": 1791144000000,
       "kind": "kodub",
-      "id": "kodub_1791748800000"
+      "id": "kodub_1791748800000",
+      "archived": true
     },
     {
       "racerCount": 11,
@@ -185,7 +239,8 @@
       "entrantLimit": 200,
       "trackId": "7451c2128cb96bc28195cf0ca0f83a46c3b55d78d434232d9de085dd1cf0ab36",
       "targetMs": 34321,
-      "endsAt": 1791590400000
+      "endsAt": 1791590400000,
+      "archived": true
     },
     {
       "kind": "daily",
@@ -199,7 +254,8 @@
       "maxRp": 100,
       "graceMs": 86400000,
       "racerCount": 6,
-      "id": "d_20261008"
+      "id": "d_20261008",
+      "archived": true
     },
     {
       "maxRp": 100,
@@ -213,7 +269,8 @@
       "trackId": "a6b990137e404c9ef2cb4399c463acbed8ebfa3bb82ab5315027118604c4ec03",
       "kind": "daily",
       "label": "Daily 2026-10-07",
-      "racerCount": 4
+      "racerCount": 4,
+      "archived": true
     },
     {
       "startsAt": 1791244800000,
@@ -227,7 +284,8 @@
       "entrantLimit": 200,
       "trackId": "74ae56c0f278a19f3b69f3903198c7b9de09981133205856b53bf6bdf8db4211",
       "maxRp": 100,
-      "targetMs": 76075
+      "targetMs": 76075,
+      "archived": true
     },
     {
       "targetMs": 30718,
@@ -241,21 +299,8 @@
       "trackId": "27c3384de80b1bed23f1ea15316abe62c8cca33e955805f23d461803f6dee8d4",
       "label": "Daily 2026-10-05",
       "startsAt": 1791158400000,
-      "racerCount": 6
-    },
-    {
-      "kind": "weekly",
-      "maxRp": 500,
-      "targetMs": 18828,
-      "scoringVersion": "time-ratio-v1",
-      "id": "w_20260928",
-      "graceMs": 86400000,
-      "label": "Weekly 2026-09-28",
-      "startsAt": 1790553600000,
-      "racerCount": 22,
-      "trackId": "2fe4bd46b0075cc25fc770ce50adbb68447cf493c999635bb272d231811dd264",
-      "entrantLimit": 200,
-      "endsAt": 1791158400000
+      "racerCount": 6,
+      "archived": true
     },
     {
       "label": "Daily 2026-10-04",
@@ -269,7 +314,23 @@
       "targetMs": 30623,
       "id": "d_20261004",
       "trackId": "95d8f7cbe11053dbdfaeeb2f3c3d8f53f0d45fb6abeb411a74949a4cf52f427f",
-      "maxRp": 100
+      "maxRp": 100,
+      "archived": true
+    },
+    {
+      "kind": "weekly",
+      "maxRp": 500,
+      "targetMs": 18828,
+      "scoringVersion": "time-ratio-v1",
+      "id": "w_20260928",
+      "graceMs": 86400000,
+      "label": "Weekly 2026-09-28",
+      "startsAt": 1790553600000,
+      "racerCount": 22,
+      "trackId": "2fe4bd46b0075cc25fc770ce50adbb68447cf493c999635bb272d231811dd264",
+      "entrantLimit": 200,
+      "endsAt": 1791158400000,
+      "archived": true
     },
     {
       "id": "kodub_1791144000000",
@@ -286,7 +347,8 @@
       "label": "Event 2026-09-27",
       "racerCount": 20,
       "trackId": "ee0befb4adf0351b40f066e27264de42ba62281ba564c942f6f3c3f5cda36998",
-      "scoringVersion": "time-ratio-v1"
+      "scoringVersion": "time-ratio-v1",
+      "archived": true
     },
     {
       "targetMs": 35861,
@@ -300,7 +362,8 @@
       "racerCount": 0,
       "scoringVersion": "time-ratio-v1",
       "entrantLimit": 200,
-      "startsAt": 1790985600000
+      "startsAt": 1790985600000,
+      "archived": true
     },
     {
       "targetMs": 32810,
@@ -314,7 +377,8 @@
       "label": "Daily 2026-10-02",
       "racerCount": 2,
       "startsAt": 1790899200000,
-      "kind": "daily"
+      "kind": "daily",
+      "archived": true
     },
     {
       "label": "Daily 2026-10-01",
@@ -328,7 +392,8 @@
       "endsAt": 1790899200000,
       "startsAt": 1790812800000,
       "graceMs": 86400000,
-      "maxRp": 100
+      "maxRp": 100,
+      "archived": true
     },
     {
       "label": "Daily 2026-09-30",
@@ -342,7 +407,8 @@
       "entrantLimit": 200,
       "id": "d_20260930",
       "graceMs": 86400000,
-      "maxRp": 100
+      "maxRp": 100,
+      "archived": true
     },
     {
       "racerCount": 3,
@@ -356,7 +422,8 @@
       "startsAt": 1790640000000,
       "scoringVersion": "time-ratio-v1",
       "entrantLimit": 200,
-      "kind": "daily"
+      "kind": "daily",
+      "archived": true
     },
     {
       "startsAt": 1790553600000,
@@ -370,21 +437,8 @@
       "id": "d_20260928",
       "kind": "daily",
       "targetMs": 47221,
-      "label": "Daily 2026-09-28"
-    },
-    {
-      "graceMs": 86400000,
-      "racerCount": 12,
-      "maxRp": 500,
-      "targetMs": 19012,
-      "entrantLimit": 200,
-      "endsAt": 1790553600000,
-      "startsAt": 1789948800000,
-      "trackId": "2fe4bd46b0075cc25fc770ce50adbb68447cf493c999635bb272d231811dd264",
-      "kind": "weekly",
-      "scoringVersion": "time-ratio-v1",
-      "id": "w_20260921",
-      "label": "Weekly 2026-09-21"
+      "label": "Daily 2026-09-28",
+      "archived": true
     },
     {
       "scoringVersion": "time-ratio-v1",
@@ -398,7 +452,23 @@
       "trackId": "1783b7b6c30e7fddf7ffb7c8a4a8a3b65c1ef6ec317d908d6eb05e6c905a57f6",
       "id": "d_20260927",
       "entrantLimit": 200,
-      "maxRp": 100
+      "maxRp": 100,
+      "archived": true
+    },
+    {
+      "graceMs": 86400000,
+      "racerCount": 12,
+      "maxRp": 500,
+      "targetMs": 19012,
+      "entrantLimit": 200,
+      "endsAt": 1790553600000,
+      "startsAt": 1789948800000,
+      "trackId": "2fe4bd46b0075cc25fc770ce50adbb68447cf493c999635bb272d231811dd264",
+      "kind": "weekly",
+      "scoringVersion": "time-ratio-v1",
+      "id": "w_20260921",
+      "label": "Weekly 2026-09-21",
+      "archived": true
     },
     {
       "graceMs": 86400000,
@@ -415,7 +485,8 @@
       "trackName": "La Riviera",
       "entrantLimit": 200,
       "startsAt": 1789934400000,
-      "label": "Event 2026-09-20"
+      "label": "Event 2026-09-20",
+      "archived": true
     },
     {
       "id": "d_20260926",
@@ -429,7 +500,8 @@
       "racerCount": 1,
       "targetMs": 67617,
       "trackId": "5159a8dac6a1f397407a7b5233ad570613531f6609f7dc897490c28c9f2c7a4e",
-      "kind": "daily"
+      "kind": "daily",
+      "archived": true
     },
     {
       "kind": "daily",
@@ -443,7 +515,8 @@
       "racerCount": 1,
       "endsAt": 1790380800000,
       "entrantLimit": 200,
-      "graceMs": 86400000
+      "graceMs": 86400000,
+      "archived": true
     },
     {
       "scoringVersion": "time-ratio-v1",
@@ -457,7 +530,8 @@
       "endsAt": 1790294400000,
       "startsAt": 1790208000000,
       "id": "d_20260924",
-      "graceMs": 86400000
+      "graceMs": 86400000,
+      "archived": true
     },
     {
       "label": "Daily 2026-09-23",
@@ -471,7 +545,8 @@
       "startsAt": 1790121600000,
       "trackId": "d9bc51ec180bc46558e079c7949ba10b9ade52078c4c145f217a6a8543df2377",
       "maxRp": 100,
-      "id": "d_20260923"
+      "id": "d_20260923",
+      "archived": true
     },
     {
       "id": "d_20260922",
@@ -485,7 +560,8 @@
       "startsAt": 1790035200000,
       "entrantLimit": 200,
       "kind": "daily",
-      "graceMs": 86400000
+      "graceMs": 86400000,
+      "archived": true
     },
     {
       "entrantLimit": 200,
@@ -499,21 +575,8 @@
       "scoringVersion": "time-ratio-v1",
       "startsAt": 1789948800000,
       "id": "d_20260921",
-      "trackId": "5159a8dac6a1f397407a7b5233ad570613531f6609f7dc897490c28c9f2c7a4e"
-    },
-    {
-      "kind": "weekly",
-      "startsAt": 1789344000000,
-      "maxRp": 500,
-      "graceMs": 86400000,
-      "scoringVersion": "time-ratio-v1",
-      "targetMs": 28696,
-      "racerCount": 5,
-      "label": "Weekly 2026-09-14",
-      "trackId": "c20b4ee3cd517ca6cae7e43f047548757287fbd08ba81b97892a3ef520159a34",
-      "id": "w_20260914",
-      "entrantLimit": 200,
-      "endsAt": 1789948800000
+      "trackId": "5159a8dac6a1f397407a7b5233ad570613531f6609f7dc897490c28c9f2c7a4e",
+      "archived": true
     },
     {
       "trackId": "1783b7b6c30e7fddf7ffb7c8a4a8a3b65c1ef6ec317d908d6eb05e6c905a57f6",
@@ -527,7 +590,23 @@
       "graceMs": 86400000,
       "label": "Daily 2026-09-20",
       "targetMs": 46286,
-      "kind": "daily"
+      "kind": "daily",
+      "archived": true
+    },
+    {
+      "kind": "weekly",
+      "startsAt": 1789344000000,
+      "maxRp": 500,
+      "graceMs": 86400000,
+      "scoringVersion": "time-ratio-v1",
+      "targetMs": 28696,
+      "racerCount": 5,
+      "label": "Weekly 2026-09-14",
+      "trackId": "c20b4ee3cd517ca6cae7e43f047548757287fbd08ba81b97892a3ef520159a34",
+      "id": "w_20260914",
+      "entrantLimit": 200,
+      "endsAt": 1789948800000,
+      "archived": true
     },
     {
       "entrantLimit": 200,
@@ -541,7 +620,8 @@
       "endsAt": 1789862400000,
       "label": "Daily 2026-09-19",
       "kind": "daily",
-      "graceMs": 86400000
+      "graceMs": 86400000,
+      "archived": true
     },
     {
       "trackId": "fb769ac2ea77e8f19a21a9dd3071742f2342bd49c41e4748d7e8c7903d4f0778",
@@ -554,7 +634,8 @@
       "label": "Daily 2026-09-18",
       "entrantLimit": 200,
       "graceMs": 86400000,
-      "scoringVersion": "time-ratio-v1"
+      "scoringVersion": "time-ratio-v1",
+      "archived": true
     },
     {
       "endsAt": 1789689600000,
@@ -567,7 +648,8 @@
       "kind": "daily",
       "maxRp": 100,
       "id": "d_20260917",
-      "startsAt": 1789603200000
+      "startsAt": 1789603200000,
+      "archived": true
     },
     {
       "endsAt": 1789603200000,
@@ -580,7 +662,8 @@
       "maxRp": 100,
       "kind": "daily",
       "startsAt": 1789516800000,
-      "id": "d_20260916"
+      "id": "d_20260916",
+      "archived": true
     },
     {
       "label": "Daily 2026-09-15",
@@ -593,7 +676,8 @@
       "scoringVersion": "time-ratio-v1",
       "entrantLimit": 200,
       "trackId": "191737cc4d1b74949e992d99371e5c7f5fc446a716af571c6e5449b23e9f4558",
-      "targetMs": 33552
+      "targetMs": 33552,
+      "archived": true
     },
     {
       "kind": "daily",
@@ -606,20 +690,8 @@
       "scoringVersion": "time-ratio-v1",
       "trackId": "089f2aebcfe4f24d8dda3a8a630172d2bd13793e78c5247adfaa760743a377e1",
       "endsAt": 1789430400000,
-      "startsAt": 1789344000000
-    },
-    {
-      "id": "w_20260907",
-      "kind": "weekly",
-      "graceMs": 86400000,
-      "targetMs": 19180,
-      "scoringVersion": "time-ratio-v1",
-      "maxRp": 500,
-      "endsAt": 1789344000000,
-      "trackId": "2fe4bd46b0075cc25fc770ce50adbb68447cf493c999635bb272d231811dd264",
-      "startsAt": 1788739200000,
-      "label": "Weekly 2026-09-07",
-      "entrantLimit": 200
+      "startsAt": 1789344000000,
+      "archived": true
     },
     {
       "label": "Daily 2026-09-13",
@@ -632,7 +704,22 @@
       "entrantLimit": 200,
       "endsAt": 1789344000000,
       "trackId": "2fe4bd46b0075cc25fc770ce50adbb68447cf493c999635bb272d231811dd264",
-      "maxRp": 100
+      "maxRp": 100,
+      "archived": true
+    },
+    {
+      "id": "w_20260907",
+      "kind": "weekly",
+      "graceMs": 86400000,
+      "targetMs": 19180,
+      "scoringVersion": "time-ratio-v1",
+      "maxRp": 500,
+      "endsAt": 1789344000000,
+      "trackId": "2fe4bd46b0075cc25fc770ce50adbb68447cf493c999635bb272d231811dd264",
+      "startsAt": 1788739200000,
+      "label": "Weekly 2026-09-07",
+      "entrantLimit": 200,
+      "archived": true
     }
   ]
 }

@@ -50,7 +50,7 @@
 .polytrack-practice-profile .pp-coverage-details[open] > summary::after { content: '-'; }
 .polytrack-practice-profile .pp-coverage-note { margin: 0 0 8px; max-width: 75ch; }
 .polytrack-practice-profile .pp-toolbar {
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 260px) auto;
 }
 .polytrack-practice-profile .pp-toolbar > label,
 .polytrack-practice-profile .pp-sort-control,
@@ -107,7 +107,9 @@
 .polytrack-practice-profile .pp-tracks[data-pp-sort-key="recent"] .pp-sort-recent strong,
 .polytrack-practice-profile .pp-tracks[data-pp-sort-key="active"] .pp-sort-active strong { color: #fff; font-size: 22px; font-weight: bold; }
 .polytrack-practice-profile .pp-tracks[data-pp-sort-key="attempts"] .pp-sort-attempts,
-.polytrack-practice-profile .pp-tracks[data-pp-sort-key="improvement"] .pp-sort-improvement {
+.polytrack-practice-profile .pp-tracks[data-pp-sort-key="improvement"] .pp-sort-improvement,
+.polytrack-practice-profile .pp-tracks[data-pp-sort-key="finishes"] .pp-sort-finishes,
+.polytrack-practice-profile .pp-tracks[data-pp-sort-key="longest-hunt"] .pp-sort-longest-hunt {
   background: #31528c;
   color: #fff;
   box-shadow: inset 3px 0 var(--pp-cyan);
