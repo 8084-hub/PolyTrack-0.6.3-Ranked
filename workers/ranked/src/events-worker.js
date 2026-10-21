@@ -165,10 +165,14 @@ export function eventWorkerHandler(env, { request, authenticate, origins, contex
 export async function eventWorkerMaintenance(env, { request, officialIds, allIds, targetForTrack, fetch: fetcher = fetch,
   at = Date.now(), now = Date.now }) {
   if (String(env.EVENTS_ENABLED) !== 'true') return { disabled: true };
+  if (!Number.isSafeInteger(at) || at < 0) return { idle: true, reason: 'invalid_schedule' };
+  const minute = Math.floor(at / 60000), phase = minute % 5;
+  // Provisioning is not a minute-by-minute work signal. Skip before any I/O.
+  if (phase === 0 && minute % 15 !== 0) return { idle: true, reason: 'provision_cadence' };
   // Scheduled time selects the work phase; admission and expiry use a live clock.
   const runtime = eventRuntime(request, { projectId: env.FIREBASE_PROJECT_ID || 'polytrack-052', now });
   // One bounded unit per invocation, separate from canonical reconciliation.
-  if (Math.floor(at / 60000) % 5 === 0) {
+  if (phase === 0) {
     let capacity;
     try { capacity = JSON.parse(env.EVENT_CAPACITY_JSON); } catch { throw Error('Explicit reviewed event capacity required'); }
     const regular=await provisionEvent(runtime, { officialIds, allIds, capacity, targetForTrack });
@@ -176,14 +180,14 @@ export async function eventWorkerMaintenance(env, { request, officialIds, allIds
     try{return {...regular,kodub:await provisionKodubEvent(runtime,{capacity,fetch:fetcher})};}
     catch(error){return {...regular,kodub:{unavailable:true,reason:String(error.message).slice(0,120)}};}
   }
-  // One bounded cleanup page per five-minute window is enough; keep the other
-  // maintenance minute available for inbox intake without rereading the catalog.
-  if (Math.floor(at / 60000) % 5 === 1) {
+  // Keep cleanup throughput at one bounded page per five minutes. An idle
+  // catalog does not justify unconditional inbox/retry queries in this phase.
+  if (phase === 1) {
     const cleanup = await cleanupEvents(runtime);
     if (!cleanup.idle) return cleanup;
   }
-  if([2,4].includes(Math.floor(at/60000)%5)){
+  if([2,4].includes(phase)){
     const publication=await publishEventCapacity(runtime);if(!publication.idle)return publication;
   }
-  return consumeEventInbox(runtime, { preferRetry: Math.floor(at / 60000) % 2 === 0 });
+  return consumeEventInbox(runtime, { preferRetry: minute % 2 === 0, recentActivityOnly: phase !== 3 });
 }

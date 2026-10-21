@@ -43,12 +43,12 @@ async function fetchKodubWeekly({baseUrl,brokerUrl,fetcher=fetch,now=Date.now()}
   let local = null;
   try {
     const url=new URL('current.json',base);
-    const response = await fetchWithDeadline(fetcher,url,{cache:'default'},4000);
+    const response = await fetchWithDeadline(fetcher,url,{cache:'default'},2500);
     if (response.ok) {
       local = localSelection(await response.json(),base,now);
       // An expired browser copy must not force school networks onto workers.dev.
       if(!local){
-        const fresh=await fetchWithDeadline(fetcher,url,{cache:'no-cache'},4000);
+        const fresh=await fetchWithDeadline(fetcher,url,{cache:'no-cache'},2500);
         if(fresh.ok)local=localSelection(await fresh.json(),base,now);
       }
     }
@@ -58,7 +58,7 @@ async function fetchKodubWeekly({baseUrl,brokerUrl,fetcher=fetch,now=Date.now()}
   if (local) return {serverTime:new Date(now).toISOString(),current:local};
   if (brokerUrl) try {
     const url = new URL('/v1/kodub-weekly',brokerUrl);
-    const response = await fetchWithDeadline(fetcher,url,{},8000);
+    const response = await fetchWithDeadline(fetcher,url,{},3500);
     if (!response.ok) throw Error('Kodub feed unavailable');
     const current = validateWeekly(await response.json(),now);
     if (current) for (const [field,kind] of [['trackUrl','track'],['thumbnailUrl','image'],['coverUrl','image']]) {
@@ -80,7 +80,7 @@ export function combineKodubCard(document, group, selection, now=Date.now()) {
   if(unavailable){
     const valid=selection&&now<Date.parse(selection.endTime);
     if(unavailable.hidden!==!!(valid&&card))unavailable.hidden=!!(valid&&card);
-    const note=unavailable.querySelector('small'),text=valid?'Loading weekly selection...':'No current track available. Reload to retry.';if(note.textContent!==text)note.textContent=text;
+    const note=unavailable.querySelector('small'),text=valid?'Loading weekly selection...':'Weekly track unavailable. Try again later.';if(note.textContent!==text)note.textContent=text;
   }
   if(!card)return;
   if (!selection || now >= Date.parse(selection.endTime)) { card.hidden=true; return; }

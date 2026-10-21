@@ -327,14 +327,30 @@ test('event rows use native names, flags, self labels and verification icons',as
  assert.equal(await mine.locator('.verified-state').evaluate(node=>getComputedStyle(node).position),'absolute','event CSS preserves native status positioning');
 });
 test('Only verified filters cached event rows without reading another snapshot',async t=>{
- const p=await fixture(t);await p.evaluate(()=>{
-  window.snapshotCalls=0;bridgeFixture.readSnapshot=async()=>{snapshotCalls++;return {period:{id:'daily-fixture',trackId:id,kind:'daily'},updatedAt:Date.now(),entries:[{accountId:'b'.repeat(64),name:'Verified racer',timeMs:19000,rp:100}],pendingPlaybacks:[{accountId:'c'.repeat(64),runId:'d'.repeat(64),name:'Waiting racer',timeMs:20000,pending:true,verified:false,eventRpEligible:false,verificationStatus:'waiting',source:'pending-event-playback'}]};};
+  const p=await fixture(t);await p.evaluate(()=>{
+   window.snapshotCalls=0;window.exactEventAt=Date.now()-123456;bridgeFixture.readSnapshot=async()=>{snapshotCalls++;return {period:{id:'daily-fixture',trackId:id,kind:'daily'},updatedAt:Date.now(),entries:[{accountId:'b'.repeat(64),name:'Verified racer',timeMs:19000,rp:100,pbAt:exactEventAt}],pendingPlaybacks:[{accountId:'c'.repeat(64),runId:'d'.repeat(64),name:'Waiting racer',timeMs:20000,pending:true,verified:false,eventRpEligible:false,verificationStatus:'waiting',source:'pending-event-playback',uploadId:exactEventAt*1000}]};};
  });await enter(p);assert.equal(await p.locator('.sq-event-board .container > button.main').count(),2);
+  assert.deepEqual(await p.locator('.sq-event-board .verified-state').evaluateAll(states=>states.map(state=>Number(state.dataset.sqPbAt))),[await p.evaluate(()=>exactEventAt),await p.evaluate(()=>exactEventAt)]);
  const reads=await p.evaluate(()=>snapshotCalls),toggle=p.locator('.sq-event-board .only-verified');
  await toggle.click();assert.equal(await toggle.getAttribute('aria-pressed'),'true');assert.equal(await p.locator('.sq-event-board .container > button.main').count(),1);
  await toggle.click();assert.equal(await toggle.getAttribute('aria-pressed'),'false');assert.equal(await p.locator('.sq-event-board .container > button.main').count(),2);assert.equal(await p.evaluate(()=>snapshotCalls),reads);
 });
 test('live event mode reuses the native leaderboard element and restores its contents',async t=>{const p=await fixture(t);await p.evaluate(()=>{window.initialNativeBoard=document.querySelector('.track-info-ui>.leaderboard-ui');bridgeFixture.filterButton=footer=>{const button=document.createElement('button');button.type='button';button.dataset.personalFilterButton='';button.textContent='Filters-Inactive';footer.append(button);};bridgeFixture.readSnapshot=async()=>({period:{id:'daily-fixture',trackId:id,kind:'daily'},updatedAt:Date.now(),entries:[{accountId:'b'.repeat(64),name:'Native row',rank:1,timeMs:19000,rp:100}]});});await enter(p);assert.equal(await p.evaluate(()=>document.querySelector('.sq-event-board')===initialNativeBoard),true);assert.equal(await p.locator('.sq-event-board > .button-wrapper > button').count(),4);assert.equal(await p.locator('.sq-event-board > h2 > .sq-event-refresh').count(),1);assert.equal(await p.locator('.sq-event-board button.main .checkmark').evaluate(node=>node.parentElement.matches('button.main')),true);assert.equal(await p.locator('.sq-event-board button.main .verified-state img.sq-event-verification-icon').count(),1);await p.evaluate(()=>ui.leave());assert.equal(await p.evaluate(()=>initialNativeBoard.isConnected&&!initialNativeBoard.classList.contains('sq-event-board')&&initialNativeBoard.textContent.includes('Normal leaderboard 9999')),true);});
+test('event footer retains native button listeners and restores native controls on leave',async t=>{
+  const p=await fixture(t);
+  await p.evaluate(()=>{
+    window.nativeFirst=document.querySelector('.leaderboard-ui .first');window.nativeVerified=document.querySelector('.leaderboard-ui .only-verified');window.nativeClicks=0;
+    nativeFirst.addEventListener('click',()=>nativeClicks++);
+    nativeVerified.addEventListener('click',()=>nativeClicks++);
+  });
+  await enter(p);
+  assert.equal(await p.evaluate(()=>document.querySelector('.sq-event-board .first')===nativeFirst&&document.querySelector('.sq-event-board .only-verified')===nativeVerified),true);
+  await p.locator('.sq-event-board .first').click();await p.locator('.sq-event-board .only-verified').click();
+  assert.equal(await p.evaluate(()=>nativeClicks),2);
+  await p.evaluate(()=>ui.leave());
+  assert.equal(await p.evaluate(()=>document.querySelector('.leaderboard-ui .first')===nativeFirst&&document.querySelector('.leaderboard-ui .only-verified')===nativeVerified),true);
+  await p.locator('.leaderboard-ui .first').click();assert.equal(await p.evaluate(()=>nativeClicks),3);
+});
 test('native event rows show accepted run age and verified ERP, with cached racer actions',async t=>{
  const p=await fixture(t);await p.evaluate(()=>{
   bridgeFixture.readSnapshot=async()=>({period:{id:'daily-fixture',trackId:id,kind:'daily',startsAt:Date.now()-86400000,endsAt:Date.now()+3600000,maxRp:100},updatedAt:Date.now(),entries:[{accountId:'b'.repeat(64),name:'Dated racer',rank:1,timeMs:19000,rp:84,submittedAt:Date.now()-3600000}]});
@@ -358,10 +374,10 @@ test('schedule-only live event remains playable, preserves its local PB, and acc
   bridgeFixture.readCatalog=async()=>({periods:[scheduled],archives:[]});
   bridgeFixture.readSnapshot=async requested=>({period:{...scheduled,scheduleOnly:false,trackName:'Official fixture track'},updatedAt:Date.now(),entries:[]});
  });
- await p.locator('#open').click();const card=p.locator('.sq-events-overlay [data-event-id="scheduled-fixture"]');await card.waitFor();assert.doesNotMatch(await card.innerText(),/Up to \d+ Event RP|Server confirmation pending/);assert.match(await card.innerText(),/Practice available; event scoring not confirmed/);
+  await p.locator('#open').click();const card=p.locator('.sq-events-overlay [data-event-id="scheduled-fixture"]');await card.waitFor();assert.doesNotMatch(await card.innerText(),/Up to \d+ Event RP|Server confirmation pending|Results offline/);assert.match(await card.innerText(),/Practice only · scoring unconfirmed/);
  await card.click();await p.waitForFunction(()=>!!window.car);assert.equal(await p.locator('.sq-event-board').count(),1);assert.equal(await p.locator('.sq-events-overlay').count(),0);assert.equal(await p.evaluate(()=>document.body.classList.contains('sq-event-active')),true);
  await p.evaluate(()=>car.finish(21000));await p.waitForFunction(()=>submits.length===1);await p.waitForFunction(()=>JSON.parse(localStorage.getItem('polytrack-062-events-v1')).periods[0].scheduleOnly===false);
- await p.locator('#open').click();const updated=p.locator('.sq-events-overlay [data-event-id="scheduled-fixture"]');await updated.waitFor();assert.match(await updated.innerText(),/21000/);assert.doesNotMatch(await updated.innerText(),/Practice available; event scoring not confirmed/);assert.doesNotMatch(await updated.locator('.sq-event-record').innerText(),/verified|\bRP\b.*earned/i);
+  await p.locator('#open').click();const updated=p.locator('.sq-events-overlay [data-event-id="scheduled-fixture"]');await updated.waitFor();assert.match(await updated.innerText(),/21000/);assert.doesNotMatch(await updated.innerText(),/Practice only · scoring unconfirmed/);assert.doesNotMatch(await updated.locator('.sq-event-record').innerText(),/verified|\bRP\b.*earned/i);
 });
 test('event reset labels explicitly use Local',async t=>{const p=await fixture(t);await p.locator('#open').click();assert.match(await p.locator('.sq-events-overlay [data-event-id]').innerText(),/Local/);});
 test('event home renders cached live catalog without waiting for permanent standings',async t=>{
@@ -634,7 +650,7 @@ test('Ranked schedule-only copy offers practice without implying RP can be earne
   panel.innerHTML='<section class="daily-card"><button class="competition-feature-button"><span class="competition-kicker"></span><strong class="competition-track-name"></strong><span class="competition-result"></span></button><small></small></section>';
   document.body.append(panel);ui.tick({cachedOnly:true});
  });
- assert.match(await p.locator('.competition-result').innerText(),/Practice available; event scoring not confirmed/);
+  assert.match(await p.locator('.competition-result').innerText(),/Practice only · scoring unconfirmed/);
  assert.doesNotMatch(await p.locator('.daily-card').innerText(),/Up to \d+ Event RP|server|assignment|pending/i);
  assert.match(await p.locator('.daily-card button').getAttribute('aria-label'),/server has not confirmed.*Event RP is not guaranteed/);
  assert.match(await p.locator('.competition-result').getAttribute('title'),/server has not confirmed/);

@@ -1,3 +1,5 @@
+import { formatActiveTime } from './active-time.mjs';
+
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 0;
 const count = value => Math.floor(num(value));
@@ -8,17 +10,6 @@ function time(value) {
   const fraction = String(centiseconds % 100).padStart(2, '0');
   if (seconds < 60) return seconds + '.' + fraction + 's';
   return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0') + '.' + fraction;
-}
-
-function active(value) {
-  const seconds = Math.floor(num(value) / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  return hours
-    ? hours + 'h ' + minutes % 60 + 'm ' + seconds % 60 + 's'
-    : minutes
-      ? minutes + 'm ' + seconds % 60 + 's'
-      : seconds + 's';
 }
 
 function date(value) {
@@ -127,7 +118,7 @@ function sessionDetailsMarkup(rows, lookup) {
           ['Stationary', row.stationaryMs]
         ].filter(([, value]) => num(value) > 0)
       : [];
-    if (num(row.longestHuntMs)) observations.push(['Longest hunt', row.longestHuntMs, active]);
+    if (num(row.longestHuntMs)) observations.push(['Longest hunt', row.longestHuntMs, formatActiveTime]);
     if (num(row.biggestObservedImprovementMs)) observations.push(['Largest observed improvement', row.biggestObservedImprovementMs, time]);
     if (num(row.biggestPbImprovementMs)) observations.push(['Largest driven PB gain', row.biggestPbImprovementMs, time]);
     return { row, observations };
@@ -138,7 +129,7 @@ function sessionDetailsMarkup(rows, lookup) {
   const items = tracks.map(({ row, observations }) => {
     const name = nameOf(row, lookup);
     const values = observations.map(([label, value, format]) =>
-      '<span><small>' + esc(label) + '</small><b>' + (format || active)(value) + '</b></span>'
+      '<span><small>' + esc(label) + '</small><b>' + (format || formatActiveTime)(value) + '</b></span>'
     ).join('');
     return '<details class="pp-more pp-session-row"><summary>' +
       '<strong>' + esc(name) + '</strong><small>' + observations.length +
@@ -157,14 +148,17 @@ function card(row, lookup, preview, results) {
   const finishes = count(row.finishes);
   const tracked = num(row.trackedBestMs);
   const evidence = resultEvidence(results, row.trackId);
+  const improvement = num(row.improvedMs ?? row.improvementMs);
   const metrics = [
-    attempts ? attempts + (attempts === 1 ? ' attempt' : ' attempts') : '',
-    count(row.restarts) ? count(row.restarts) + (count(row.restarts) === 1 ? ' reset' : ' resets') : '',
-    count(row.pbs) ? count(row.pbs) + (count(row.pbs) === 1 ? ' PB' : ' PBs') : '',
-    count(row.respawns) ? count(row.respawns) + (count(row.respawns) === 1 ? ' checkpoint respawn' : ' checkpoint respawns') : ''
+    attempts ? { sort: 'attempts', text: attempts + (attempts === 1 ? ' attempt' : ' attempts') } : null,
+    count(row.restarts) ? { text: count(row.restarts) + (count(row.restarts) === 1 ? ' reset' : ' resets') } : null,
+    count(row.pbs) ? { text: count(row.pbs) + (count(row.pbs) === 1 ? ' recorded best' : ' recorded bests') } : null,
+    count(row.respawns) ? { text: count(row.respawns) + (count(row.respawns) === 1 ? ' checkpoint respawn' : ' checkpoint respawns') } : null,
+    improvement ? { sort: 'improvement', text: time(improvement) + ' driven PB gain' } :
+      { sort: 'improvement', zero: true, text: 'No driven PB gain recorded' }
   ].filter(Boolean);
   const lastPlayed = date(row.lastPlayedAt);
-  const activeTime = num(row.activeMs) ? active(row.activeMs) + ' active' : 'Active time not recorded';
+  const activeTime = num(row.activeMs) ? formatActiveTime(row.activeMs) : 'Not measured';
   const knownResults = evidence.length
     ? evidence.map(evidenceMarkup).join('')
     : '';
@@ -173,23 +167,26 @@ function card(row, lookup, preview, results) {
     (tracked ? '<b>best ' + time(tracked) + '</b>' : '') +
     (finishes ? '<span>' + finishes + ' recorded ' + (finishes === 1 ? 'finish' : 'finishes') + '</span>' : '') +
     '</p>' : '';
-  const improvement = num(row.improvedMs ?? row.improvementMs);
-
-  return '<li class="pp-track" data-track-id="' + esc(row.trackId) +
+  return '<li class="pp-track" data-pp-track-id="' + esc(row.trackId) +
     '" data-track-name="' + esc(name.toLocaleLowerCase()) +
     '" data-active-ms="' + num(row.activeMs) +
     '" data-attempts="' + attempts +
     '" data-last-played="' + num(row.lastPlayedAt) +
     '" data-improvement-ms="' + improvement + '">' +
-    '<div class="pp-track-top"><div class="pp-art" aria-hidden="true">' + art(row, preview) +
-    '</div><div class="pp-track-main"><h3>' + esc(name) +
-    '</h3><p class="pp-last-played">' + (lastPlayed ? 'Last played ' + esc(lastPlayed) : 'Last played date not recorded') +
-    '</p><p class="pp-active">' + esc(activeTime) + '</p></div></div>' +
+    '<div class="pp-track-top"><button type="button" class="pp-art pp-track-open" data-track-id="' + esc(row.trackId) +
+    '" aria-label="Open track ' + esc(name) + '">' + art(row, preview) +
+    '</button><div class="pp-track-main"><h3><button type="button" class="pp-track-name-button" data-track-id="' + esc(row.trackId) +
+    '">' + esc(name) + '</button></h3>' +
+    '<p class="pp-last-played pp-sort-metric pp-sort-recent"><small>Last played</small><strong>' +
+    (lastPlayed ? esc(lastPlayed) : 'Date not recorded') + '</strong></p>' +
+    '<p class="pp-active pp-sort-metric pp-sort-active"><small>Measured drive time</small><strong>' +
+    esc(activeTime) + '</strong></p></div></div>' +
     (knownResults || trackedHistory ? '<div class="pp-results">' + knownResults + trackedHistory + '</div>' : '') +
-    (metrics.length ? '<p class="pp-track-data">' + metrics.map(value => '<span>' + esc(value) + '</span>').join('') + '</p>' : '') +
+    (metrics.length ? '<p class="pp-track-data">' + metrics.map(value => '<span' +
+      (value.sort ? ' class="pp-sort-' + value.sort + (value.zero ? ' pp-zero' : '') + '"' : '') + '>' + esc(value.text) + '</span>').join('') + '</p>' : '') +
     (num(row.sincePbMs)
-      ? '<p class="pp-since-pb" title="Active practice time accumulated since the latest recorded personal-best improvement">' +
-        esc(active(row.sincePbMs)) + ' without a new PB</p>'
+      ? '<p class="pp-since-pb" title="Measured drive time since the last observed best improvement">' +
+        esc(formatActiveTime(row.sincePbMs)) + ' since last recorded best</p>'
       : '') +
     '</li>';
 }
@@ -202,7 +199,7 @@ function finishItems(rows, lookup) {
   ).sort((a, b) => num(b.run.at) - num(a.run.at)).slice(0, 6).map(({ run, name }) =>
     '<li class="pp-finish"><span><strong>' + esc(name) + '</strong><small>' +
     esc(date(run.at) || 'Date unavailable') +
-    (num(run.practiceMs) ? ' · ' + esc(active(run.practiceMs)) + ' practice' : '') +
+    (num(run.practiceMs) ? ' · ' + esc(formatActiveTime(run.practiceMs)) + ' practice' : '') +
     '</small></span><b>' + time(run.timeMs) + '</b>' +
     (run.timingNote === true ? '<small class="pp-note">Practice and finish clocks differed on this run.</small>' : '') +
     '</li>'
@@ -230,7 +227,7 @@ export function renderPracticeProfile({ rows = [], coverage = null, trackName, t
   const details = sessionDetailsMarkup(observed, trackName);
 
   const summaryStats = [
-    ['Longest hunt', Math.max(0, ...observed.map(row => num(row.longestHuntMs))), 'moving time on one track', active],
+    ['Longest hunt', Math.max(0, ...observed.map(row => num(row.longestHuntMs))), 'moving time on one track', formatActiveTime],
     ['Largest observed gain', Math.max(0, ...observed.map(row => num(row.biggestObservedImprovementMs))), 'known best decrease, including sync', time],
     ['Largest driven PB gain', Math.max(0, ...observed.map(row => num(row.biggestPbImprovementMs))), 'improvement from an observed finish', time]
   ].filter(([, value]) => value > 0).map(([label, value, note, format]) =>
@@ -256,25 +253,23 @@ export function renderPracticeProfile({ rows = [], coverage = null, trackName, t
 
   const body = observed.length
     ? '<div class="pp-summary" aria-label="Practice summary">' +
-      '<span><small>ACTIVE TIME</small><strong>' + active(total) + '</strong></span>' +
+      '<span><small>MEASURED DRIVE TIME</small><strong>' + formatActiveTime(total) + '</strong></span>' +
       '<span><small>TRACKS DRIVEN</small><strong>' + observed.length + '</strong></span>' +
       summaryStats + firstStat + '</div>' + coverageMarkup(coverage) +
       '<div class="pp-toolbar">' +
       '<label>Search tracks <input type="search" data-pp-search placeholder="Track name or ID" autocomplete="off"></label>' +
-      '<label>Sort by <select data-pp-sort>' +
+      '<div class="pp-sort-control"><label>Sort by <select data-pp-sort>' +
       '<option value="recent">Last played</option><option value="active">Active time</option>' +
       '<option value="attempts">Attempts</option>' +
-      (observed.some(row => num(row.improvedMs ?? row.improvementMs)) ? '<option value="improvement">Recorded improvement</option>' : '') +
+      (observed.some(row => num(row.improvedMs ?? row.improvementMs)) ? '<option value="improvement">Driven PB gain</option>' : '') +
       '<option value="name">Name</option>' +
-      '</select></label>' +
-      '<label>Direction <select data-pp-direction><option value="desc">Descending</option>' +
-      '<option value="asc">Ascending</option></select></label>' +
+      '</select></label><button type="button" class="pp-direction" data-pp-direction="desc" aria-label="Sort descending" title="Sort descending">\u2193</button></div>' +
       '<div role="group" aria-label="Track layout">' +
       '<button type="button" data-pp-view="grid" aria-pressed="true">Grid</button>' +
       '<button type="button" data-pp-view="list" aria-pressed="false">List</button></div>' +
       '<p data-pp-count aria-live="polite">' + observed.length + ' ' +
       (observed.length === 1 ? 'track' : 'tracks') + '</p></div>' +
-      '<section class="pp-tracks pp-view-grid" aria-labelledby="pp-tracks-title">' +
+      '<section class="pp-tracks pp-view-grid" data-pp-sort-key="recent" aria-labelledby="pp-tracks-title">' +
       '<h2 id="pp-tracks-title">Practice tracks</h2>' +
       '<p class="pp-no-results" hidden>No tracks match your search.</p><ul>' + cards + '</ul></section>'
     : '<p class="pp-empty">Drive a track to start building your practice history.</p>';
@@ -317,18 +312,19 @@ export function installPracticeProfileControls(root) {
     for (const item of items) {
       item.hidden = !(
         (item.dataset.trackName || '') + ' ' +
-        (item.dataset.trackId || '') + ' ' +
+        (item.dataset.ppTrackId || '') + ' ' +
         (item.textContent || '')
       ).toLocaleLowerCase().includes(query);
     }
     const visible = items.filter(item => !item.hidden);
     const key = sort?.value || 'recent';
-    const sign = direction?.value === 'asc' ? 1 : -1;
+    const sign = direction?.dataset.ppDirection === 'asc' ? 1 : -1;
     const attribute = { active: 'activeMs', attempts: 'attempts', improvement: 'improvementMs', recent: 'lastPlayed' }[key] || 'lastPlayed';
+    section.dataset.ppSortKey = key;
     visible.sort((a, b) => {
       const names = (a.dataset.trackName || '').localeCompare(b.dataset.trackName || '');
       const comparison = key === 'name' ? names : num(a.dataset[attribute]) - num(b.dataset[attribute]);
-      return sign * comparison || names || (a.dataset.trackId || '').localeCompare(b.dataset.trackId || '');
+      return sign * comparison || names || (a.dataset.ppTrackId || '').localeCompare(b.dataset.ppTrackId || '');
     });
     for (const item of visible) list.append(item);
     if (countLabel) countLabel.textContent = visible.length + ' of ' + items.length + ' tracks';
@@ -345,15 +341,24 @@ export function installPracticeProfileControls(root) {
     );
   };
 
+  const onDirection = () => {
+    const next = direction.dataset.ppDirection === 'asc' ? 'desc' : 'asc';
+    direction.dataset.ppDirection = next;
+    direction.textContent = next === 'asc' ? '\u2191' : '\u2193';
+    direction.setAttribute('aria-label', 'Sort ' + (next === 'asc' ? 'ascending' : 'descending'));
+    direction.title = direction.getAttribute('aria-label');
+    filter();
+  };
+
   search?.addEventListener('input', filter);
   sort?.addEventListener('change', filter);
-  direction?.addEventListener('change', filter);
+  direction?.addEventListener('click', onDirection);
   root.addEventListener('click', onView);
   filter();
   return () => {
     search?.removeEventListener('input', filter);
     sort?.removeEventListener('change', filter);
-    direction?.removeEventListener('change', filter);
+    direction?.removeEventListener('click', onDirection);
     root.removeEventListener('click', onView);
   };
 }

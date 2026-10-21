@@ -44,13 +44,13 @@ test('simultaneous Overall refreshes share the pending result instead of returni
 });
 test('quota cooldown persists across callers and does not perpetually extend itself',()=>{
   let time=10000,expiry=0;const ctx={Date:{now:()=>time},FIREBASE_QUOTA_PAUSE_KEY:'quota',readJsonStorage:()=>expiry,writeJsonStorage:(_k,v)=>{expiry=v;}};
-  vm.createContext(ctx);vm.runInContext(extract('firebaseQuotaPaused')+'\n'+extract('noteFirebaseQuota'),ctx);
+  vm.createContext(ctx);vm.runInContext(extract('firebaseQuotaRetryAt')+'\n'+extract('firebaseQuotaPaused')+'\n'+extract('noteFirebaseQuota'),ctx);
   ctx.noteFirebaseQuota({code:'resource-exhausted'});assert.equal(ctx.firebaseQuotaPaused(),true);const first=expiry;
   time+=1000;ctx.noteFirebaseQuota({code:'local-quota-cooldown',message:'quota cooldown'});assert.equal(expiry,first);
   time=first+1;assert.equal(ctx.firebaseQuotaPaused(),false);
 });
-test('PB transaction attempts are bounded and failed PBs are not confirmed',()=>{
-  assert.match(extract('mirrorRaceResult'),/maxAttempts:1/);
+test('PB quota read retries are guarded and failed PBs are not confirmed',()=>{
+  assert.match(extract('mirrorRaceResult'),/runFirebaseTransaction\(d,/);
   assert.match(extract('reconcileLocalPersonalBestsToCloud'),/retryAt:Date\.now\(\)\+5\*60\*1000/);
 });
 test('opening Ranked and entering a locally loaded event do not crawl profiles or require Firebase',()=>{

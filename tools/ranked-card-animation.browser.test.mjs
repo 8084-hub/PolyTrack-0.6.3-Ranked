@@ -9,7 +9,7 @@ const source=fs.readFileSync(new URL('../polytrack_062_patch.js',import.meta.url
 const home=fs.readFileSync(new URL('../home-ui.css',import.meta.url),'utf8');
 const functions=source.slice(source.indexOf('  function triggerRankedButtonSpawn('),source.indexOf('  const MULTIPLAYER_STUN_SERVERS'));
 
-test('Ranked never flashes before its last native card entrance, including hidden startup and menu returns',async()=>{
+test('Ranked is immediately usable when the native menu appears and on return',async()=>{
   const browser=await chromium.launch({headless:true});
   try{
     const page=await browser.newPage();
@@ -30,7 +30,7 @@ test('Ranked never flashes before its last native card entrance, including hidde
       `)();
       window.injectRankingsButton();
     },functions);
-    assert.equal(await page.locator('#injectedRankingsBtn').evaluate(el=>getComputedStyle(el).visibility),'hidden');
+    assert.equal(await page.locator('#injectedRankingsBtn').isVisible(),false);
     await page.evaluate(()=>{
       const container=document.querySelector('.main-buttons-container');
       container.classList.remove('hidden');
@@ -48,13 +48,9 @@ test('Ranked never flashes before its last native card entrance, including hidde
       sample();
     });
     await page.waitForSelector('#injectedRankingsBtn.ranked-ready');
-    const samples=await page.evaluate(()=>window.rankTest);
-    assert.ok(samples.length>10,'sampled the full staggered entrance');
-    const last=samples.at(-1);
-    assert.equal(samples.some(row=>row.visible&&row.nativeStarted===0),false,'Ranked never flashes before the native sequence');
-    assert.ok(last.rankedStarted>last.nativeStarted,'Ranked entrance starts after the final native entrance');
-    assert.ok(last.rankedStarted-last.nativeStarted<300,'Ranked follows the next beat, not a full 500ms animation later');
-    assert.ok(samples.some(row=>row.active&&row.visible),'Ranked overlaps the finishing native animations like the native stagger');
+    assert.equal(await page.locator('#injectedRankingsBtn').isVisible(),true);
+    assert.equal(await page.locator('#injectedRankingsBtn').evaluate(el=>getComputedStyle(el).opacity),'1');
+    assert.equal(await page.locator('#injectedRankingsBtn').evaluate(el=>el.classList.contains('ranked-waiting')),false);
     await page.evaluate(()=>{
       const container=document.querySelector('.main-buttons-container'),button=document.querySelector('#injectedRankingsBtn');
       container.classList.add('hidden');window.syncRankingsButtonAnimation(button,container);

@@ -1903,7 +1903,7 @@ export async function updateTrackIdentity(env, trackId, identity) {
 }
 
 async function processProfileJobs(env) {
-  const jobs = await runQuery(env, COLLECTIONS.jobs, { field: 'active', value: true }, 5);
+  const jobs = await runQuery(env, COLLECTIONS.jobs, { field: 'active', value: true }, 1);
   for (const job of jobs.slice(0,1)) {
     if (job.data.kind !== 'profile') continue;
     if (!Array.isArray(job.data.pendingTrackIds) || !job.data.pendingTrackIds.length) continue;
@@ -2395,6 +2395,7 @@ export default {
       }
       if (!maintenance) await rebuildOverall(env, false);
     })().catch((error) => console.error('Scheduled Ranked work failed', String(error?.message || error)))
-      .finally(()=>console.log('Ranked scheduled Firestore reads',JSON.stringify({cron:_event.cron,...readAudit,billingEstimateOnly:true}))));
+      .finally(()=>console.log('Ranked scheduled Firestore reads',JSON.stringify({cron:_event.cron,
+        scheduledTime:_event.scheduledTime,quotaPolicy:'rev171-event-activity',...readAudit,billingEstimateOnly:true}))));
   }
 };

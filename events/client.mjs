@@ -14,7 +14,7 @@ export function eventResetLabel(period,locale){
   return new Intl.DateTimeFormat(locale,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(period.endsAt)+' Local';
 }
 export function eventRewardLabel(period){
-  if(period?.scheduleOnly)return 'Practice available; event scoring not confirmed';
+  if(period?.scheduleOnly)return 'Practice only · scoring unconfirmed';
   const cap=period?.maxRp;
   return Number.isFinite(cap)&&cap>0?'Up to '+cap+' Event RP':'Event RP details unavailable';
 }
@@ -23,6 +23,18 @@ export function eventRunDate(row,at=Date.now()){
   if(!stamp)return {label:'Date unavailable',title:'This saved result has no run date.'};
   const seconds=Math.floor((at-stamp)/1000),minutes=Math.floor(seconds/60),hours=Math.floor(minutes/60),days=Math.floor(hours/24);
   return {label:days?days+' day'+(days===1?'':'s')+' ago':hours?hours+' hour'+(hours===1?'':'s')+' ago':minutes?minutes+' min ago':'Just now',title:new Date(stamp).toLocaleString()};
+}
+export function eventExactRunAt(row){
+  for(const field of ['runCreatedAt','pbAt','createdAt']){
+    const value=Number(row?.[field]);
+    if(Number.isSafeInteger(value)&&value>=946684800000&&value<=8640000000000000)return value;
+  }
+  const uploadId=Number(row?.uploadId);
+  if(Number.isSafeInteger(uploadId)&&uploadId>=946684800000000){
+    const value=Math.floor(uploadId/1000);
+    if(value<=8640000000000000)return value;
+  }
+  return null;
 }
 export function eventStandingsLabel(board,at=Date.now(),failed=false){
   const capture=board?._publicBackup&&Number(board._snapshotCapturedAt)>0?Number(board._snapshotCapturedAt):0;
@@ -360,7 +372,7 @@ export function installEvents(bridge){
     return '<small class="sq-event-card-summary">'+count+' '+(Number.isInteger(board.racerCount)||Number.isInteger(board.entrantCount)?'racers':'loaded racers')+' · '+entries.length+' verified'+pointTotal+'</small>'+
       (leader?'<small class="sq-event-card-leader">Leader: '+escape(displayName(leader))+' · '+time(leader.timeMs)+'</small>':'');
   }
-  function cards(periods,{details=false}={}){periods.forEach(p=>knownPeriods.set(p.id,p));return periods.map(p=>`<button type="button" class="sq-event-card" data-event-id="${escape(p.id)}" data-event-kind="${escape(p.kind)}"><span class="sq-event-thumb">${bridge.thumbnail(p.trackId)}</span><div class="sq-event-record">${recordMarkup(p)}</div><span><small>${escape(p.kind==='daily'?'DAILY EVENT':p.kind==='weekly'?'WEEKLY EVENT':p.kind==='kodub'?'KODUB WEEKLY':p.label||'EVENT')}</small><strong>${escape(periodName(p))}</strong><span class="sq-event-card-details"><span class="sq-event-reward">${escape(eventRewardLabel(p))}</span>${details?cardStandings(p):''}${p.scheduleOnly?'<small class="sq-event-assignment" title="Practice follows the saved schedule. The server has not confirmed this event or its scoring. Event RP is not guaranteed." aria-label="Event results unavailable. Practice follows the saved schedule. The server has not confirmed this event or its scoring. Event RP is not guaranteed.">Event results unavailable</small>':''}${Number.isInteger(p.entrantLimit)?`<small class="sq-event-capacity">Up to ${p.entrantLimit} racers</small>`:''}<small class="sq-event-reset">${now()<p.endsAt?'Resets':'Ended'} ${escape(reset(p))}</small></span></span></button>`).join('');}
+  function cards(periods,{details=false}={}){periods.forEach(p=>knownPeriods.set(p.id,p));return periods.map(p=>`<button type="button" class="sq-event-card" data-event-id="${escape(p.id)}" data-event-kind="${escape(p.kind)}"><span class="sq-event-thumb">${bridge.thumbnail(p.trackId)}</span><div class="sq-event-record">${recordMarkup(p)}</div><span><small>${escape(p.kind==='daily'?'DAILY EVENT':p.kind==='weekly'?'WEEKLY EVENT':p.kind==='kodub'?'KODUB WEEKLY':p.label||'EVENT')}</small><strong>${escape(periodName(p))}</strong><span class="sq-event-card-details"><span class="sq-event-reward"${p.scheduleOnly?' title="Saved schedule only. The event service has not confirmed scoring or results."':''}>${escape(eventRewardLabel(p))}</span>${details?cardStandings(p):''}${Number.isInteger(p.entrantLimit)?`<small class="sq-event-capacity">Up to ${p.entrantLimit} racers</small>`:''}<small class="sq-event-reset">${now()<p.endsAt?'Resets':'Ended'} ${escape(reset(p))}</small></span></span></button>`).join('');}
   function permanentCard(loading=false){
     const counts=archivePeriodCounts(PERMANENT_ROLLING,permanent),own=counts.verifiedEntries.find(row=>row.accountId===bridge.accountId());
     const record=own?'<time>'+time(own.timeMs)+'</time>'+ (Number.isFinite(own.rp)?'<small>'+Math.round(own.rp)+' Event RP</small>':''):loading?'<small>Loading verified record...</small>':'No verified record';
@@ -716,6 +728,17 @@ export function installEvents(bridge){
   function clearNativeView(){
     if(!nativeView)return;
     nativeView.carObserver?.disconnect();nativeView.deferredCarRows?.clear();if(nativeView.contextMenuHandler)nativeView.board.removeEventListener('contextmenu',nativeView.contextMenuHandler);
+    if(nativeView.nativeButtonWrapper){
+      nativeView.eventBack?.replaceWith(nativeView.nativeBack);
+      for(const [button,original] of nativeView.nativeButtons){
+        for(const name of button.getAttributeNames())button.removeAttribute(name);
+        for(const {name,value} of original.clone.attributes)button.setAttribute(name,value);
+        button.onclick=original.onclick;
+        button.disabled=original.disabled;
+      }
+      for(const child of [...nativeView.nativeButtonWrapper.children])if(!nativeView.nativeButtons.has(child))child.remove();
+      nativeView.buttonPlaceholder.replaceWith(nativeView.nativeButtonWrapper);
+    }
     nativeView.board.replaceChildren(nativeView.nativeMarkup);
     nativeView.board.classList.remove('sq-event-board');
     if(nativeView.nativeDisplay.value)nativeView.board.style.setProperty('display',nativeView.nativeDisplay.value,nativeView.nativeDisplay.priority);else nativeView.board.style.removeProperty('display');
@@ -778,7 +801,9 @@ export function installEvents(bridge){
       const runAt=[row.submittedAt,row.receivedAt,row.pbAt].find(value=>Number.isSafeInteger(value)&&value>0&&value<=now());
       const button=renderer.render(container,nativeEventRow(row,view.accountId,runAt||now()));button.type='button';button.dataset.eventAccountId=row.accountId;button.dataset.eventTime=String(row.timeMs);button.dataset.eventRunId=row.runId||'';button.dataset.eventPending='false';const playable=typeof bridge.readArchivedReplay==='function';button.tabIndex=playable?0:-1;button.setAttribute('aria-disabled',String(!playable));button.setAttribute('aria-pressed','false');button.setAttribute('aria-busy','false');button.title=playable?'Select this archived replay. It will not submit an event result.':'Saved archived replay is unavailable.';if(playable)button.onclick=()=>void selectReplay(period,row);
       button.querySelector('.left p:not(.position)').classList.add('event-time');
-      const state=button.querySelector('.verified-state');state.dataset.sqRunStatus='verified';if(!runAt){state.firstChild.textContent='Date unavailable';state.title='Archived verified result - run date unavailable';}const actions=event=>{if(typeof bridge.racerActions!=='function')return;event.preventDefault();event.stopPropagation();const rect=button.getBoundingClientRect();bridge.racerActions(row,{clientX:event.clientX||rect.left+rect.width/2,clientY:event.clientY||rect.top+rect.height/2});};button.oncontextmenu=actions;button.onkeydown=event=>{if(event.key==='ContextMenu'||event.shiftKey&&event.key==='F10')actions(event);};
+      const state=button.querySelector('.verified-state');state.dataset.sqRunStatus='verified';
+      const exactRunAt=eventExactRunAt(row);if(exactRunAt)state.dataset.sqPbAt=String(exactRunAt);else delete state.dataset.sqPbAt;
+      if(!runAt){state.firstChild.textContent='Date unavailable';state.title='Archived verified result - run date unavailable';}const actions=event=>{if(typeof bridge.racerActions!=='function')return;event.preventDefault();event.stopPropagation();const rect=button.getBoundingClientRect();bridge.racerActions(row,{clientX:event.clientX||rect.left+rect.width/2,clientY:event.clientY||rect.top+rect.height/2});};button.oncontextmenu=actions;button.onkeydown=event=>{if(event.key==='ContextMenu'||event.shiftKey&&event.key==='F10')actions(event);};
       const points=document.createElement('span');points.className='sq-event-earned-rp';points.textContent=Math.round(Number(row.groupRp??row.rp)||0)+' ERP';points.title='Archived Event RP';state.prepend(points);bridge.decorateRacer?.(button,row);
     }
     if(!rows.length){const empty=document.createElement('p');empty.className='error-message';empty.textContent='No verified archived times were recorded.';container.append(empty);}
@@ -806,7 +831,19 @@ export function installEvents(bridge){
       board.append(nativeMarkup.cloneNode(true));
       board.querySelector('.total-players').classList.remove('fade-in');
       board.querySelector('h2').textContent=archiveMode?'Archived event leaderboard':'Event leaderboard';
-      const buttonWrapper=board.querySelector('.button-wrapper');
+      let buttonWrapper=board.querySelector('.button-wrapper'),nativeButtonWrapper=null,buttonPlaceholder=null,nativeButtons=null,eventBack=null;
+      if(!archiveMode){
+        nativeButtonWrapper=nativeMarkup.querySelector('.button-wrapper');
+        if(nativeButtonWrapper){
+          nativeButtons=new Map([...nativeButtonWrapper.children].map(button=>[button,{clone:button.cloneNode(true),onclick:button.onclick,disabled:button.disabled}]));
+          eventBack=nativeBack.cloneNode(true);
+          nativeBack.replaceWith(eventBack);
+          buttonPlaceholder=document.createComment('native leaderboard controls');
+          nativeButtonWrapper.replaceWith(buttonPlaceholder);
+          buttonWrapper.replaceWith(nativeButtonWrapper);
+          buttonWrapper=nativeButtonWrapper;
+        }
+      }
       if(archiveMode)buttonWrapper.querySelectorAll('button:not(.back)').forEach(button=>button.remove());
       else{
         const verified=buttonWrapper.querySelector('.only-verified');verified.classList.add('disabled');verified.setAttribute('aria-pressed','false');verified.title='Show only verified event runs';
@@ -816,7 +853,7 @@ export function installEvents(bridge){
       const side=root.querySelector('.side-panel'),watch=side?.querySelector('button.watch'),opponents=side?.querySelector('.opponents-container');let pbTitle=null,pb=null,opponentsNote=null;
       if(!archiveMode){pbTitle=document.createElement('div');pbTitle.className='personal-best-title sq-event-personal-title';pbTitle.textContent='Event personal best';pb=document.createElement('div');pb.className='personal-best sq-event-personal';pb.style.setProperty('display','block','important');const normalPb=side?.querySelector('.personal-best-title');if(normalPb)normalPb.before(pbTitle,pb);opponentsNote=document.createElement('div');opponentsNote.className='opponents-container sq-event-opponents';opponentsNote.textContent='Event ghosts are not available. Normal PB ghosts are not used.';opponents?.after(opponentsNote);}
       const contextMenuHandler=archiveMode?null:event=>event.stopPropagation();
-      const view=nativeView={root,board,nativeMarkup,nativeBack,nativeDisplay,nativeTitle,pb,pbTitle,watch,watchDisabled:watch?.disabled,opponents,opponentsNote,period,periodId:period.id,accountId,page:0,onlyVerified:false,signature:'',carStyles:new WeakMap(),archive:archiveMode,snapshot:session.snapshot,contextMenuHandler};
+      const view=nativeView={root,board,nativeMarkup,nativeButtonWrapper,buttonPlaceholder,nativeButtons,eventBack,nativeBack,nativeDisplay,nativeTitle,pb,pbTitle,watch,watchDisabled:watch?.disabled,opponents,opponentsNote,period,periodId:period.id,accountId,page:0,onlyVerified:false,signature:'',carStyles:new WeakMap(),archive:archiveMode,snapshot:session.snapshot,contextMenuHandler};
       view.deferredCarRows=new Set();
       if(!archiveMode){if(typeof IntersectionObserver==='function')view.carObserver=new IntersectionObserver(entries=>handleEventCarIntersections(view,entries,renderCachedCar),{root:board.querySelector('.container'),rootMargin:'50px'});board.addEventListener('contextmenu',contextMenuHandler);
         const verified=buttonWrapper.querySelector('.only-verified');verified.onclick=()=>{view.onlyVerified=!view.onlyVerified;verified.classList.toggle('disabled',!view.onlyVerified);verified.setAttribute('aria-pressed',String(view.onlyVerified));view.page=0;view.signature='';view.quickSignature='';syncNativeBoard(session);};
@@ -889,6 +926,7 @@ export function installEvents(bridge){
       button.title=pending?'Loading and validating event replay...':row.pending?'Watch unverified recording. It earns no points until verified.':'Load this verified event PB replay. Older recordings may be unavailable.';
       button.querySelector('.left p:not(.position)').classList.add('event-time');
       const state=button.querySelector('.verified-state');state.dataset.sqRunStatus=row.pending?'unchecked':'verified';
+      const exactRunAt=eventExactRunAt(row);if(exactRunAt)state.dataset.sqPbAt=String(exactRunAt);else delete state.dataset.sqPbAt;
       if(!runAt){state.firstChild.textContent='Date unavailable';state.title='Run date unavailable - '+(row.pending?'Pending':'Verified');}
       if(!row.pending){const points=document.createElement('span');points.className='sq-event-earned-rp';points.textContent=Math.round(Number(row.groupRp??row.rp)||0)+(row.groupRp!=null?' Group ERP':' ERP');points.title=row.groupRp!=null?'Filtered group Event RP':'Verified Event RP';state.prepend(points);}
       const actions=event=>{if(typeof bridge.racerActions!=='function')return;event.preventDefault();event.stopPropagation();const rect=button.getBoundingClientRect();bridge.racerActions(row,{clientX:event.clientX||rect.left+rect.width/2,clientY:event.clientY||rect.top+rect.height/2});};
@@ -958,7 +996,7 @@ export function installEvents(bridge){
       const infoNode=kodubCard.querySelector('.track-of-the-week-info');
       if(infoNode){
         let reward=infoNode.querySelector('.sq-kodub-reward');if(!reward){reward=document.createElement('small');reward.className='sq-kodub-reward';infoNode.append(reward);}
-        const text=p?eventRewardLabel(p):'Event results unavailable';if(reward.textContent!==text)reward.textContent=text;
+        const text=p?eventRewardLabel(p):'Results offline';if(reward.textContent!==text)reward.textContent=text;
         const title=p?.scheduleOnly?'Practice follows the saved schedule. The server has not confirmed this event or its scoring. Event RP is not guaranteed.':p?'Event RP uses scored event results.':'Event results could not be checked. No Event RP reward is confirmed.';
         if(reward.title!==title)reward.title=title;
         const label=text+'. '+title;if(reward.getAttribute('aria-label')!==label)reward.setAttribute('aria-label',label);
@@ -988,7 +1026,7 @@ export function installEvents(bridge){
       if(row.dataset.periods!==scheduleState){
         row.dataset.periods=scheduleState;row.replaceChildren();
         for(const kind of ['weekly','daily']){const button=document.createElement('button');button.className='button sq-event-card';button.type='button';button.dataset.eventKind=kind;
-          button.innerHTML='<span class="sq-event-thumb" aria-hidden="true"></span><div class="sq-event-record">No record</div><span><small>'+eventName(kind)+' event</small><strong>'+(fetching?'Loading track...':'Events unavailable')+'</strong><span>Event results unavailable</span><small>'+(fetching?'Checking event availability':'Open Events to retry')+'</small></span>';button.onclick=()=>void open();row.append(button);}
+          button.innerHTML='<span class="sq-event-thumb" aria-hidden="true"></span><div class="sq-event-record">No record</div><span><small>'+eventName(kind)+' event</small><strong>'+(fetching?'Loading track...':'Events unavailable')+'</strong><span>Results offline</span><small>'+(fetching?'Checking event availability':'Open Events to retry')+'</small></span>';button.onclick=()=>void open();row.append(button);}
       }
     }
     const session=sessions.current()||eventIntent,activeChanged=document.body.classList.contains('sq-event-active')!==!!session;

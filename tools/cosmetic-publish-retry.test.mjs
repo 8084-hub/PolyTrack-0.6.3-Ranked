@@ -38,7 +38,7 @@ test('cosmetic retry backoff is bounded at one hour', () => {
 
 test('cosmetic publication uses its saved queue instead of transaction retry storms', () => {
   const body=source.slice(source.indexOf('async function flushPendingCosmeticPublishes('),source.indexOf('async function saveRankedProfileCosmetics('));
-  assert.match(body,/\},\{maxAttempts:1\}\)/);
+  assert.match(body,/runFirebaseTransaction\(fire,/);
   assert.match(body,/noteFirebaseQuota\(error\)/);
   const scheduler=source.slice(source.indexOf('function scheduleCosmeticPublishRetry('),source.indexOf('async function flushPendingCosmeticPublishes('));
   assert.match(scheduler,/Math\.max\(0,quotaDelay,Number\(item.nextAttemptAt/);

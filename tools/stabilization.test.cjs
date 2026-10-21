@@ -245,7 +245,7 @@ test('failed SDK script can be retried; simultaneous callers share the same load
  const next=load('sdk');assert.equal(scripts.length,2);scripts[1].onload();await next;
 });
 test('Firebase failed initialization clears its memoized promise with retry backoff',async()=>{
- const ctx={Date,assertOnlineCompatibility:()=>{},firebaseQuotaPaused:()=>false,firestorePromise:null,firebaseRetryAt:0,loadScript:async()=>{throw Error('blocked')}};
+ const ctx={Date,assertOnlineCompatibility:()=>{},firebaseQuotaPaused:()=>false,firestorePromise:null,firebaseRetryAt:0,ensureFirebaseAuthApp:async()=>{throw Error('blocked')},loadScript:async()=>{throw Error('blocked')}};
  const get=run('db',ctx);await assert.rejects(get(),/blocked/);assert.equal(ctx.firestorePromise,null);assert.ok(ctx.firebaseRetryAt>Date.now());
  await assert.rejects(get(),/cooling down/);
 });

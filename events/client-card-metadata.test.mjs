@@ -50,11 +50,11 @@ test('schedule-only cards offer practice without advertising RP or cached verifi
  for(const kind of ['daily','weekly','kodub']){
   const markup=ui.cards([{id:kind,kind,trackId,trackName:'Practice track',endsAt:200,maxRp:700,scheduleOnly:true}],{details:true});
   const visible=markup.replace(/<[^>]*>/g,' ');
-  assert.match(visible,/Practice available; event scoring not confirmed/);
-  assert.match(visible,/Event results unavailable/);
+  assert.match(visible,/Practice only · scoring unconfirmed/);
+  assert.doesNotMatch(visible,/Event results unavailable/);
   assert.doesNotMatch(visible,/Up to \d+ Event RP|verified|awarded|confirmation pending|assignment/i);
-  assert.match(markup,/title="[^"]*server has not confirmed[^"]*Event RP is not guaranteed/);
-  assert.match(markup,/aria-label="Event results unavailable\.[^"]*Event RP is not guaranteed/);
+  assert.match(markup,/title="Saved schedule only\. The event service has not confirmed scoring or results\."/);
+  assert.match(markup,/class="sq-event-reward"[^>]*>Practice only/);
  }
 });
 

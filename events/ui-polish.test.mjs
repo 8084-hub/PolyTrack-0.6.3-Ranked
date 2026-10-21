@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {createRequire} from 'node:module';
-import {eventResetLabel,eventRewardLabel} from './client.mjs';
+import {eventResetLabel,eventRewardLabel,eventExactRunAt} from './client.mjs';
 const require=createRequire(new URL('../tools/verifier/package.json',import.meta.url));
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const source=fs.readFileSync(new URL('./client.mjs',import.meta.url),'utf8');
@@ -19,11 +19,19 @@ test('reset dates use actual boundaries and reject missing or invalid dates',()=
  for(const value of [undefined,null,NaN,Infinity,-1,Number.MAX_SAFE_INTEGER,'2026-10-26'])assert.equal(eventResetLabel({endsAt:value}),'Reset date unavailable');
  assert.notEqual(eventResetLabel({endsAt},'en-US'),eventResetLabel({endsAt:endsAt+86400000},'en-US'));
 });
+test('event verification uses exact run creation or PB time, never publication time',()=>{
+ const exact=Date.UTC(2026,9,20,18,44,1),published=exact+60000;
+ assert.equal(eventExactRunAt({runCreatedAt:exact,pbAt:published,updatedAt:published}),exact);
+ assert.equal(eventExactRunAt({pbAt:exact,updatedAt:published}),exact);
+ assert.equal(eventExactRunAt({uploadId:exact*1000,updatedAt:published}),exact);
+ assert.equal(eventExactRunAt({submittedAt:exact,receivedAt:exact,updatedAt:published}),null);
+ assert.equal(eventExactRunAt({uploadId:123,updatedAt:published}),null);
+});
 test('reward caps stay distinct from personal PB points and never invent zero capacity',()=>{
  assert.equal(eventRewardLabel({maxRp:500,rp:42,runAt:1}),'Up to 500 Event RP');
- assert.equal(eventRewardLabel({maxRp:500,scheduleOnly:true}),'Practice available; event scoring not confirmed');
+ assert.equal(eventRewardLabel({maxRp:500,scheduleOnly:true}),'Practice only · scoring unconfirmed');
  for(const maxRp of [undefined,0,-1,NaN])assert.equal(eventRewardLabel({maxRp}),'Event RP details unavailable');
- const html=cards();assert.match(html,/Practice available; event scoring not confirmed/);assert.doesNotMatch(html,/Awaiting|\bOpen\b|verified|earned|Up to \d+ Event RP|Server confirmation pending/);
+ const html=cards();assert.match(html,/Practice only · scoring unconfirmed/);assert.doesNotMatch(html,/Awaiting|\bOpen\b|verified|earned|Up to \d+ Event RP|Server confirmation pending|Results offline/);
 });
 test('permanent incentive remains a capacity label even when a personal result exists',()=>{
  const start=source.indexOf('    if(permanentNote){'),end=source.indexOf('    if(group&&!group.querySelector',start);
@@ -55,9 +63,11 @@ test('featured event metadata and PB icons fit desktop and phone viewports',asyn
     const box=await card.boundingBox(),reset=await card.locator('.sq-event-reset').boundingBox();
     assert(box.x>=0&&box.x+box.width<=width+1,`card fits ${width}`);
     assert(reset.y>=box.y&&reset.y+reset.height<=box.y+box.height+1,`reset fits ${width}`);
-    const reward=await card.locator('.sq-event-reward').boundingBox(),assignment=await card.locator('.sq-event-assignment').boundingBox();
-    assert(reward.y+reward.height<=assignment.y+1&&assignment.y+assignment.height<=reset.y+1,`metadata does not overlap ${width}`);
+    const reward=await card.locator('.sq-event-reward').boundingBox();
+    assert(reward.y+reward.height<=reset.y+1,`metadata does not overlap ${width}`);
+    assert.equal(await card.locator('.sq-event-assignment').count(),0,'one concise practice-only notice replaces duplicate warnings');
     assert.equal(await card.locator('.sq-event-capacity').isVisible(),false);
+    if(width>700)assert.equal(await card.locator('.sq-event-reset').evaluate(node=>getComputedStyle(node).textAlign),'center');
    }
    const icon=await page.locator('.personal-best img').boundingBox(),line=await page.locator('.personal-best>div').boundingBox();
    assert.equal(icon.height,22);assert.equal(icon.width,22);

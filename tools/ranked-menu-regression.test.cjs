@@ -93,7 +93,7 @@ test('permanent Rolling Hills survives native search and cached rankings paint b
  assert.match(extract('restorePermanentRollingTrack'),/\.sq-featured-events \.sq-permanent-track/);
  assert.match(source,/addEventListener\('input',event=>\{[\s\S]*?\.search-bar-container input[\s\S]*?restorePermanentRollingTrack/);
  const opener=extract('openPanel');
- assert.ok(opener.indexOf('renderEntries(savedEntries,saved)')<opener.indexOf('await withTimeout(fetchOverallEntries(shouldForceRefresh)'));
+ assert.ok(opener.indexOf('renderEntries(savedEntries,saved)')<opener.indexOf('await withTimeout(pendingEntries'));
 });
 test('patch UI does not expose scoring formula constants', () => {
   for (const pattern of [/Overall RP is 68%/, /20% diminishing track coverage/, /12% protected all-track depth/, /Official tracks use 1\.6x/, /1\.6x type/, /1\.0x type/, /0\.6x type/, /award 9 for first/, /100 points for each/, /base field weight/, /base multiplier is/]) {
@@ -270,18 +270,30 @@ test('favorite rankings form two equal columns with shortcut numbers and usage t
  assert.match(ctx.leaderboardArcadeMarkup(),/aria-keyshortcuts="4"/);
 });
 
-test('track scope is reset for every ranking change and follows tracks categories',()=>{
- const buttons=['all','official','community'].map(trackScope=>({dataset:{trackScope},active:false,pressed:'false',classList:{toggle(name,value){if(name==='active')this.owner.active=value;},owner:null},setAttribute(name,value){if(name==='aria-pressed')this.pressed=value;}}));
+test('completion scope offers All, Extra only and Without Extra while hiding outside completed tracks',()=>{
+ const buttons=['all','extra','no-extra'].map(trackScope=>({dataset:{trackScope},active:false,pressed:'false',classList:{toggle(name,value){if(name==='active')this.owner.active=value;},owner:null},setAttribute(name,value){if(name==='aria-pressed')this.pressed=value;}}));
  buttons.forEach(button=>{button.classList.owner=button;});
  const scope={hidden:false,querySelectorAll:()=>buttons};
  const panel={querySelector:selector=>selector==='#overallTrackScope'?scope:null};
- const context=vm.createContext({});vm.runInContext(extract('syncOverallTrackScope'),context);
- context.syncOverallTrackScope(panel,'community');assert.equal(scope.hidden,false);assert.deepEqual(buttons.map(button=>button.pressed),['false','false','true']);
+ const context=vm.createContext({overallCompletionScope:'no-extra'});vm.runInContext(extract('syncOverallTrackScope'),context);
+ context.syncOverallTrackScope(panel,'tracks');assert.equal(scope.hidden,false);assert.deepEqual(buttons.map(button=>button.pressed),['false','false','true']);
  context.syncOverallTrackScope(panel,'overall');assert.equal(scope.hidden,true);assert.deepEqual(buttons.map(button=>button.pressed),['false','false','false']);
- context.syncOverallTrackScope(panel,'tracks');assert.equal(scope.hidden,false);assert.deepEqual(buttons.map(button=>button.pressed),['true','false','false']);
+ context.overallCompletionScope='all';context.syncOverallTrackScope(panel,'tracks');assert.equal(scope.hidden,false);assert.deepEqual(buttons.map(button=>button.pressed),['true','false','false']);
  assert.match(extract('setOverallCategory'),/syncOverallTrackScope\(panel,selected\)/);
  assert.match(extract('handleRankedFilterChange'),/syncOverallTrackScope\(document\.getElementById\('overallLeaderboardPanel'\),category\)/);
  assert.match(source,/if\(leaderboardShortcut\)[\s\S]*?syncOverallTrackScope\(panel,overallCategory\)/);
+});
+
+test('completion scopes exclude Extra exactly once and retain missing-count uncertainty',()=>{
+ const context=vm.createContext({overallCompletionScope:'all',PINNED_EXTRA_TRACK_IDS:new Set(['extra']),extraTrackInfoById:new Map()});
+ vm.runInContext(extract('completedTrackCount'),context);
+ const row={raceCount:24,officialCount:17,communityCount:3,customCount:4,extraCount:3};
+ assert.equal(context.completedTrackCount(row),24);
+ assert.equal(context.completedTrackCount(row,'extra'),3);
+ assert.equal(context.completedTrackCount(row,'no-extra'),21);
+ assert.equal(context.completedTrackCount({raceCount:17},'extra'),null);
+ assert.equal(context.completedTrackCount({raceCount:17,extraCount:0},'extra'),0);
+ assert.equal(context.completedTrackCount({...row,groupResults:[{trackId:'extra'},{trackId:'official'}],raceCount:2},'extra'),1);
 });
 
 test('Extra completion labels preserve counts above two without counting them as community',()=>{

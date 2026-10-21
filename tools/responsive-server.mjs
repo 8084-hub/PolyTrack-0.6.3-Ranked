@@ -22,7 +22,7 @@ export async function startResponsiveServer({baseline=false}={}){
     try{
       const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
       res.setHeader('Cache-Control','no-store');
-      res.setHeader('Content-Security-Policy',"default-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; script-src 'self' blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:");
+      res.setHeader('Content-Security-Policy',"default-src 'self' data: blob:; connect-src 'self' blob:; worker-src 'self' blob:; script-src 'self' blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:");
       if(pathname==='/'||pathname==='/index.html'){
         const html=readText('index.html').replace('<head>','<head><script>window.__ptNativeRankedAuditRejectWrites=true;'+bootstrap+'</script>');
         res.setHeader('Content-Type','text/html; charset=utf-8');return res.end(html);

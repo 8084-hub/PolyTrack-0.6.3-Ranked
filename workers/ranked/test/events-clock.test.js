@@ -5,7 +5,7 @@ import { eventPeriod, EVENT_COLLECTIONS as C } from '../src/events.js';
 import { eventEncode, eventDecode } from '../src/events-store.js';
 
 test('delayed cron intake uses advancing processing clock, not scheduled timestamp or phase', async () => {
-  const accountId = 'b'.repeat(64), trackId = 'a'.repeat(64), at = 120000;
+  const accountId = 'b'.repeat(64), trackId = 'a'.repeat(64), at = 180000;
   let wallClock = 301000;
   const receivedAt = { __firestoreTimestamp: new Date(305000).toISOString() };
   const period = eventPeriod({ id: 'd_clock', enabled: true, kind: 'daily', trackId,
@@ -54,5 +54,6 @@ test('delayed cron intake uses advancing processing clock, not scheduled timesta
   assert.equal(run.receivedAt, 305000);
   assert.equal(data.get(`${C.queues}/d_clock`).admitted, 1);
   assert.equal(data.get(`${C.receipts}/${inboxId}`).status, 'waiting');
+  assert.equal(data.get(`${C.cursors}/scan`).processedAt, 310000);
   assert.deepEqual(data.get(`${C.inbox}/${inboxId}`), inbox);
 });

@@ -90,3 +90,18 @@ test('missing cosmetic lookup preserves native verified state; local PB stays pe
   assert.equal(verified.classes.has('verified'),true);assert.equal(verified.label.textContent,'');
   assert.equal(local.label.textContent,'LOCAL PB');assert.equal(waiting.label.textContent,'WAITING');
 });
+
+test('verified and waiting run labels expose the exact local PB date, time and timezone',()=>{
+ const at=Date.parse('2026-10-20T01:15:30.000Z');
+ const states=['verified','unchecked'].map(status=>({
+  dataset:{sqRunStatus:status,sqPbAt:String(at)},title:'',childNodes:[],attributes:{},
+  classList:{contains:()=>false,toggle:()=>{}},querySelector:selector=>selector==='img'?null:{textContent:''},
+  getAttribute(name){return this.attributes[name];},setAttribute(name,value){this.attributes[name]=value;}
+ }));
+ const context=vm.createContext({document:{querySelectorAll:()=>states},Node:{TEXT_NODE:3},Date});
+ vm.runInContext(section('  function syncIntegrityStateLabels(', '\n  let nativeDecorationLookupCache'),context);
+ context.syncIntegrityStateLabels();
+ const exact=new Date(at).toLocaleString(undefined,{dateStyle:'full',timeStyle:'long'});
+ for(const state of states){assert.ok(state.title.startsWith(exact+' - '));assert.equal(state.attributes['aria-label'],state.title);}
+ assert.match(states[0].title,/Run verified$/);assert.match(states[1].title,/Verification pending$/);
+});

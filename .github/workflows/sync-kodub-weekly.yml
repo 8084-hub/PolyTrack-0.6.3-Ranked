@@ -3,7 +3,8 @@ name: Sync Kodub weekly fallback
 on:
   schedule:
     # Kodub rotates the weekly track Sundays at 20:00 UTC.
-    - cron: "3 20 * * 0"
+    # Retry daily as well: a missed Sunday capture must not strand restricted devices.
+    - cron: "3 20 * * *"
   workflow_dispatch:
 
 permissions:

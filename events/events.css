@@ -62,6 +62,9 @@
 /* Normal-track weight/status must not describe an event-only board. */
 .sq-event-board .image-container{position:relative}
 .sq-event-board .button-wrapper>.sq-event-find-me img{width:22px;height:22px;object-fit:contain}
+.track-info-ui>.sq-event-board>.button-wrapper>.button{display:inline-flex;align-items:center;justify-content:center;min-height:44px}
+#ui .track-info-ui>.sq-event-board>.button-wrapper>[data-personal-filter-button]{font-size:20px!important;line-height:1.1}
+@media(max-width:650px){#ui .track-info-ui>.sq-event-board>.button-wrapper>[data-personal-filter-button]{font-size:15px!important}}
 .sq-event-board .sq-event-earned-rp{display:inline-block;margin-right:10px;color:#9ce7b3;font-size:inherit;font-variant-numeric:tabular-nums;white-space:nowrap}
 .sq-event-board>.total-players{opacity:.5;transition:none}
 .sq-event-board .main.pending-selection .image-container:after{content:"";position:absolute;top:5px;left:5px;width:14px;height:14px;border:2px solid #d7f6ff;border-right-color:transparent;border-radius:50%;z-index:3;pointer-events:none;animation:sq-event-pending-spin .7s linear infinite}
@@ -884,8 +887,27 @@ body.sq-event-active .track-info-ui{background:#1b2854}
 }
 
 /* The native board remains mounted while event standings replace its rows. */
+body.sq-event-active .track-info-ui{
+  --sq-event-spinner:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3a13 13 0 1 0 13 13' fill='none' stroke='%23a6dff8' stroke-width='3' stroke-linecap='round'%3E%3CanimateTransform attributeName='transform' type='rotate' from='0 16 16' to='360 16 16' dur='.8s' repeatCount='indefinite'/%3E%3C/path%3E%3C/svg%3E");
+}
 body.sq-event-active .track-info-ui>.leaderboard-ui:not(.sq-event-board){visibility:hidden!important}
 body.sq-event-active .track-info-ui>.leaderboard-ui.sq-event-board{visibility:visible!important}
+body.sq-event-active .track-info-ui>.leaderboard-ui:not(.sq-event-board){position:relative}
+body.sq-event-active .track-info-ui>.leaderboard-ui:not(.sq-event-board)::after{
+  content:'Loading event standings';visibility:visible;position:absolute;inset:0;
+  display:grid;place-items:center;padding-top:44px;box-sizing:border-box;
+  color:#c6e9ff;background:#29366b;font:20px ForcedSquare,sans-serif;
+  background-image:var(--sq-event-spinner);
+  background-size:28px 28px;background-repeat:no-repeat;background-position:center calc(50% - 22px);
+}
+html body .track-info-ui.sq-event-scaffold-needed::before{
+  padding-top:44px;box-sizing:border-box;
+  background-image:var(--sq-event-spinner);
+  background-size:28px 28px;background-repeat:no-repeat;background-position:center calc(50% - 22px);
+}
+@media(min-width:701px){
+  #ui .track-selection-ui .sq-featured-events .sq-event-reset{text-align:center!important;align-self:center!important}
+}
 
 /* All four featured cards use the same outer height; metadata wraps inside it. */
 #ui .track-selection-ui .sq-featured-events>.sq-event-track-buttons>.sq-event-card{

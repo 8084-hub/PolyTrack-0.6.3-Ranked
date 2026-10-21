@@ -64,10 +64,18 @@ export async function cleanupEvents(runtime) {
   }
   return target ? runtime.service.cleanupPeriod(target.id) : { idle: true };
 }
-export async function inboxPage(runtime, { projected = false, limit = 1 } = {}) {
+export async function inboxPage(runtime, { projected = false, limit = 1, recentActivityOnly = false } = {}) {
   if (limit !== 1) throw Error('Event inbox page must be one');
   const raw = await runtime.request('/' + C.cursors + '/scan');
   const cursor = raw ? decode(raw) : null;
+  // This is an activity hint, never proof of an empty queue. The Worker still
+  // performs an unconditional poll every five minutes; verifier calls do not gate.
+  if (recentActivityOnly) {
+    const age = runtime.now() - cursor?.processedAt;
+    if (!Number.isSafeInteger(cursor?.processedAt) || cursor.processedAt < 0 ||
+        !Number.isFinite(age) || age < 0 || age >= 300000)
+      return { cursor, documents: [], pollDeferred: true };
+  }
   const query = { from: [{ collectionId: C.inbox }], orderBy: [
     { field: { fieldPath: 'receivedAt' }, direction: 'ASCENDING' },
     { field: { fieldPath: '__name__' }, direction: 'ASCENDING' }], limit };
@@ -78,8 +86,9 @@ export async function inboxPage(runtime, { projected = false, limit = 1 } = {}) 
   if (!Array.isArray(result)) throw Error('Unexpected event inbox query response');
   return { cursor, documents: result.filter(row => row.document).map(row => row.document) };
 }
-export async function consumeEventInbox(runtime, { preferRetry = false } = {}) {
-  const { cursor, documents } = await inboxPage(runtime);
+export async function consumeEventInbox(runtime, { preferRetry = false, recentActivityOnly = false } = {}) {
+  const { cursor, documents, pollDeferred } = await inboxPage(runtime, {recentActivityOnly});
+  if (pollDeferred) return { consumed: 0, pollDeferred: true };
   let retryDoc = preferRetry ? await dueRetry(runtime) : null;
   if (retryDoc || !documents.length) {
     if (!retryDoc && !preferRetry) retryDoc = await dueRetry(runtime);
@@ -119,7 +128,8 @@ export async function consumeEventInbox(runtime, { preferRetry = false } = {}) {
     if (same && (result.rejected || result.retry) && (!previousStatus || data.timeMs <= previousStatus.timeMs)) await tx.set(statusPath,
       { ownerUid: data.ownerUid, accountId: data.accountId, periodId: data.periodId, attemptId: data.attemptId,
         timeMs: data.timeMs, status: result.retry ? 'waiting' : 'rejected', reason: result.status, updatedAt: runtime.now() });
-    if (!retryDoc && JSON.stringify(current) === JSON.stringify(cursor)) await tx.set(path, { name: doc.name, receivedAt: data.receivedAt });
+    if (!retryDoc && JSON.stringify(current) === JSON.stringify(cursor)) await tx.set(path,
+      { name: doc.name, receivedAt: data.receivedAt, processedAt: runtime.now() });
   });
   return { consumed: 1, ...result };
 }
