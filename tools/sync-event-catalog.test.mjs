@@ -36,9 +36,37 @@ test('catalog replacement writes complete valid data and leaves no temporary fil
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'polytrack-catalog-replace-'));
   t.after(() => fs.rm(directory, {recursive: true, force: true}));
   const outputFile = path.join(directory, 'catalog.json');
-  await fs.writeFile(outputFile, 'old');
+  await fs.writeFile(outputFile, JSON.stringify({periods:[],archives:[]}));
   const backup = {periods: [{id: 'daily_test', trackId: 'a'.repeat(64), startsAt: 1, endsAt: 2}], archives: []};
   assert.equal((await syncPublicEventCatalog({outputFile, log: () => {}, fetchImpl: async () => Response.json(backup)})).deferred, false);
   assert.deepEqual(JSON.parse(await fs.readFile(outputFile, 'utf8')), backup);
   assert.deepEqual(await fs.readdir(directory), ['catalog.json']);
+});
+
+
+test('successful sync preserves existing archives before replacement with exactly one existing Worker fetch',async t=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'polytrack-catalog-history-'));
+ t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const outputFile=path.join(directory,'catalog.json');
+ const period={id:'old-frozen',kind:'daily',trackId:'a'.repeat(64),startsAt:1,endsAt:2};
+ await fs.writeFile(outputFile,JSON.stringify({periods:[],archives:[period]}));
+ const incoming={periods:[{...period,id:'new-live',startsAt:3,endsAt:4}],archives:[]};
+ let calls=0;
+ assert.deepEqual(await syncPublicEventCatalog({outputFile,log:()=>{},fetchImpl:async()=>{calls++;return Response.json(incoming);}}),{deferred:false});
+ const saved=JSON.parse(await fs.readFile(outputFile,'utf8'));
+ assert.equal(calls,1);assert.deepEqual(saved.periods,incoming.periods);
+ assert.deepEqual(saved.archives,[{...period,archived:true}]);
+ assert.deepEqual(await fs.readdir(directory),['catalog.json']);
+});
+
+test('malformed existing catalog is never silently overwritten by successful sync',async t=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'polytrack-catalog-invalid-history-'));
+ t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const outputFile=path.join(directory,'catalog.json');
+ for(const saved of ['broken-json',JSON.stringify({periods:[],archives:'bad'})]){
+  await fs.writeFile(outputFile,saved);
+  await assert.rejects(syncPublicEventCatalog({outputFile,log:()=>{},fetchImpl:async()=>Response.json({periods:[{id:'live',kind:'daily',trackId:'a'.repeat(64),startsAt:1,endsAt:2}],archives:[]})}));
+  assert.equal(await fs.readFile(outputFile,'utf8'),saved);
+  assert.deepEqual(await fs.readdir(directory),['catalog.json']);
+ }
 });

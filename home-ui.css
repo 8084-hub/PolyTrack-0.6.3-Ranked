@@ -1017,3 +1017,12 @@ html body .track-info-ui .leaderboard-ui > .button-wrapper:has(> [data-personal-
 /* Hide native home links until the native loading screen is disposed. */
 #ui:has(> .loading-screen-ui) > .menu-ui{visibility:hidden!important}
 .planner-explanation>summary svg{display:block;flex:none;pointer-events:none}
+
+/* One visible info ring, with a larger keyboard/touch target around it. */
+#overallProfilePopup .planner-explanation,#overallProfilePopup .planner-explanation[open]{flex-basis:44px!important}
+#overallProfilePopup .planner-explanation>summary{position:relative;width:44px!important;height:44px!important;border:0!important;border-radius:0;background:transparent!important;cursor:pointer}
+#overallProfilePopup .planner-explanation>summary::before{content:'';position:absolute;width:32px;height:32px;left:50%;top:50%;transform:translate(-50%,-50%);border:2px solid #92e7ff;border-radius:50%;background:#243f73;box-sizing:border-box;pointer-events:none}
+#overallProfilePopup .planner-explanation>summary svg{position:relative}
+#overallLeaderboardPanel .overall-category-control{grid-template-columns:minmax(0,1fr) 44px!important}
+#overallLeaderboardPanel .overall-category-info{width:44px;height:44px}
+@media(max-width:700px){#overallProfilePopup .profile-guide-controls{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 44px!important}}

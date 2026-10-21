@@ -172,3 +172,25 @@
   .polytrack-practice-profile .pp-content { gap: 8px; }
   .polytrack-practice-profile .pp-art { flex-basis: 56px; width: 56px; }
 }
+
+/* Cards align per row without empty status panels or fixed-height clipping. */
+.polytrack-practice-profile .pp-view-grid ul { align-items: stretch; }
+.polytrack-practice-profile .pp-view-grid .pp-track { display: flex; flex-direction: column; }
+.polytrack-practice-profile .pp-view-grid .pp-track-data { margin-top: auto; }
+.polytrack-practice-profile .pp-evidence-local { border-color: #ffb5a4; }
+.polytrack-practice-profile .pp-evidence-local strong { color: #ffc5b8; }
+.polytrack-practice-profile .pp-evidence-snapshot { border-color: #91c9ff; }
+.polytrack-practice-profile .pp-evidence-snapshot strong { color: #b8dcff; }
+.polytrack-practice-profile .pp-evidence-cloud { border-color: var(--pp-cyan); }
+.polytrack-practice-profile .pp-evidence-saved,
+.polytrack-practice-profile .pp-evidence-known { border-color: #a9b7d0; }
+.polytrack-practice-profile .pp-card-details { border-top: 1px solid #688bc466; }
+.polytrack-practice-profile .pp-card-details > summary { min-height: 44px; display: flex; align-items: center; gap: 8px; cursor: pointer; color: #bedbff; }
+.polytrack-practice-profile .pp-card-details > summary::after { content: '+'; margin-left: auto; color: var(--pp-amber); }
+.polytrack-practice-profile .pp-card-details[open] > summary::after { content: '-'; }
+.polytrack-practice-profile .pp-extra-evidence { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,180px),1fr)); gap: 8px; }
+.polytrack-practice-profile .pp-card-observations { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin: 8px 0 0; }
+.polytrack-practice-profile .pp-card-observations div { min-width: 0; }
+.polytrack-practice-profile .pp-card-observations dt { color: #bedbff; font-size: 13px; }
+.polytrack-practice-profile .pp-card-observations dd { margin: 3px 0 0; color: #fff; font-variant-numeric: tabular-nums; }
+.polytrack-practice-profile :is(button,summary,input,select):focus-visible { outline: 2px solid #b4f2ff; outline-offset: 3px; }

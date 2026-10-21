@@ -355,3 +355,28 @@ test('an old immutable snapshot board does not start a live background refresh',
  await context.getTrackEntries('track',10);await context.getTrackEntries('track',10);
  assert.equal(loads,0);assert.equal(context.trackEntryRequests.size,0);
 });
+
+test('selected live event replay bypasses a stale saved binding but matching snapshots stay read-free',async()=>{
+ const period='d_live',account='a'.repeat(64),track='b'.repeat(64);
+ const saved={periodId:period,accountId:account,trackId:track,timeMs:10000,runId:'old'},live={...saved,timeMs:9000,runId:'new'};
+ let cloud=0,gate;
+ const context=vm.createContext({eventReplayRequests:new Map(),readPublicSnapshotBackup:async kind=>kind==='event'?{archived:false}:saved,
+ rankedEdgeAvailable:()=>true,rankedBrokerUrl:()=> 'https://example.test',eventRequestSignal:()=>undefined,markRankedEdgeUnavailable:()=>{},
+ fetch:async()=>{cloud++;if(gate)await gate;return {ok:true,headers:new Headers(),text:async()=>JSON.stringify(live)};}});
+ vm.runInContext(section('  async function readEventReplay(', '  async function ensureEventUi('),context);
+ assert.equal(await context.readEventReplay(period,account,null,{timeMs:10000,trackId:track,runId:'old'}),saved);assert.equal(cloud,0);
+ let release;gate=new Promise(resolve=>release=resolve);
+ const expected={timeMs:9000,trackId:track,runId:'new'},a=context.readEventReplay(period,account,null,expected),b=context.readEventReplay(period,account,null,expected);
+ release();assert.equal((await a).timeMs,9000);assert.equal((await b).runId,'new');assert.equal(cloud,1,'concurrent selection shares the fallback');
+});
+test('frozen replay mismatches and unavailable live replays never return stale recordings',async()=>{
+ const period='d_old',account='a'.repeat(64),track='b'.repeat(64),saved={periodId:period,accountId:account,trackId:track,timeMs:10000};
+ let archived=true,cloud=0;
+ const context=vm.createContext({eventReplayRequests:new Map(),readPublicSnapshotBackup:async kind=>kind==='event'?{archived}:saved,
+ rankedEdgeAvailable:()=>{cloud++;return false;}});
+ vm.runInContext(section('  async function readEventReplay(', '  async function ensureEventUi('),context);
+ const expected={timeMs:9000,trackId:track};
+ await assert.rejects(context.readEventReplay(period,account,null,expected),/Archived replay/);assert.equal(cloud,0);
+ archived=false;await assert.rejects(context.readEventReplay(period,account,null,expected),/matching recording/);
+ assert.equal(cloud,1);
+});

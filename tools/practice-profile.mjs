@@ -102,7 +102,7 @@ function evidenceMarkup(evidence) {
   return '<p class="pp-evidence pp-evidence-known pp-evidence-' + source + '">' +
     '<strong>' + esc(evidenceLabel(source)) + '</strong>' +
     '<b>' + time(record.timeMs) + '</b>' +
-    '<span>' + esc(rank) + '</span>' +
+    (rank !== 'Placement not available' ? '<span>' + esc(rank) + '</span>' : '') +
     (age ? '<small class="pp-pb-age" title="Based on the PB timestamp in the saved result">PB recorded ' + esc(age) + '</small>' : '') +
     '</p>';
 }
@@ -142,12 +142,28 @@ function sessionDetailsMarkup(rows, lookup) {
     '</span></summary><div class="pp-session-rows">' + items + '</div></details>';
 }
 
+function cardDetails(row, evidence) {
+  const observations = row.observationVersion === 1 ? [
+    ['Focused', row.focusedMs], ['Paused', row.pausedMs],
+    ['Hidden / unfocused', row.hiddenMs], ['Observed moving', row.movingMs],
+    ['Stationary', row.stationaryMs]
+  ].filter(([, value]) => num(value) > 0) : [];
+  const additional = evidence.slice(1).map(evidenceMarkup).join('');
+  if (!additional && !observations.length) return '';
+  return '<details class="pp-card-details" data-pp-details-key="track:' + esc(row.trackId) + '">' +
+    '<summary aria-label="More history for ' + esc(row.trackName || row.trackId) + '">More history</summary>' +
+    (additional ? '<div class="pp-extra-evidence">' + additional + '</div>' : '') +
+    (observations.length ? '<dl class="pp-card-observations">' + observations.map(([label, value]) =>
+      '<div><dt>' + esc(label) + '</dt><dd>' + formatActiveTime(value) + '</dd></div>').join('') + '</dl>' : '') +
+    '</details>';
+}
+
 function card(row, lookup, preview, results) {
   const name = nameOf(row, lookup);
   const attempts = count(row.attempts);
   const finishes = count(row.finishes);
   const tracked = num(row.trackedBestMs);
-  const evidence = resultEvidence(results, row.trackId);
+  const evidence = resultEvidence(results, row.trackId).sort((a, b) => num(a.record.timeMs) - num(b.record.timeMs));
   const improvement = num(row.improvedMs ?? row.improvementMs);
   const metrics = [
     attempts ? { sort: 'attempts', text: attempts + (attempts === 1 ? ' attempt' : ' attempts') } : null,
@@ -162,7 +178,7 @@ function card(row, lookup, preview, results) {
   const lastPlayed = date(row.lastPlayedAt);
   const activeTime = num(row.activeMs) ? formatActiveTime(row.activeMs) : 'Not measured';
   const knownResults = evidence.length
-    ? evidence.map(evidenceMarkup).join('')
+    ? evidenceMarkup(evidence[0])
     : '';
   const trackedHistory = tracked || finishes ? '<p class="pp-evidence pp-evidence-tracked">' +
     '<strong>Tracked history</strong>' +
@@ -189,10 +205,10 @@ function card(row, lookup, preview, results) {
     (metrics.length ? '<p class="pp-track-data">' + metrics.map(value => '<span' +
       (value.sort ? ' class="pp-sort-' + value.sort + (value.zero ? ' pp-zero' : '') + '"' : '') + '>' + esc(value.text) + '</span>').join('') + '</p>' : '') +
     (num(row.sincePbMs)
-      ? '<p class="pp-since-pb" title="Measured drive time since the last observed best improvement">' +
-        esc(formatActiveTime(row.sincePbMs)) + ' since last recorded best</p>'
+      ? '<p class="pp-since-pb" title="Measured drive time; only PBs observed by practice tracking count here">' +
+        esc(formatActiveTime(row.sincePbMs)) + (num(row.lastPbAt) >= Date.UTC(2020, 0, 1) && num(row.lastPbAt) <= Date.now() ? ' since last recorded best' : ' without a tracked PB') + '</p>'
       : '') +
-    '</li>';
+    cardDetails(row, evidence) + '</li>';
 }
 
 function finishItems(rows, lookup) {
@@ -325,6 +341,13 @@ export function installPracticeProfileControls(root) {
     const visible = items.filter(item => !item.hidden);
     const key = sort?.value || 'recent';
     const sign = direction?.dataset.ppDirection === 'asc' ? 1 : -1;
+    if (direction) {
+      const label = sort?.selectedOptions?.[0]?.textContent || 'Practice history';
+      const order = sign === 1 ? 'ascending' : 'descending';
+      direction.textContent = sign === 1 ? '\u2191' : '\u2193';
+      direction.setAttribute('aria-label', label + ', ' + order + '. Switch to ' + (sign === 1 ? 'descending' : 'ascending'));
+      direction.title = direction.getAttribute('aria-label');
+    }
     const attribute = { active: 'activeMs', attempts: 'attempts', finishes: 'finishes', 'longest-hunt': 'longestHuntMs', improvement: 'improvementMs', recent: 'lastPlayed' }[key] || 'lastPlayed';
     section.dataset.ppSortKey = key;
     visible.sort((a, b) => {
@@ -367,4 +390,46 @@ export function installPracticeProfileControls(root) {
     direction?.removeEventListener('click', onDirection);
     root.removeEventListener('click', onView);
   };
+}
+
+
+// Keep only this profile's local view state; never persist it across racer identities.
+export function capturePracticeProfileView(root) {
+  if (!root) return null;
+  const active = root.ownerDocument?.activeElement;
+  const controls = ['[data-pp-search]', '[data-pp-sort]', '[data-pp-direction]', '[data-pp-view="grid"]', '[data-pp-view="list"]', '.pp-heading', '.pp-coverage-details > summary', '.pp-session-details > summary', '.pp-finishes > summary', '.pp-manage > summary'];
+  const focus = controls.find(selector => root.querySelector(selector) === active) || null;
+  const track = active?.closest?.('.pp-track');
+  const trackFocus = track && root.contains(active) ? {id: track.dataset.ppTrackId, selector: active.matches('.pp-art') ? '.pp-art' : active.matches('.pp-track-name-button') ? '.pp-track-name-button' : active.matches('.pp-card-details > summary') ? '.pp-card-details > summary' : null} : null;
+  const disclosures = ['.pp-coverage-details', '.pp-session-details', '.pp-finishes', '.pp-manage'];
+  return {open: root.open, search: root.querySelector('[data-pp-search]')?.value || '',
+    sort: root.querySelector('[data-pp-sort]')?.value || 'recent',
+    direction: root.querySelector('[data-pp-direction]')?.dataset.ppDirection || 'desc',
+    list: root.querySelector('[data-pp-view="list"]')?.getAttribute('aria-pressed') === 'true', focus, trackFocus,
+    selection: focus === '[data-pp-search]' ? [active.selectionStart, active.selectionEnd] : null,
+    openDisclosures: disclosures.filter(selector => root.querySelector(selector)?.open),
+    openTracks: [...root.querySelectorAll('[data-pp-details-key]')].filter(node => node.open).map(node => node.dataset.ppDetailsKey)
+  };
+}
+
+export function restorePracticeProfileView(root, state) {
+  if (!root || !state) return;
+  root.open = state.open;
+  const search = root.querySelector('[data-pp-search]'), sort = root.querySelector('[data-pp-sort]');
+  if (search) search.value = state.search;
+  if (sort && [...sort.options].some(option => option.value === state.sort)) sort.value = state.sort;
+  const direction = root.querySelector('[data-pp-direction]');
+  if (direction) direction.dataset.ppDirection = state.direction === 'asc' ? 'asc' : 'desc';
+  const Event = root.ownerDocument.defaultView.Event;
+  (sort || search)?.dispatchEvent(new Event(sort ? 'change' : 'input', {bubbles: true}));
+  if (state.list) root.querySelector('[data-pp-view="list"]')?.click();
+  for (const selector of state.openDisclosures || []) {
+    const node = root.querySelector(selector); if (node) node.open = true;
+  }
+  for (const node of root.querySelectorAll('[data-pp-details-key]')) node.open = (state.openTracks || []).includes(node.dataset.ppDetailsKey);
+  if (state.focus || state.trackFocus?.selector) {
+    const track = state.trackFocus ? [...root.querySelectorAll('.pp-track')].find(node => node.dataset.ppTrackId === state.trackFocus.id) : null;
+    const field = state.focus ? root.querySelector(state.focus) : track?.querySelector(state.trackFocus.selector); field?.focus({preventScroll: true});
+    if (state.selection && field?.setSelectionRange) field.setSelectionRange(...state.selection);
+  }
 }

@@ -104,6 +104,7 @@ jobs:
           NODE
           node "$RUNNER_TEMP/polytrack-replay-retry-cache.mjs" restore "$RUNNER_TEMP/polytrack-replay-retries/history.json" local-reports/snapshot-staging/export-progress.json
       - name: Capture public event assignments
+        id: catalog
         run: node tools/sync-event-catalog.mjs
       - name: Capture bounded public snapshots
         id: snapshot
@@ -111,8 +112,8 @@ jobs:
         # Only changed/missing trusted normal replays are fetched; bounded to 100 documents.
         run: node tools/update-public-snapshot.mjs --refresh-replays
       - name: Index all saved frozen event periods
-        if: steps.snapshot.outcome == 'success'
-        # Local files only. Recover history omitted by the live catalog's recent window.
+        if: always() && !cancelled() && steps.catalog.outcome == 'success'
+        # Local files only, including catalog-only and failed-capture runs; staging is optional.
         run: node tools/merge-frozen-event-catalog.mjs
       - name: Retain validated private replay retry ledger
         id: retry_checkpoint

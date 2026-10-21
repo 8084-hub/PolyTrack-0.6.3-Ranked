@@ -15,3 +15,21 @@ test('archive metadata is idempotent and excludes non-public board fields',()=>{
  const result=mergeFrozenEventCatalog({periods:[],archives:[]},[{period:{...period,privateNotes:'secret'},archived:true,entries:[]}]);
  assert.equal(result.archives[0].privateNotes,undefined);assert.deepEqual(mergeFrozenEventCatalog(result,[]),result);
 });
+
+
+test('previous archive history survives recent catalog replacement; fresh assignments and duplicate metadata win',()=>{
+ const prior={periods:[{...period,id:'stale-live'}],archives:[{...period,id:'missing',privateNotes:'exclude'}, {...period,id:'overlap',trackName:'Old name'}]};
+ const current={periods:[{...period,id:'fresh-live'}],archives:[{...period,id:'overlap',trackName:'Fresh name'}]};
+ const result=mergeFrozenEventCatalog(current,[],prior);
+ assert.equal(result.periods,current.periods);
+ assert.deepEqual(result.archives.map(row=>row.id),['missing','overlap']);
+ assert.equal(result.archives[0].privateNotes,undefined);
+ assert.equal(result.archives[0].archived,true);
+ assert.equal(result.archives[1].trackName,'Fresh name');
+ assert.deepEqual(mergeFrozenEventCatalog(current,[],result),result);
+ assert.equal(prior.archives[1].trackName,'Old name');
+});
+
+test('malformed saved catalogs fail before replacing any history',()=>{
+ assert.throws(()=>mergeFrozenEventCatalog({periods:[],archives:[]},[],{periods:[],archives:'bad'}),/Invalid saved event catalog/);
+});

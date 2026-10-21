@@ -172,6 +172,14 @@ function formatDate(value, locale) {
   }
 }
 
+function archivePeriodSearchText(period, resolveName, locale) {
+  const instant = new Date(period.endsAt);
+  const isoDate = Number.isFinite(instant.getTime()) ? instant.toISOString().slice(0, 10) : '';
+  return [resolveName(period), period.label, period.kind, period.id, formatDate(period.endsAt, locale), isoDate]
+    .join(' ')
+    .toLocaleLowerCase();
+}
+
 function defaultTime(value) {
   if (!Number.isFinite(value) || value <= 0) return 'No time';
   const minutes = Math.floor(value / 60000);
@@ -235,7 +243,7 @@ export function mountArchiveView(root, options = {}) {
   let searchQuery='',oldestFirst=false;
   const visiblePeriods = () => {
     const rows=periods.filter(period => (!['daily', 'weekly', 'kodub'].includes(period.kind) || enabledKinds.has(period.kind)) &&
-      (!searchQuery||[resolveName(period),period.label,period.kind,period.id].join(' ').toLocaleLowerCase().includes(searchQuery)));
+      (!searchQuery||archivePeriodSearchText(period,resolveName,locale).includes(searchQuery)));
     return oldestFirst?rows.reverse():rows;
   };
   const snapshots = options.snapshots instanceof Map ? options.snapshots : new Map(Object.entries(options.snapshots || {}));

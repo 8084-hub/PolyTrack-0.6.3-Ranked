@@ -337,3 +337,28 @@ test('archive search and chronological order reuse saved metadata without loadin
  const order=descendants(root,node=>node.tagName==='SELECT')[0];order.value='oldest';order.emit('change');
  assert.deepEqual(cards(),['older','newer']);assert.equal(loads,0);
 });
+
+test('archive search matches the locally formatted end date shown on the card',()=>{
+ const {root}=archiveFixture();let loads=0;
+ const endsAt=Date.UTC(2025,3,15,12);
+ mountArchiveView(root,{locale:'en-US',periods:[{id:'dated-event',kind:'daily',trackName:'Alpine',endsAt,maxRp:100}],loadSnapshot:()=>{loads++;}});
+ const card=descendants(root,node=>node.className==='sq-archive-event')[0];
+ const shownDate=descendants(card,node=>node.className==='sq-archive-date')[0].textContent.split(' | ')[0];
+ const search=descendants(root,node=>node.tagName==='INPUT'&&node.type==='search')[0];
+ search.value=shownDate;search.emit('input');
+ assert.equal(descendants(root,node=>node.className==='sq-archive-event').length,1);
+ assert.equal(loads,0);
+});
+
+test('archive search matches the stable ISO end date at a UTC date boundary',()=>{
+ const {root}=archiveFixture();let loads=0;
+ const endsAt=Date.parse('2025-01-01T00:00:00.000Z');
+ mountArchiveView(root,{locale:'en-US-u-ca-japanese',periods:[{id:'boundary-event',kind:'weekly',trackName:'Alpine',endsAt,maxRp:100}],loadSnapshot:()=>{loads++;}});
+ const card=descendants(root,node=>node.className==='sq-archive-event')[0];
+ const shownDate=descendants(card,node=>node.className==='sq-archive-date')[0].textContent.split(' | ')[0];
+ assert.doesNotMatch(shownDate,/2025-01-01/);
+ const search=descendants(root,node=>node.tagName==='INPUT'&&node.type==='search')[0];
+ search.value='2025-01-01';search.emit('input');
+ assert.equal(descendants(root,node=>node.className==='sq-archive-event').length,1);
+ assert.equal(loads,0);
+});

@@ -7,7 +7,7 @@ import { renderPracticeProfile, installPracticeProfileControls } from './practic
 const row = (overrides = {}) => ({
   trackId: 'track-a', trackName: 'Summer Run', activeMs: 125000, attempts: 7,
   finishes: 3, pbs: 1, bestMs: 47250, trackedBestMs: 47250, sincePbMs: 61000,
-  lastPlayedAt: Date.UTC(2026, 9, 17), ...overrides
+  lastPlayedAt: Date.UTC(2026, 9, 17), lastPbAt: Date.UTC(2026, 9, 17), ...overrides
 });
 
 test('renders compact summary and per-track useful data with trusted preview markup', () => {
@@ -127,7 +127,7 @@ test('baseline PB is never labelled an observed finish and invalid ranks are omi
 
 test('sparse cards keep evidence readable without inventing session measurements',()=>{
  const html=renderPracticeProfile({rows:[row({finishes:0,trackedBestMs:0,observationVersion:1,pausedMs:0,focusedMs:0})],results:[{trackId:'track-a',timeMs:47000,source:'snapshot'}]});
- assert.match(html,/Snapshot PB/);assert.match(html,/Placement not available/);assert.match(html,/7 attempts/);
+ assert.match(html,/Snapshot PB/);assert.doesNotMatch(html,/Placement not available/);assert.match(html,/7 attempts/);
  assert.doesNotMatch(html,/No finish recorded yet|pp-evidence-tracked|pp-evidence-unavailable/);
  assert.doesNotMatch(html,/pp-session-details|>Paused<|>Stationary</);
 });
@@ -237,7 +237,7 @@ test('practice identity and controls survive injected popup CSS in narrow grid a
       if ((await direction.getAttribute('data-pp-direction')) !== 'desc') await direction.click();
       assert.deepEqual(await ids(), descending);
       await direction.click();
-      assert.equal(await direction.getAttribute('aria-label'), 'Sort ascending');
+      assert.match(await direction.getAttribute('aria-label'), /ascending\. Switch to descending$/);
       assert.deepEqual(await ids(), ascending);
     }
     await page.locator('[data-pp-sort]').selectOption('active');
@@ -354,4 +354,14 @@ test('practice identity and controls survive injected popup CSS in narrow grid a
 test('observed session details are optional and known PBs remain separate from driven finishes',()=>{
  const html=renderPracticeProfile({rows:[row({observationVersion:1,focusedMs:90000,pausedMs:12000,movingMs:70000,motionObservedMs:80000,longestHuntMs:60000,biggestPbImprovementMs:350})],results:[{trackId:'track-a',timeMs:45000,source:'snapshot',rank:4,fieldSize:20}]});
  assert.match(html,/<details class="pp-session-details">/);assert.match(html,/Session details/);assert.match(html,/Largest driven PB gain/);assert.match(html,/Rank 4 of 20/);assert.match(html,/best 47.25s/);
+});
+
+test('practice without an observed PB does not imply a recorded PB timestamp',()=>{
+ const html=renderPracticeProfile({rows:[row({lastPbAt:0})]});
+ assert.match(html,/1m 1s without a tracked PB/);assert.doesNotMatch(html,/since last recorded best/);
+});
+test('secondary PB evidence stays available in a compact per-track disclosure',()=>{
+ const html=renderPracticeProfile({rows:[row()],results:[{trackId:'track-a',source:'snapshot',timeMs:48000},{trackId:'track-a',local:true,timeMs:46000}]});
+ assert.ok(html.indexOf('46.00s')<html.indexOf('48.00s'));assert.match(html,/data-pp-details-key="track:track-a"/);
+ assert.match(html,/More history for Summer Run/);assert.match(html,/Snapshot PB/);
 });

@@ -248,7 +248,7 @@ test('an empty event group reports unavailable replays instead of a deselection'
   assert.equal(h.messages.at(-1), 'No playable replays in these places.');
 });
 
-const period = { id: 'period' };
+const period = { id: 'period', trackId: 'b'.repeat(64) };
 const racer = (accountId, timeMs, name) => ({ accountId, timeMs, name, replayHash: `hash-${accountId}`, pending: false });
 const payload = row => ({ accountId: row.accountId, timeMs: row.timeMs, replayHash: row.replayHash });
 
@@ -338,12 +338,14 @@ test('waiting replay selection requests exact run and isolates verified cache',a
  const row={...racer('racer',1400,'Racer'),pending:true,runId:'a'.repeat(64)};
  h.bridge.readReplay=async(...args)=>{calls.push(args);return payload(row);};
  await h.selectReplay(period,row);
- assert.deepEqual(calls[0],[period.id,'racer',row.runId]);
+ assert.equal(calls[0].length,4);assert.deepEqual(calls[0].slice(0,3),[period.id,'racer',row.runId]);
+ assert.equal(calls[0][3].timeMs,row.timeMs);assert.equal(calls[0][3].trackId,period.trackId);assert.equal(calls[0][3].runId,row.runId);
  assert.equal(h.selected().ghost.racerId,'racer');
  assert.match(h.messages.at(-1),/unverified/);
  await h.selectReplay(period,{...row,pending:false,runId:undefined});
  assert.equal(calls.length,2);
  assert.equal(calls[1][2],null);
+ assert.equal(calls[1][3].timeMs,row.timeMs);assert.equal(calls[1][3].trackId,period.trackId);assert.equal(calls[1][3].runId,null);
 });
 
 test('a pending replay with unavailable asset never appears loaded',async()=>{

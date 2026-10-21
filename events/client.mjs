@@ -1,4 +1,4 @@
-import {archivePeriodCounts,catalogArchivePeriods,mountArchiveView} from './archive-view.mjs?v=172';
+import {archivePeriodCounts,catalogArchivePeriods,mountArchiveView} from './archive-view.mjs?v=173';
 import {preparePublishedEventGhost} from './public-replay.mjs';
 import {eventFinishPlace} from './placement.mjs';
 import {createEventSession,keepEventBest,matchingEventRuns} from './session.mjs';
@@ -569,7 +569,7 @@ export function installEvents(bridge){
     const key=(session.archive?'archive:':'live:')+period.id+'_'+row.accountId+'_'+row.timeMs+'_'+(row.runId||'verified'),failureKey=key+'_'+viewer;
     try{
       const failure=replayFailure(failureKey);if(failure)throw Error(failure);
-      let payload=replayCache.get(key);if(!payload)payload=await readReplay(period.id,row.accountId,row.pending?row.runId:null);
+      let payload=replayCache.get(key);if(!payload)payload=await readReplay(period.id,row.accountId,row.pending?row.runId:null,{timeMs:row.timeMs,trackId:period.trackId,runId:row.runId||null});
       if(session.archive&&!payload)throw Error('Saved archived replay is unavailable.');
       if(pendingGhosts.get(row.accountId)!==pending)return;
       if(!replayContextActive(session)){pendingGhosts.delete(row.accountId);tick();return;}
@@ -627,7 +627,7 @@ export function installEvents(bridge){
       try{
         const key=(session.archive?'archive:':'live:')+period.id+'_'+row.accountId+'_'+row.timeMs+'_'+(row.runId||'verified');
         const failureKey=key+'_'+accountId,failure=replayFailure(failureKey);if(failure)throw Error(failure);
-        let payload=replayCache.get(key);if(!payload)payload=await readReplay(period.id,row.accountId,row.pending?row.runId:null);
+        let payload=replayCache.get(key);if(!payload)payload=await readReplay(period.id,row.accountId,row.pending?row.runId:null,{timeMs:row.timeMs,trackId:period.trackId,runId:row.runId||null});
         if(session.archive&&!payload)throw Error('Saved archived replay is unavailable.');
         if(token!==topSelectionToken||requestToken!==replayRequest||pendingGhosts.get(row.accountId)!==pending||!replayContextActive(session))return null;
         const ghostKey=key+'_'+accountId;let ghost=preparedGhosts.get(ghostKey);
