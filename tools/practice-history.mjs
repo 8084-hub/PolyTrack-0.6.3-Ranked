@@ -5,6 +5,7 @@ export const HUNT_IDLE_MS=300000;
 const LIMIT=315576000000;
 const observedFields=['observedStartedAt','focusedMs','hiddenMs','pausedMs','progressingMs','movingMs','motionObservedMs','stationaryMs','idleMs','unobservedGapMs','longestHuntMs','biggestObservedImprovementMs','biggestPbImprovementMs','trackedBestMs','lastObservedFinishMs','lastObservedFinishAt'];
 const bounded=n=>Number.isFinite(n)&&n>=0?Math.min(LIMIT,n):0;
+const timestamp=(value,at)=>Number.isFinite(value)&&value>=0&&value<=at?value:0;
 function cleanHunt(value,at){return value&&Number.isFinite(value.startedAt)&&value.startedAt>=0&&value.startedAt<=at&&Number.isFinite(value.lastMovingAt)&&value.lastMovingAt>=value.startedAt&&value.lastMovingAt<=at?{startedAt:value.startedAt,lastMovingAt:value.lastMovingAt,movingMs:bounded(value.movingMs)}:null;}
 function cleanPlacement(value,at){return value&&Number.isSafeInteger(value.rank)&&value.rank>0&&Number.isSafeInteger(value.total)&&value.total>=value.rank&&value.exact===true&&value.complete===true&&value.authoritative===true&&Number.isFinite(value.timeMs)&&value.timeMs>0&&Number.isFinite(value.finishedAt)&&value.finishedAt>=0&&Number.isFinite(value.at)&&value.at>=value.finishedAt&&value.at<=at?{rank:value.rank,total:value.total,at:value.at,timeMs:value.timeMs,finishedAt:value.finishedAt,exact:true,complete:true,authoritative:true}:null;}
 export function createPracticeHistory({storage,now=Date.now,onChange=()=>{}}={}){
@@ -16,13 +17,14 @@ export function createPracticeHistory({storage,now=Date.now,onChange=()=>{}}={})
     if(!tracks||typeof tracks!=='object'||Array.isArray(tracks))continue;
     data.accounts[account]={};
     for(const [id,row] of Object.entries(tracks).filter(([id,row])=>HASH.test(id)&&row&&typeof row==='object').slice(0,MAX_TRACKS)){
-     const clean={};for(const field of ['activeMs','simulatedMs','trackingStartedAt','legacyActiveMs','improvedMs','sincePbMs','attempts','finishes','pbs','restarts','restartsSincePb','respawns','lastPlayedAt','lastPbAt','bestMs','furthestCheckpoint'])clean[field]=Number.isFinite(row[field])&&row[field]>=0?Math.min(row[field],field.endsWith('At')?now():315576000000):0;
+     const clean={};for(const field of ['activeMs','simulatedMs','trackingStartedAt','legacyActiveMs','improvedMs','sincePbMs','attempts','finishes','pbs','restarts','restartsSincePb','respawns','lastPlayedAt','lastPbAt','bestMs','furthestCheckpoint'])clean[field]=field.endsWith('At')?timestamp(row[field],now()):bounded(row[field]);
      // Earlier active totals used different sampling rules; preserve, never reconstruct them.
      clean.activeTimeVersion=2;
      clean.legacyActiveMs=row.activeTimeVersion===2?Math.min(clean.activeMs,clean.legacyActiveMs):clean.activeMs;
-     clean.recentFinishes=Array.isArray(row.recentFinishes)?row.recentFinishes.slice(-8).filter(r=>r&&Number.isFinite(r.timeMs)&&r.timeMs>0&&r.timeMs<=LIMIT).map(r=>({at:Number.isFinite(r.at)&&r.at>=0&&r.at<=now()?r.at:0,timeMs:r.timeMs,practiceMs:bounded(r.practiceMs),timingNote:r.timingNote===true})):[];
+     // Old loaders capped epoch dates at the duration limit. Their true dates are lost.
+     clean.recentFinishes=Array.isArray(row.recentFinishes)?row.recentFinishes.slice(-8).filter(r=>r&&Number.isFinite(r.timeMs)&&r.timeMs>0&&r.timeMs<=LIMIT).map(r=>({at:r.at===LIMIT?0:timestamp(r.at,now()),timeMs:r.timeMs,practiceMs:bounded(r.practiceMs),timingNote:r.timingNote===true})):[];
      clean.observationVersion=row.observationVersion===1?1:0;
-     for(const field of observedFields)clean[field]=field.endsWith('At')&&Number.isFinite(row[field])?Math.max(0,Math.min(now(),row[field])):bounded(row[field]);
+     for(const field of observedFields)clean[field]=field.endsWith('At')?timestamp(row[field],now()):bounded(row[field]);
      clean.hunt=cleanHunt(row.hunt,now());
      clean.firstPlacement=cleanPlacement(row.firstPlacement,now());
      clean.restartBuckets=Array.from({length:4},(_,index)=>Math.min(1e9,Math.max(0,Number(row.restartBuckets?.[index])||0)));
@@ -30,8 +32,9 @@ export function createPracticeHistory({storage,now=Date.now,onChange=()=>{}}={})
     }
    }
    for(const [id,row] of Object.entries(value.coverage||{}).filter(([id,row])=>HASH.test(id)&&row&&typeof row==='object').slice(0,MAX_ACCOUNTS)){
-    data.coverage[id]={};for(const key of ['startedAt','baselinePlaytimeMs','knownPlaytimeMs','observedVisibleMs'])data.coverage[id][key]=Math.max(0,Math.min(3155760000000,Number(row[key])||0));
+    data.coverage[id]={};for(const key of ['startedAt','baselinePlaytimeMs','knownPlaytimeMs','observedVisibleMs'])data.coverage[id][key]=key==='startedAt'?timestamp(row[key],now()):bounded(row[key]);
    }
+   dirty=JSON.stringify(data)!==JSON.stringify(value);
   }
  }catch{}
  const safe=n=>Number.isFinite(n)&&n>=0?n:0;
@@ -94,8 +97,8 @@ export function createPracticeHistory({storage,now=Date.now,onChange=()=>{}}={})
     // Only the observer's bounded prior idle spans may be reclassified as catch-up.
     const recovered=Math.min(2500,safe(correction.catchUpMs),safe(row.idleMs));
     const delta=current+recovered;if(!delta)return;start();
-    row.activeMs=safe(row.activeMs)+delta;row.simulatedMs=safe(row.simulatedMs)+Math.min(2500+recovered,safe(deltaMs));
-    row.sincePbMs=safe(row.sincePbMs)+delta;row.lastPlayedAt=now();
+    row.activeMs=bounded(safe(row.activeMs)+delta);row.simulatedMs=bounded(safe(row.simulatedMs)+Math.min(2500+recovered,safe(deltaMs)));
+    row.sincePbMs=bounded(safe(row.sincePbMs)+delta);row.lastPlayedAt=now();
     row.furthestCheckpoint=Math.max(safe(row.furthestCheckpoint),Math.min(10000,safe(checkpoint)));elapsed+=delta;
     row.idleMs-=recovered;row.progressingMs=bounded(row.progressingMs+recovered);
     const moving=Math.min(recovered,safe(correction.catchUpMovingMs));
@@ -118,9 +121,9 @@ export function createPracticeHistory({storage,now=Date.now,onChange=()=>{}}={})
  }
  function observeCoverage(accountId,totalPlaytimeMs,visibleMs=0){
   if(!HASH.test(accountId))return;
-  const total=safe(totalPlaytimeMs);let row=data.coverage[accountId];
+  const total=bounded(totalPlaytimeMs);let row=data.coverage[accountId];
   if(!row)row=data.coverage[accountId]={startedAt:now(),baselinePlaytimeMs:Math.max(0,total-Math.min(120000,safe(visibleMs))),knownPlaytimeMs:total,observedVisibleMs:0};
-  row.observedVisibleMs+=Math.min(120000,safe(visibleMs));row.knownPlaytimeMs=Math.max(row.knownPlaytimeMs,total,row.baselinePlaytimeMs+row.observedVisibleMs);
+  row.observedVisibleMs=bounded(row.observedVisibleMs+Math.min(120000,safe(visibleMs)));row.knownPlaytimeMs=bounded(Math.max(row.knownPlaytimeMs,total,row.baselinePlaytimeMs+row.observedVisibleMs));
   while(Object.keys(data.coverage).length>MAX_ACCOUNTS)delete data.coverage[Object.keys(data.coverage).find(id=>id!==accountId)];changed();
  }
  // Explicit callbacks only: never derive rank from a partial leaderboard page.

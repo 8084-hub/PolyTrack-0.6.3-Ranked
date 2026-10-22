@@ -54,7 +54,7 @@ function hooksFixture(){
     document:{hidden:false,getElementById:id=>nodes.get(id)||null,createElement:()=>element(),head:{appendChild:node=>nodes.set(node.id,node)},addEventListener:(name,callback)=>{listeners[name]=callback;}},
     window:{addEventListener:(name,callback)=>{listeners[name]=callback;}},
     localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)},
-    overallCategory:'overall',overallLoadState:{status:'snapshot',serverUpdatedAt:100000},publicSnapshotCapturedAt:100000,
+    renderEntries:()=>{},overallCategory:'overall',overallLoadState:{status:'snapshot',serverUpdatedAt:100000},publicSnapshotCapturedAt:100000,
     rankedManualRefreshFailed:false,rankedFreshnessTimer:0,publicSnapshotReaderPromise:Promise.resolve(reader),guestAccountId:'',
     cleanUserId:String,escapeHtml:String,canonicalRaceTimeMs:row=>row.timeMs,formatRp:value=>Number(value).toFixed(3),ageLabel:()=> '1h ago',
     readOverallSnapshotCache:()=>({source:'public-backup'}),applyRankedRefreshCooldown:()=>{},
@@ -66,22 +66,23 @@ function hooksFixture(){
   vm.runInContext(hooks+'\n'+fn('activeRankedAccountId')+'\n'+fn('updateRankedFreshness')+'\n'+fn('closeOverallPanel'),ctx);
   return {ctx,nodes,storage,overall,panel,reads:()=>reads,setInfo:value=>{info=value;},listeners};
 }
-test('real controller hooks render a separate own estimate, preserve canonical rows, and reuse baseline on reopen',async()=>{
+test('real controller hooks expose inline estimates without cards, preserve canonical rows, and reuse baseline on reopen',async()=>{
   const f=hooksFixture(),before=JSON.stringify(f.overall);
   await f.ctx.syncLocalOverallProjection();assert.equal(f.reads(),0);
   await f.ctx.acknowledgeLocalOverallPb('b',{trackId,timeMs:9000},Date.now());await f.ctx.syncLocalOverallProjection();
-  const card=f.nodes.get('localOverallEstimate');assert.ok(card);assert.match(card.innerHTML,/Pending verification/);assert.match(card.innerHTML,/Estimated|Provisional/);
+  assert.equal(f.nodes.has('localOverallEstimate'),false);assert.ok(f.ctx.currentLocalOverallResult()?.projection);
+  assert.equal(f.ctx.currentLocalOverallResult().projection.localPending,true);
   assert.match(f.nodes.get('overallFreshness').textContent,/Snapshot \+ local recalculation/);
   assert.equal(JSON.stringify(f.overall),before);const count=f.reads();
   f.ctx.closeOverallPanel(f.panel);await f.ctx.syncLocalOverallProjection();assert.equal(f.nodes.has('localOverallEstimate'),false);
-  f.panel.style.display='flex';await f.ctx.syncLocalOverallProjection();assert.ok(f.nodes.has('localOverallEstimate'));assert.equal(f.reads(),count);
+  f.panel.style.display='flex';await f.ctx.syncLocalOverallProjection();assert.ok(f.ctx.currentLocalOverallResult());assert.equal(f.nodes.has('localOverallEstimate'),false);assert.equal(f.reads(),count);
 });
-test('account and package changes immediately remove stale cards and the local freshness label',async()=>{
+test('account and package changes immediately discard inline estimates and the local freshness label',async()=>{
   const f=hooksFixture();await f.ctx.acknowledgeLocalOverallPb('b',{trackId,timeMs:9000},Date.now());await f.ctx.syncLocalOverallProjection();
   f.storage.set('polytrack-0.6.2-active-account-id','a');f.ctx.activeRankedAccountId();await new Promise(resolve=>setTimeout(resolve,5));
   await f.ctx.syncLocalOverallProjection();assert.equal(f.nodes.has('localOverallEstimate'),false);
   assert.doesNotMatch(f.nodes.get('overallFreshness').textContent,/local recalculation/);
-  f.storage.set('polytrack-0.6.2-active-account-id','b');await f.ctx.syncLocalOverallProjection();assert.ok(f.nodes.has('localOverallEstimate'));
+  f.storage.set('polytrack-0.6.2-active-account-id','b');await f.ctx.syncLocalOverallProjection();assert.ok(f.ctx.currentLocalOverallResult());assert.equal(f.nodes.has('localOverallEstimate'),false);
   const count=f.reads();f.setInfo({generation:44,epoch:1,baseUrl:'https://example.test/public-snapshots44/'});
   await f.ctx.syncLocalOverallProjection();assert.equal(f.nodes.has('localOverallEstimate'),false);assert.equal(f.reads(),count);
 });
@@ -99,4 +100,11 @@ test('controller child import carries the release query and remains executable w
   assert.match(text,/projectionUrl\.search=new URL\(import\.meta\.url\)\.search/);
   const module=await import(new URL('./overall-local-controller.mjs?integration-release=175',import.meta.url));
   assert.equal(typeof module.createLocalOverallController,'function');
+});
+
+test('inline presentation uses isolated copies and keeps snapshot comparison accessible',()=>{
+ assert.match(fn('sortedOverallEntries'),/localEstimateOrigin:\{score:row.score,rank:row.rank\}/);
+ assert.match(fn('renderEntryRow'),/Local estimate:/);assert.match(fn('renderEntryRow'),/Snapshot:/);
+ assert.match(fn('renderEntryRow'),/escapeHtml\(estimateTitle\)/);
+ assert.doesNotMatch(fn('renderLocalOverallProjection'),/createElement|insertAdjacentElement/);
 });

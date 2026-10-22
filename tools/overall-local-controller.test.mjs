@@ -142,24 +142,38 @@ test('oversized inflated planner data is refused before track downloads',async()
   const f=fixture();f.data.results.resultBundle=gzipSync(' '.repeat(6*1024*1024+1)).toString('base64');
   f.ack();const state=await f.controller.update();assert.equal(state.status,'unavailable');assert.equal(state.reason,'result_bundle_too_large');assert.equal(f.calls.length,2);
 });
-test('actual generation 43: decode sidecar, load all boards, and project without external requests',async()=>{
+test('current saved generation projects only with complete matching source boards, without external requests',async()=>{
   const {startResponsiveServer}=await import('./responsive-server.mjs');
   const {createPublicSnapshotReader}=await import('./public-snapshot-client.mjs');
-  const server=await startResponsiveServer();let trackReads=0,inflight=0,peak=0;
+  const server=await startResponsiveServer();let trackReads=0,inflight=0,peak=0;const sourceBoards=[];
   try {
-    const read=createPublicSnapshotReader({baseUrl:server.url+'/public-snapshots43/',packed:true,bootstrap:true,optimizedIndex:true,
+    const pointer=await (await fetch(server.url+'/snapshot-current.json')).json();
+    const generation=Number(pointer.currentdir.replace('public-snapshots',''));
+    const baseUrl=server.url+'/'+pointer.currentdir+'/';
+    const read=createPublicSnapshotReader({baseUrl,packed:true,bootstrap:true,optimizedIndex:true,
       fetchImpl:async(url,options)=>{assert.equal(new URL(url).origin,server.url);return fetch(url,options);}});
     const overall=await read('overall'),accountId=overall.entries[0].userId;
-    const first=await read('track',id),old=first.entries.find(row=>(row.accountId||row.userId)===accountId);
-    assert.ok(old);
-    const wrapped=async(kind,...args)=>{if(kind==='track'){trackReads++;inflight++;peak=Math.max(peak,inflight);}try{return await read(kind,...args);}finally{if(kind==='track')inflight--;}};
+    const first=await read('track',id),old=first.entries.find(row=>(row.accountId||row.userId)===accountId);assert.ok(old);
+    const wrapped=async(kind,...args)=>{if(kind==='track'){trackReads++;inflight++;peak=Math.max(peak,inflight);}try{const value=await read(kind,...args);if(kind==='track')sourceBoards.push({trackId:args[0],value});return value;}finally{if(kind==='track')inflight--;}};
     const controller=createLocalOverallController({storage:memory(),read:wrapped,
-      packageInfo:()=>({generation:43,epoch:0,baseUrl:server.url+'/public-snapshots43/'}),getAccount:()=>accountId,
+      packageInfo:()=>({generation,epoch:0,baseUrl}),getAccount:()=>accountId,
       isVisible:()=>true,now:()=>overall.updatedAt+1000});
     controller.acknowledge({accountId,trackId:id,timeMs:old.timeMs-1,acceptedAt:overall.updatedAt+1000});
-    const state=await controller.update();assert.equal(state.status,'projected',state.reason);
-    assert.equal(state.result.racers.length,570);assert.equal(state.result.publicRank,null);assert.equal(state.result.localPending,true);
-    assert.equal(trackReads,241);assert.ok(peak<=4);
-    await controller.update();assert.equal(trackReads,241);
+    const state=await controller.update();
+    const missing=sourceBoards.some(row=>!row.value);
+    const mismatched=sourceBoards.some(row=>row.value&&(row.value.updatedAt??row.value.builtAt??0)!==overall.trackCatalog.find(track=>track.trackId===row.trackId)?.updatedAt);
+    if(missing){assert.equal(state.status,'unavailable');assert.equal(state.reason,'missing_track');}
+    else if(mismatched){assert.equal(state.status,'unavailable');assert.equal(state.reason,'track_binding_mismatch');}
+    else{assert.equal(state.status,'projected',state.reason);assert.equal(state.result.racers.length,overall.entries.length);assert.equal(state.result.publicRank,null);assert.equal(state.result.localPending,true);}
+    assert.ok(peak<=4);assert.ok(trackReads<=overall.trackCatalog.length);
+    const count=trackReads;await controller.update();assert.equal(trackReads,count);
   }finally{await server.close();}
+});
+
+test('immutable source mismatch waits for a new snapshot instead of reloading every minute',async()=>{
+ const f=fixture();f.data.boards.get(id).updatedAt++;f.ack();
+ const first=await f.controller.update();assert.equal(first.status,'unavailable');assert.equal(first.reason,'track_binding_mismatch');
+ const reads=f.calls.length;f.advance(3600000);await f.controller.update();await f.controller.invalidate();assert.equal(f.calls.length,reads);
+ f.data.boards.get(id).updatedAt--;f.setInfo({generation:44,epoch:1,baseUrl:'http://local/public-snapshots44/'});f.ack();
+ assert.equal((await f.controller.update()).status,'projected');assert.ok(f.calls.length>reads);
 });

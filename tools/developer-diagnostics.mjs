@@ -10,6 +10,11 @@ const settingNames = new Set(['music', 'sound', 'showFps', 'showGhost', 'cameraS
 const insightSources = ['planner', 'profile', 'leaderboard', 'event', 'selection', 'unknown'];
 
 const selectNumbers = (row, fields) => Object.fromEntries(fields.map(key => [key, finite(row?.[key])]));
+// A previous storage loader confused epoch dates with capped durations.
+// Do not substitute a last-played/PB date for a finish whose date was lost.
+const recentPracticeFinishes = row => (Array.isArray(row?.recentFinishes) ? row.recentFinishes : []).slice(-8)
+ .filter(run => run && Number.isFinite(run.timeMs) && run.timeMs > 0 && run.timeMs <= 315576000000)
+ .map(run => ({ at: Number.isFinite(run.at) && run.at >= 0 && run.at <= Date.now() && run.at !== 315576000000 ? run.at : 0, timeMs: run.timeMs, practiceMs: Math.min(315576000000, finite(run.practiceMs)), timingNote: run.timingNote === true }));
 const opaqueId = value => typeof value === 'string' && value.length <= 256 && publicIdPattern.test(value) ? value : '';
 const sanitizeResult = row => ({
  trackId: hash(row?.trackId) ? row.trackId : '',
@@ -71,7 +76,7 @@ export function buildDeveloperReport({ practice = [], coverage = null, finishes 
   snapshot: { generation: finite(snapshot.generation), capturedAt: finite(snapshot.capturedAt) },
   viewport: selectNumbers(viewport, ['width', 'height', 'pixelRatio']),
   practiceCoverage: coverage ? { version: 2, scope: 'Known reported/device visible-time estimate, not full historical driving coverage', ...selectNumbers(coverage, ['startedAt', 'baselinePlaytimeMs', 'knownPlaytimeMs', 'observedVisibleMs', 'coverageFraction']) } : null,
-  practice: rows.map(row => ({ trackId: hash(row.trackId) ? row.trackId : '', trackName: cleanText(row.trackName), ...selectNumbers(row, numbers), ...practiceEvidence(row), resetTimingBuckets: Array.from({ length: 4 }, (_, i) => finite(row.restartBuckets?.[i])), recentFinishes: (Array.isArray(row.recentFinishes) ? row.recentFinishes : []).slice(-8).map(run => ({ ...selectNumbers(run, ['at', 'timeMs', 'practiceMs']), timingNote: run.timingNote === true })) })),
+  practice: rows.map(row => ({ trackId: hash(row.trackId) ? row.trackId : '', trackName: cleanText(row.trackName), ...selectNumbers(row, numbers), ...practiceEvidence(row), resetTimingBuckets: Array.from({ length: 4 }, (_, i) => finite(row.restartBuckets?.[i])), recentFinishes: recentPracticeFinishes(row) })),
   loadedResults: (Array.isArray(finishes) ? finishes : []).slice(0, 256).map(sanitizeResult),
   localResults: localRows.slice(0, 5000).map(sanitizeResult),
   insights: sanitizeInsights(insights),
@@ -82,7 +87,7 @@ export function buildDeveloperReport({ practice = [], coverage = null, finishes 
    collection: localData?.collection?{...selectNumbers(localData.collection,['blockedReads','nativeProfiles','profileCount','pbCount','savedTrackCount','savedTrackBytes']),scope:cleanText(localData.collection.scope)}:null,
    savedTracks: savedTrackRows.map(row => ({ name: cleanText(row?.name), savedAt: finite(row?.savedAt), bytes: finite(row?.bytes ?? (typeof row?.data === 'string' ? new TextEncoder().encode(row.data).length : 0)), ...(includesSavedTrackCodes ? { data: typeof row?.data === 'string' ? row.data : null } : {}) })),
    tracks: localTrackRows.map(row => ({ trackId: opaqueId(row?.trackId ?? row?.id), name: cleanText(row?.name), author: cleanText(row?.author), source: cleanText(row?.source), official: typeof row?.official === 'boolean' ? row.official : null })),
-   practice: localPracticeRows.map(row => ({ publicId: opaqueId(row?.publicId), trackId: opaqueId(row?.trackId), trackName: cleanText(row?.trackName), ...selectNumbers(row, numbers), ...practiceEvidence(row), resetTimingBuckets: Array.from({ length: 4 }, (_, i) => finite(row?.restartBuckets?.[i])), recentFinishes: (Array.isArray(row?.recentFinishes) ? row.recentFinishes : []).slice(-8).map(run => ({ ...selectNumbers(run, ['at', 'timeMs', 'practiceMs']), timingNote: run?.timingNote === true })) }))
+   practice: localPracticeRows.map(row => ({ publicId: opaqueId(row?.publicId), trackId: opaqueId(row?.trackId), trackName: cleanText(row?.trackName), ...selectNumbers(row, numbers), ...practiceEvidence(row), resetTimingBuckets: Array.from({ length: 4 }, (_, i) => finite(row?.restartBuckets?.[i])), recentFinishes: recentPracticeFinishes(row) }))
   } : null,
   truncation: {
    localResults: { omitted: Math.max(0, localRows.length - 5000) },

@@ -12,6 +12,10 @@ import {publicOverallBackup, publicTrackBackup, publicEventBackup, publicTrackRe
 
 const trackId = 'a'.repeat(64);
 const period = {id: 'daily_20261002', trackId, startsAt: 100, endsAt: 200, maxRp: 100, kind: 'daily'};
+// Keep live fixtures live throughout synthetic year-long capture/reuse tests.
+const livePeriod = {...period, endsAt: Date.UTC(2100, 0, 1)};
+const archiveResponse = value => Response.json(value, {headers: {'X-Archive-Document-Reads': '1'}});
+const archiveRepair = id => ({token: 'synthetic-private-token', periodIds: [id], maxRequests: 2});
 const overall = {updatedAt: 300, revision: 9, builtRevision: 9, sourceRevision: 9, algorithmVersion: 'v1',
   schemaVersion: 6, complete: true, entries: [{userId: 'racer', name: 'Racer', score: 10, replayHash: 'private',
     ownerUid: 'private', resultSamples: [{replay: 'private'}], bestTracks: [{trackId, rank: 1, replayHash: 'private'}]}],
@@ -62,18 +66,18 @@ test('validated legacy archives and recordings are reused indefinitely with no c
   const calls=[],logs=[];
   const fetchImpl=async input=>{
     const url=new URL(input);calls.push(url.pathname);
-    if(url.pathname.endsWith('/overall'))return Response.json({...overall,trackSummaries:[]});
-    if(url.pathname.endsWith('/catalog'))return Response.json({periods:[period],archives:[archived]});
+    if(url.pathname.endsWith('/overall'))return archiveResponse({...overall,trackSummaries:[]});
+    if(url.pathname.endsWith('/catalog'))return archiveResponse({periods:[livePeriod],archives:[archived]});
     if(url.pathname==='/v1/snapshot/track')return new Response('',{status:404});
-    if(url.pathname.includes('/replays/'))return Response.json({periodId:archived.id,trackId,accountId,
+    if(url.pathname.includes('/replays/'))return archiveResponse({periodId:archived.id,trackId,accountId,
       runId:'c'.repeat(64),timeMs:23,frames:23,replay,replayHash,carStyle:'native',
       verificationStatus:'verified',verified:true,eventRpEligible:true});
     const id=url.pathname.split('/').at(-2);
-    return Response.json(id===archived.id?{period:archived,id,updatedAt:220,archived:true,racerCount:1,
+    return archiveResponse(id===archived.id?{period:archived,id,updatedAt:220,archived:true,racerCount:1,
       entries:[{accountId,timeMs:23,name:'Racer'}]}:{id,updatedAt:220,archived:false,entries:[]});
   };
-  const capture=now=>runPublicSnapshotBackup({fetchImpl,directory,now,trackIds:[],log:line=>logs.push(JSON.parse(line))});
-  await capture(1000);calls.length=0;
+  const capture=(now,repair=false)=>runPublicSnapshotBackup({fetchImpl,directory,now,trackIds:[],log:line=>logs.push(JSON.parse(line)),...(repair?{archiveExport:archiveRepair(archived.id)}:{})});
+  await capture(1000,true);calls.length=0;
   const second=await capture(1000+365*86400000);
   assert.equal(calls.some(url=>url.includes('/daily_old/')),false);
   assert.equal(second.events[archived.id].checkedAt,1000);
@@ -82,11 +86,53 @@ test('validated legacy archives and recordings are reused indefinitely with no c
   const cached=JSON.parse(await fs.readFile(file,'utf8'));
   assert.equal(Object.hasOwn(cached,'complete'),false);
   assert.equal(Object.hasOwn(cached,'totalEntries'),false);
-  for(const change of [{complete:false},{sourceComplete:false},{publicationPending:true},{racerCount:2},{totalEntries:2}]) {
-    await fs.writeFile(file,JSON.stringify({...cached,...change}));calls.length=0;
-    await capture(1001+365*86400000);
-    assert.equal(calls.filter(url=>url==='/v1/events/daily_old/snapshot').length,1,JSON.stringify(change));
+  for(const change of [null,{}, {complete:false},{sourceComplete:false},{publicationPending:true},{racerCount:2},{totalEntries:2}]) {
+    if(change===null)await fs.unlink(file);else await fs.writeFile(file,JSON.stringify(Object.keys(change).length?{...cached,...change}:{}));calls.length=0;
+    const routine=await capture(1001+365*86400000);
+    assert.equal(calls.some(url=>url.includes('/daily_old/')),false,JSON.stringify(change));
+    assert.equal(routine.archivedEventsUnavailable,1);assert.ok(routine.eventsMissing>=1);
+    calls.length=0;
+    await capture(1002+365*86400000,true);
+    assert.equal(calls.filter(url=>url==='/v1/events/admin/archive-export/daily_old/snapshot').length,1,JSON.stringify(change));
+    assert.equal(calls.some(url=>url==='/v1/events/daily_old/snapshot'),false,'no public archive fallback');
     assert.equal(logs.at(-1).publicSnapshotBackup.archivedEventsReused,0);
+  }
+});
+
+test('missing or corrupt expired and archived standings never trigger routine Worker reads',async t=>{
+  for(const state of ['missing','corrupt']){
+    const directory=await fs.mkdtemp(path.join(os.tmpdir(),'polytrack-no-frozen-fallback-'));
+    t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+    const expired={...period,id:'daily_expired'},frozen={...period,id:'daily_frozen'},calls=[];
+    const records=Object.fromEntries([expired,frozen].map(row=>[row.id,{path:`events/${row.id}.json`,checkedAt:500}]));
+    await fs.writeFile(path.join(directory,'manifest.json'),JSON.stringify({schemaVersion:1,tracks:{},events:records}));
+    if(state==='corrupt'){
+      await fs.mkdir(path.join(directory,'events'));
+      for(const row of [expired,frozen])await fs.writeFile(path.join(directory,`events/${row.id}.json`),'{}');
+    }
+    const fetchImpl=async(input,init)=>{
+      const url=new URL(input);calls.push(url.pathname);
+      if(url.pathname.endsWith('/overall'))return Response.json({...overall,trackSummaries:[]});
+      if(url.pathname.endsWith('/catalog'))return Response.json({periods:[expired],archives:[frozen]});
+      if(url.pathname==='/v1/snapshot/track')return new Response('',{status:404});
+      if(url.pathname==='/v1/events/permanent-rolling-hills/snapshot')return Response.json({updatedAt:300,entries:[]});
+      assert.equal(url.pathname,'/v1/events/admin/archive-export/daily_expired/snapshot','only explicitly named admin repair may reach a frozen resource');
+      assert.equal(init.headers.get('X-Admin-Token'),'synthetic-private-token');
+      assert.equal(init.redirect,'error');
+      return archiveResponse({id:expired.id,period:expired,updatedAt:300,archived:true,complete:true,totalEntries:0,entries:[]});
+    };
+    const options={fetchImpl,directory,now:1000000000,trackIds:[],log:()=>{}};
+    const routine=await runPublicSnapshotBackup(options);
+    assert.equal(calls.some(url=>url.includes('/daily_expired/')||url.includes('/daily_frozen/')),false,state);
+    assert.equal(routine.archivedEventsUnavailable,2);assert.equal(routine.eventsMissing,2);
+    calls.length=0;
+    const repaired=await runPublicSnapshotBackup({...options,archiveExport:{...archiveRepair(expired.id),maxRequests:1}});
+    assert.equal(calls.filter(url=>url.includes('/admin/archive-export/')).length,1);
+    assert.equal(calls.some(url=>url.includes('/daily_frozen/')),false,'authorization does not extend to other frozen periods');
+    assert.equal(repaired.archivedEventsUnavailable,1);assert.equal(repaired.eventsMissing,1);
+    assert.ok(repaired.events[expired.id].path);
+    const saved=JSON.parse(await fs.readFile(path.join(directory,`events/${expired.id}.json`),'utf8'));
+    assert.equal(isReusableArchivedEventBackup(saved,expired.id),true);
   }
 });
 
@@ -174,29 +220,38 @@ test('archived standings and validated replays survive catalog rollover without 
   const fetchImpl=async input=>{
     const url=new URL(input);
     if(url.pathname==='/v1/snapshot/track')return new Response('',{status:404});
-    if(url.pathname.endsWith('/overall'))return Response.json({...overall,trackSummaries:[]});
-    if(url.pathname.endsWith('/catalog'))return Response.json({periods:[period],archives:listed?[archived]:[]});
-    if(url.pathname.includes('/replays/')){replayRequests++;return Response.json({periodId:archived.id,trackId,accountId,runId:'d'.repeat(64),timeMs:23,frames:23,replay,replayHash,carStyle:'public',verificationStatus:'verified',verified:true,eventRpEligible:true});}
+    if(url.pathname.endsWith('/overall'))return archiveResponse({...overall,trackSummaries:[]});
+    if(url.pathname.endsWith('/catalog'))return archiveResponse({periods:[livePeriod],archives:listed?[archived]:[]});
+    if(url.pathname.includes('/replays/')){replayRequests++;return archiveResponse({periodId:archived.id,trackId,accountId,runId:'d'.repeat(64),timeMs:23,frames:23,replay,replayHash,carStyle:'public',verificationStatus:'verified',verified:true,eventRpEligible:true});}
     const id=url.pathname.split('/').at(-2);
-    return Response.json({id,updatedAt:180,archived:id===archived.id,period:id===archived.id?archived:undefined,
+    return archiveResponse({id,updatedAt:180,archived:id===archived.id,period:id===archived.id?archived:undefined,
       entries:id===archived.id?[{accountId,name:'sh1t',timeMs:23,physicsVerified:true,replayIntegrityVerified:true}]:[]});
   };
-  const first=await runPublicSnapshotBackup({fetchImpl,directory,now:1000000000,trackIds:[],log:()=>{}});
+  const first=await runPublicSnapshotBackup({fetchImpl,directory,now:Date.UTC(2026,9,1),trackIds:[],log:()=>{},archiveExport:archiveRepair(archived.id)});
   assert.equal(replayRequests,1);
   const relative=`event-replays/${archived.id}/${accountId}.json`;
   assert.ok(first.eventReplays[relative]);
   listed=false;
-  const second=await runPublicSnapshotBackup({fetchImpl,directory,now:1000000001,trackIds:[],log:()=>{}});
+  const second=await runPublicSnapshotBackup({fetchImpl,directory,now:Date.UTC(2026,9,1)+1,trackIds:[],log:()=>{}});
   assert.equal(replayRequests,1,'unchanged recording is retained without another cloud read');
   assert.ok(second.events[archived.id]);assert.ok(second.eventReplays[relative]);
   const saved=JSON.parse(await fs.readFile(path.join(directory,`events/${archived.id}.json`),'utf8'));
   assert.equal(saved.entries[0].name,'Racer');assert.equal(saved.entries[0].replayHash,replayHash);
   const month=JSON.parse(await fs.readFile(path.join(directory,'archives/2026-09.json'),'utf8'));
   assert.equal(month.periods[0].id,archived.id);
-  await fs.writeFile(path.join(directory,relative),'{}');
-  await runPublicSnapshotBackup({fetchImpl,directory,now:1000000002,trackIds:[],log:()=>{}});
-  assert.equal(replayRequests,2,'corrupt recording is not reused');
+  for(const state of ['missing','corrupt']){
+    if(state==='missing')await fs.unlink(path.join(directory,relative));
+    else await fs.writeFile(path.join(directory,relative),'{}');
+    const before=replayRequests;
+    const routine=await runPublicSnapshotBackup({fetchImpl,directory,now:Date.UTC(2026,9,1)+2,trackIds:[],log:()=>{}});
+    assert.equal(replayRequests,before,state+' frozen replay never triggers routine Worker repair');
+    assert.equal(routine.eventReplays[relative],undefined,'unvalidated replay is not advertised');
+    const repaired=await runPublicSnapshotBackup({fetchImpl,directory,now:Date.UTC(2026,9,1)+3,trackIds:[],log:()=>{},archiveExport:archiveRepair(archived.id)});
+    assert.equal(replayRequests,before+1,'explicit bounded repair fetches the frozen replay');
+    assert.equal(repaired.eventReplays[relative].replayHash,replayHash);
+  }
 });
+
 
 test('transient overall and catalog failures preserve every existing backup without retries', async t => {
   for (const stage of ['overall', 'catalog', 'network', 'body', 'empty']) {
@@ -400,6 +455,26 @@ test('track registry parser and bounded selection prioritize dirty snapshots and
   assert.equal(PUBLIC_SNAPSHOT_LIMITS.trackFetches, 100);
 });
 
+test('missing known-source boards outrank speculative stale cached boards within the fetch budget',()=>{
+  const missingKnown='b'.repeat(64),staleSpeculative='c'.repeat(64),dirtyPresent='d'.repeat(64),unchanged='e'.repeat(64);
+  const now=10*86400000;
+  const summaries=[{trackId:missingKnown,updatedAt:21},{trackId:dirtyPresent,updatedAt:31},{trackId:unchanged,updatedAt:40}];
+  for(const missingRecord of [undefined,{path:null,missing:true,sourceUpdatedAt:20,checkedAt:now-1}]){
+    const previous={
+      [staleSpeculative]:{path:`tracks/${staleSpeculative}.json`,sourceUpdatedAt:1,checkedAt:1},
+      [dirtyPresent]:{path:`tracks/${dirtyPresent}.json`,sourceUpdatedAt:30,checkedAt:now-1},
+      [unchanged]:{path:`tracks/${unchanged}.json`,sourceUpdatedAt:40,checkedAt:1},
+      ...(missingRecord?{[missingKnown]:missingRecord}:{})
+    };
+    assert.deepEqual(chooseTrackFetches([staleSpeculative,missingKnown],summaries,previous,1,now),[missingKnown],
+      'known source work beats an older existing file with no source summary, even after a recent missing check');
+    assert.deepEqual(chooseTrackFetches([staleSpeculative,missingKnown,dirtyPresent,unchanged],summaries,previous,2,now),
+      [dirtyPresent,missingKnown],'dirty source first, then present before missing within the dirty tier');
+    assert.deepEqual(chooseTrackFetches([staleSpeculative,missingKnown,dirtyPresent,unchanged],summaries,previous,100,now),
+      [dirtyPresent,missingKnown,staleSpeculative],'speculative coverage remains eligible after known dirty work');
+  }
+});
+
 test('registry supports single/double quoted IDs and trailing commas without evaluating code', () => {
   const legacy = '5aafb733c264d51b09beedc7bd7eabb5e65bdded338980fcb14ae5ce36955572';
   const index = `const OFFICIAL_IDS = new Set(["${trackId}",]); const COMMUNITY_IDS = new Set([]);
@@ -479,10 +554,10 @@ test('bounded export keeps prior tracks, exports permanent event, and continues 
     const url = new URL(input); calls.push(url.pathname + url.search);
     if (url.pathname.endsWith('/v1/snapshot/overall')) return Response.json({...overall,
       trackSummaries: [{trackId, updatedAt: overallReadCount++ === 0 ? 250 : 251}]});
-    if (url.pathname.endsWith('/v1/events/catalog')) return Response.json({periods: [period], archives: []});
+    if (url.pathname.endsWith('/v1/events/catalog')) return Response.json({periods: [livePeriod], archives: []});
     if (url.pathname.endsWith('/v1/snapshot/track')) return Response.json({trackId, updatedAt: 251, revision: 1, entries: []});
     if (url.pathname.endsWith('/v1/events/permanent-rolling-hills/snapshot')) return Response.json({id: 'permanent-rolling-hills', updatedAt: 190, entries: []});
-    if (url.pathname.endsWith('/v1/events/daily_20261002/snapshot')) return Response.json({id: period.id, period, updatedAt: 180,
+    if (url.pathname.endsWith('/v1/events/daily_20261002/snapshot')) return Response.json({id: period.id, period: livePeriod, updatedAt: 180,
       entries: [{accountId: replayAccount, name: 'Racer', timeMs: 23, rp: 10, rank: 1}], pendingPlaybacks: [{runId: 'private'}]});
     if (url.pathname.endsWith(`/v1/events/${period.id}/replays/${replayAccount}`)) return Response.json({periodId: period.id,
       trackId, accountId: replayAccount, runId: 'd'.repeat(64), timeMs: 23, frames: 23, replay: replayData,
@@ -514,7 +589,7 @@ test('bounded export keeps prior tracks, exports permanent event, and continues 
   assert.ok(calls.length < firstCount);
 });
 
-test('complete finalized archives never expire, while live and incomplete events stay fresh', async t => {
+test('complete finalized archives never expire, while live events stay fresh and incomplete archives require opt-in repair', async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'polytrack-archive-reuse-'));
   t.after(() => fs.rm(directory, {recursive: true, force: true}));
   const archived = {...period, id: 'daily_old'};
@@ -522,13 +597,13 @@ test('complete finalized archives never expire, while live and incomplete events
   const fetchImpl = async input => {
     const url = new URL(input);
     if(url.pathname==='/v1/snapshot/track')return new Response('',{status:404}); calls.push(url.pathname);
-    if (url.pathname.endsWith('/v1/snapshot/overall')) return Response.json({...overall, trackSummaries: []});
-    if (url.pathname.endsWith('/v1/events/catalog')) return Response.json({periods: [period], archives: [archived]});
+    if (url.pathname.endsWith('/v1/snapshot/overall')) return archiveResponse({...overall, trackSummaries: []});
+    if (url.pathname.endsWith('/v1/events/catalog')) return archiveResponse({periods: [livePeriod], archives: [archived]});
     const id = url.pathname.split('/').at(-2);
-    return Response.json({id, updatedAt: 180, entries: [], complete:true, totalEntries:0, archived: id === archived.id});
+    return archiveResponse({id, period:id===archived.id?archived:id===livePeriod.id?livePeriod:undefined, updatedAt: 180, entries: [], complete:true, totalEntries:0, archived: id === archived.id});
   };
   const now = 1000000000;
-  await runPublicSnapshotBackup({fetchImpl, directory, now, trackIds: [], log: () => {}});
+  await runPublicSnapshotBackup({fetchImpl, directory, now, trackIds: [], log: () => {}, archiveExport:archiveRepair(archived.id)});
   calls.length = 0;
   await runPublicSnapshotBackup({fetchImpl, directory, now: now + 86400000, trackIds: [], log: () => {}});
   assert.equal(calls.some(url => url.includes('/daily_old/')), false);
@@ -545,11 +620,15 @@ test('complete finalized archives never expire, while live and incomplete events
   calls.length = 0;
   await runPublicSnapshotBackup({fetchImpl, directory,
     now: now + 365 * 86400000 + 1, trackIds: [], log: () => {}});
-  assert.ok(calls.some(url => url.includes('/daily_old/')));
+  assert.equal(calls.some(url => url.includes('/daily_old/')),false,'corrupt frozen standings never trigger routine Worker repair');
   await fs.writeFile(path.join(directory, `events/${archived.id}.json`),JSON.stringify({id:archived.id,updatedAt:180,entries:[],archived:true,complete:false}));
   calls.length=0;
   await runPublicSnapshotBackup({fetchImpl,directory,now:now+365*86400000+2,trackIds:[],log:()=>{}});
-  assert.ok(calls.some(url=>url.includes('/daily_old/')),'partial archives must still be repaired by the capture job');
+  assert.equal(calls.some(url=>url.includes('/daily_old/')),false,'partial frozen standings require explicit repair');
+  calls.length=0;
+  const repaired=await runPublicSnapshotBackup({fetchImpl,directory,now:now+365*86400000+3,trackIds:[],log:()=>{},archiveExport:archiveRepair(archived.id)});
+  assert.equal(calls.filter(url=>url==='/v1/events/admin/archive-export/daily_old/snapshot').length,1);
+  assert.equal(repaired.archivedEventsUnavailable,0);
 });
 
 test('public event projection preserves valid replay bindings across repeated captures', () => {
@@ -580,14 +659,14 @@ test('same-time replay replacements cannot reuse or publish a conflicting run bi
     const url = new URL(input);
     if(url.pathname==='/v1/snapshot/track')return new Response('',{status:404});
     if (url.pathname.endsWith('/overall')) return Response.json({...overall, trackSummaries: []});
-    if (url.pathname.endsWith('/catalog')) return Response.json({periods: [period], archives: []});
+    if (url.pathname.endsWith('/catalog')) return Response.json({periods: [livePeriod], archives: []});
     if (url.pathname.includes('/replays/')) {
       replayRequests++;
       return Response.json({...versions[replayVersion], periodId: period.id, trackId, accountId, timeMs: 23,
         frames: 23, carStyle: '', verificationStatus: 'verified', verified: true, eventRpEligible: true});
     }
     if (url.pathname.includes('/permanent-rolling-hills/')) return Response.json({updatedAt: 180, entries: []});
-    return Response.json({id: period.id, period, updatedAt: 180 + boardVersion,
+    return Response.json({id: period.id, period: livePeriod, updatedAt: 180 + boardVersion,
       entries: [{accountId, timeMs: 23, runId: versions[boardVersion].runId, replayHash: versions[boardVersion].replayHash}]});
   };
   const capture = now => runPublicSnapshotBackup({fetchImpl, directory, now, trackIds: [], log: () => {}});

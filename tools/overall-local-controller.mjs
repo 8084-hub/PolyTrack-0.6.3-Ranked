@@ -159,7 +159,9 @@ export function createLocalOverallController({storage, read, packageInfo, getAcc
         acceptedPbs: latest.map(row => ({...row, accepted: true}))});
       if (!current(ctx, token)) return;
       if (result.status === 'unavailable') {
-        failure = {key: ctx.packageKey, retryAt: now() + RETRY_MS, reason: result.reason};
+        // Validated static bytes cannot repair a model/version mismatch in place.
+        const waitingForSnapshot=['track_binding_mismatch','baseline_mismatch','result_binding_mismatch','generation_mismatch'].includes(result.reason);
+        failure = {key: ctx.packageKey, retryAt: waitingForSnapshot?Number.MAX_SAFE_INTEGER:now() + RETRY_MS, reason: result.reason};
         baseline = null;
         emit(ctx, {status: 'unavailable', reason: result.reason, retryAt: failure.retryAt, result});
       } else {

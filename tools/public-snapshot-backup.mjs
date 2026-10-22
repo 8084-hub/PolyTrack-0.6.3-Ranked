@@ -340,7 +340,7 @@ export function chooseTrackFetches(trackIds, summaries, previous = {}, limit = P
     return {id, prior, summary, dirty, missing, needsFetch: !same && (dirty || missing || staleWithoutSummary)};
   }).filter(row => row.needsFetch);
   const day = Math.floor(now / 86400000);
-  candidates.sort((a, b) => Number(!a.prior?.path) - Number(!b.prior?.path) || Number(b.dirty) - Number(a.dirty) ||
+  candidates.sort((a, b) => Number(b.dirty) - Number(a.dirty) || Number(!a.prior?.path) - Number(!b.prior?.path) ||
     (a.dirty && b.dirty ? Number(a.summary.updatedAt) - Number(b.summary.updatedAt) : 0) ||
     Number(a.prior?.checkedAt || 0) - Number(b.prior?.checkedAt || 0) ||
     crypto.createHash('sha256').update(`${day}:${a.id}`).digest('hex').localeCompare(
@@ -422,9 +422,10 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
   if (!catalog.periods.length && !catalog.archives.length && Object.keys(previous.events || {}).length) {
     throw new PublicBackupDeferredError('Empty event catalog; retaining saved event backups');
   }
-  const liveIds = new Set((catalog.periods || []).map(row => row.id));
+  const liveIds = new Set((catalog.periods || []).filter(row=>!(Number.isFinite(row.endsAt)&&row.endsAt+Math.max(0,Number(row.graceMs)||0)<=now)).map(row => row.id));
+  const archiveRepairIds=new Set(adminCapture?archiveExport.periodIds:[]);
   const eventFetchIds = [];
-  let archivedEventsReused = 0;
+  let archivedEventsReused = 0, archivedEventsUnavailable = 0;
   for (const id of selectedEvents) {
     const record = previous.events?.[id];
     let reusable = false;
@@ -438,6 +439,7 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
       } catch { /* A missing or invalid backup must be fetched again. */ }
     }
     if (reusable) archivedEventsReused++;
+    else if(!liveIds.has(id)&&id!=='permanent-rolling-hills'&&!archiveRepairIds.has(id))archivedEventsUnavailable++;
     else eventFetchIds.push(id);
   }
   // Missing and oldest archives go first, so a catalog larger than one batch
@@ -510,6 +512,8 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
           continue;
         } catch { /* A changed or corrupt replay must be replaced. */ }
       }
+      // Frozen history is never a paid fallback during routine publication.
+      if(!liveIds.has(id)&&id!=='permanent-rolling-hills'&&!archiveRepairIds.has(id))continue;
       if (replayCandidates.length >= PUBLIC_SNAPSHOT_LIMITS.eventReplayFetches) continue;
       replayCandidates.push({periodId: id, trackId: value.period.trackId, entry});
     }
@@ -607,13 +611,13 @@ async function capturePublicSnapshotBackup({fetchImpl = fetch, directory = outpu
     trackBackupsPresent: Object.values(nextTracks).filter(row => row.path).length,
     trackBackupsMissing: Math.max(0, allTrackIds.length - Object.values(nextTracks).filter(row => row.path).length),
     events: nextEvents, eventFetchLimit: PUBLIC_SNAPSHOT_LIMITS.eventFetches, eventIdsFetched: eventRows.length,
-    eventsMissing: missingEvents, eventReplays, eventReplayLimit: 30,
+    eventsMissing: missingEvents + archivedEventsUnavailable, archivedEventsUnavailable, eventReplays, eventReplayLimit: 30,
     trackSummaryMismatches,
     permanentRollingHills: nextEvents['permanent-rolling-hills'] || null};
   await writeJsonIfChanged(directory, 'manifest.json', manifest);
   log(JSON.stringify({publicSnapshotBackup: {workerRequests: 2 + trackRows.length + eventRows.length + replayCandidates.length + pageFetches, pageFetches,
     trackFetches: trackRows.length, tracksChanged, tracksMissing: missingTracks,
-    eventFetches: eventRows.length, archivedEventsReused, eventsChanged, eventsMissing: missingEvents,
+    eventFetches: eventRows.length, archivedEventsReused, archivedEventsUnavailable, eventsChanged, eventsMissing: missingEvents,
     ...(adminCapture ? {adminArchiveCapture:adminCapture.stats()} : {}),
     eventReplayCandidates: replayCandidates.length, eventReplays: Object.keys(eventReplays).length,
     plannerAvailable: planner.available, plannerReason: planner.reason}}));

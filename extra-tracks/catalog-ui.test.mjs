@@ -34,6 +34,51 @@ class FakeNode {
 }
 
 function walk(node) { return node.children.flatMap(child => [child, ...walk(child)]); }
+
+test('plain text search finds normalized track names, authors and shared aliases without changing display data', async () => {
+  const items = [entry(1, {name: 'B\u26f6XED IN', author: '\u{1d400}\u{1d425}\u{1d429}\u{1d421}\u{1d41a}'}), entry(2, {name: 'N\u00fcrburgring Nordschleife', author: 'Jos\u00e9'}), entry(3, {name: 'AO9-race', author: 'Zero\u200bWidth'})];
+  const original = JSON.stringify(items);
+  const {root, api} = fixture(items); api.open();
+  const search = tag(cls(root, 'sq-extra-search-field')[0], 'input')[0];
+  for (const [query, name] of [['boxed in', items[0].name], ['alpha', items[0].name], ['nuerburgring', items[1].name], ['jose', items[1].name], ['a09 race', items[2].name], ['zerowidth', items[2].name]]) {
+    search.value = query; await search.dispatch('input');
+    assert.deepEqual(cls(root, 'sq-extra-card').map(card => tag(card, 'h3')[0].textContent), [name], query);
+  }
+  assert.equal(JSON.stringify(items), original);
+  api.destroy();
+});
+
+test('grading help credits Window Cleaner and its search reveals a single external cat image', async () => {
+  const {root, api} = fixture([entry(1)]); api.open();
+  assert.match(cls(root, 'sq-extra-grading-help')[0].textContent, /Thanks to Window Cleaner for help with track gradings/);
+  const reveal = cls(root, 'sq-extra-cleaner')[0];
+  const search = tag(cls(root, 'sq-extra-search-field')[0], 'input')[0];
+  assert.equal(reveal.hidden, true); assert.equal(tag(reveal, 'img').length, 0);
+  for (const query of ['WINDOW-cleaner', 'window cleaner']) {
+    search.value = query; await search.dispatch('input');
+    assert.equal(reveal.hidden, false); assert.equal(tag(reveal, 'img').length, 1);
+    assert.equal(tag(reveal, 'img')[0].src, 'https://cdn.jsdelivr.net/gh/StaticQuasar931/Images@main/Window_Cleaner_Cat.jpg');
+  }
+  search.value = ''; await search.dispatch('input'); assert.equal(reveal.hidden, true);
+  api.destroy();
+});
+
+test('every filter option retains readable counts including selected published rating thresholds', async () => {
+  const entries = JSON.parse(fs.readFileSync(new URL('./catalog.json', import.meta.url), 'utf8')).slice(0, 3);
+  const {root, api} = fixture(entries); api.open();
+  const fields = cls(root, 'sq-extra-field');
+  for (const caption of ['Source', 'Catalog level', 'Progress', 'Review status', 'Rating', 'Difficulty', 'Votes']) {
+    const select = tag(fields.find(field => field._text === caption), 'select')[0];
+    for (const option of select.children) assert.match(option.textContent, / \(\d+\)$/, caption);
+    if (caption === 'Rating') {
+      select.value = '6'; await select.dispatch('change');
+      assert.equal(select.children.find(option => option.value === '6').textContent, 'At least 6/10 (2)');
+    }
+  }
+  assert.equal(cls(root, 'sq-extra-reviewed-count').length, 0);
+  assert.doesNotMatch(root.textContent, /one opinion|\d+ reviewers?/);
+  api.destroy();
+});
 function cls(root, name) { return walk(root).filter(node => node.className?.split(' ').includes(name)); }
 function tag(root, name) { return walk(root).filter(node => node.tagName === name.toUpperCase()); }
 function click(node) { return node.dispatch('click'); }
@@ -1024,9 +1069,9 @@ test('published reviews are independent of local activity and combine reviewed f
   api.open();
   const firstSort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
   firstSort.value = 'review-quality-high'; await firstSort.dispatch('change');
-  assert.match(cls(root, 'sq-extra-reviewed')[0].textContent, /Quality 9\/10Difficulty 7\/10.*1 reviewer - one opinion/);
-  assert.match(cls(root, 'sq-extra-my-review')[0].textContent, /My quality 1\/10 · My difficulty 2\/10/);
-  assert.equal(cls(root, 'sq-extra-reviewed')[0].getAttribute('aria-label'), '1 reviewer - one opinion');
+  assert.match(cls(root, 'sq-extra-reviewed')[0].textContent, /Rating 9\/10Difficulty 7\/10/);
+  assert.match(cls(root, 'sq-extra-my-review')[0].textContent, /My rating 1\/10 · My difficulty 2\/10/);
+  assert.equal(cls(root, 'sq-extra-reviewed')[0].getAttribute('aria-label'), 'Published rating and difficulty');
   const fields = cls(root, 'sq-extra-field');
   const select = caption => tag(fields.find(field => field._text === caption), 'select')[0];
   const names = () => cls(root, 'sq-extra-card').map(card => tag(card, 'h3')[0].textContent);
@@ -1034,13 +1079,13 @@ test('published reviews are independent of local activity and combine reviewed f
   assert.deepEqual(names(), [entries[1].name, entries[2].name, entries[0].name]);
   select('Sort').value = 'review-quality-high'; await select('Sort').dispatch('change');
   assert.deepEqual(names(), [entries[0].name, entries[2].name, entries[1].name]);
-  select('Quality').value = '6'; await select('Quality').dispatch('change');
+  select('Rating').value = '6'; await select('Rating').dispatch('change');
   assert.deepEqual(names(), [entries[0].name, entries[2].name]);
-  assert.equal(fields.find(field => field._text === 'Quality').children.at(-1).textContent, '2 tracks');
-  select('Reviewer votes').value = 'positive'; await select('Reviewer votes').dispatch('change');
+  assert.equal(fields.find(field => field._text === 'Rating').children.at(-1).textContent, '2 tracks');
+  select('Votes').value = 'positive'; await select('Votes').dispatch('change');
   assert.deepEqual(names(), [entries[2].name]);
   await click(cls(root, 'sq-extra-clear')[0]);
-  select('Reviewed difficulty').value = '7'; await select('Reviewed difficulty').dispatch('change');
+  select('Difficulty').value = '7'; await select('Difficulty').dispatch('change');
   assert.deepEqual(names(), [entries[0].name]);
   await click(cls(root, 'sq-extra-clear')[0]);
   select('Review status').value = 'edited'; await select('Review status').dispatch('change');
@@ -1073,12 +1118,12 @@ test('review sort labels stay short while the selected control exposes the full 
   const {root, api} = fixture(entries); api.open();
   const sort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
   for (const [value, label, description] of [
-    ['review-quality-high','Review quality: high','Reviewer quality scores, highest first'],
-    ['review-quality-low','Review quality: low','Reviewer quality scores, lowest first'],
-    ['review-difficulty-high','Review: hardest','Reviewer difficulty scores, hardest first'],
-    ['review-difficulty-low','Review: easiest','Reviewer difficulty scores, easiest first'],
-    ['review-votes-high','Review votes: high','Reviewer net votes, highest first'],
-    ['review-votes-low','Review votes: low','Reviewer net votes, lowest first']
+    ['review-quality-high','Rating: 10 to 1','Published ratings, highest first (10 to 1)'],
+    ['review-quality-low','Rating: 1 to 10','Published ratings, lowest first (1 to 10)'],
+    ['review-difficulty-high','Difficulty: 10 to 1','Published difficulty, hardest first (10 to 1)'],
+    ['review-difficulty-low','Difficulty: 1 to 10','Published difficulty, easiest first (1 to 10)'],
+    ['review-votes-high','Votes: highest first','Published net votes, highest first'],
+    ['review-votes-low','Votes: lowest first','Published net votes, lowest first']
   ]) {
     const option = sort.children.find(child => child.value === value);
     assert.equal(option.textContent, label);assert.ok(label.length <= 20);

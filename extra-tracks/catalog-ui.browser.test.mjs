@@ -11,6 +11,7 @@ const browserSkip = !chromium && 'Set PLAYWRIGHT_MODULE to the bundled Playwrigh
 const moduleSource = fs.readFileSync(new URL('./catalog-ui.mjs', import.meta.url), 'utf8');
 const reviewSource = fs.readFileSync(new URL('./review.mjs', import.meta.url), 'utf8');
 const reviewedModules = new Map(['reviewed.mjs', 'reviewed-data.mjs'].map(name => [name, fs.readFileSync(new URL('./' + name, import.meta.url), 'utf8')]));
+reviewedModules.set('tools/search-text.mjs', fs.readFileSync(new URL('../tools/search-text.mjs', import.meta.url), 'utf8'));
 const css = fs.readFileSync(new URL('./catalog.css', import.meta.url), 'utf8');
 const catalog = JSON.parse(fs.readFileSync(new URL('./catalog.json', import.meta.url), 'utf8'));
 const homeCss = fs.readFileSync(new URL('../home-ui.css', import.meta.url), 'utf8');
@@ -74,7 +75,7 @@ test('phone filter disclosure stays accessible and preserves state across rerend
     await page.setViewportSize({width: 844, height: 390});
     await page.waitForFunction(() => matchMedia('(max-width: 600px), (max-height: 650px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
     assert.equal(await advanced.isVisible(), true, 'desktop/tablet layout stays expanded');
-    assert.equal(await toggle.isHidden(), true, 'disclosure is hidden outside the phone breakpoint');
+    assert.equal(await toggle.isVisible(), true, 'short landscape keeps its disclosure visible');
     await page.setViewportSize({width: 390, height: 844});
     await page.waitForFunction(() => matchMedia('(max-width: 600px), (max-height: 650px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
     assert.equal(await advanced.isVisible(), true, 'expanded phone state survives a desktop round trip');
@@ -88,7 +89,7 @@ test('phone filter disclosure stays accessible and preserves state across rerend
     assert.equal(await search.evaluate(el => el === document.activeElement), true, 'reset returns focus to the always-visible search field');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'phone layout has no horizontal overflow');
     await page.setViewportSize({width: 844, height: 390});
-    await page.waitForFunction(() => !matchMedia('(max-width: 600px), (max-height: 650px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
+    await page.waitForFunction(() => matchMedia('(max-width: 600px), (max-height: 650px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
     assert.equal(await advanced.isVisible(), true, 'explicitly expanded filters stay usable in short landscape');
     await page.evaluate(() => window.catalog.destroy());
   } finally {

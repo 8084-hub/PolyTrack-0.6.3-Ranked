@@ -16,6 +16,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   verify:
+    outputs:
+      snapshot_needed: ${{ steps.verification.outputs.snapshot_needed }}
     if: vars.POLYTRACK_VERIFIER_ENABLED == 'true' && github.repository == 'StaticQuasar931/PolyTrack-0.6.3-Ranked' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.catch_up && 25 || 15 }}
@@ -68,6 +70,7 @@ jobs:
           node -e "(async()=>{const {chromium}=require('playwright');const browser=await chromium.launch({executablePath:chromium.executablePath(),chromiumSandbox:true,headless:true});await browser.close();console.log('Sandboxed browser startup passed.')})().catch(error=>{console.error(error);process.exit(1)})"
       # Scheduled runs keep normal limits. Catch-Up amortizes setup, never overlaps another verifier.
       - name: Verify queued runs
+        id: verification
         timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.catch_up && 15 || 10 }}
         if: steps.queue.outputs.has_work == 'true'
         env:
@@ -75,7 +78,17 @@ jobs:
           VERIFIER_CATCH_UP: ${{ github.event_name == 'workflow_dispatch' && inputs.catch_up && 'true' || 'false' }}
         run: |
           if [ "$VERIFIER_CATCH_UP" = "true" ]; then
-            node tools/verifier/run.mjs --drain --catch-up
+            node tools/post-verification-run.mjs --drain --catch-up
           else
-            node tools/verifier/run.mjs --drain
+            node tools/post-verification-run.mjs --drain
           fi
+
+  publish_snapshots:
+    needs: verify
+    if: needs.verify.result == 'success' && needs.verify.outputs.snapshot_needed == 'true' && vars.POLYTRACK_POST_VERIFY_SNAPSHOTS_ENABLED != 'false'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-verified-snapshots.yml
+    with:
+      publication_changed: true
+    # Deliberately no secrets inheritance. Capture uses public endpoints only.

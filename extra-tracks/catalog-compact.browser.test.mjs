@@ -8,7 +8,54 @@ let chromium;try{({chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright'
 const moduleSource=fs.readFileSync(new URL('./catalog-ui.mjs',import.meta.url),'utf8');
 const reviewSource=fs.readFileSync(new URL('./review.mjs',import.meta.url),'utf8');
 const reviewedModules = new Map(['reviewed.mjs', 'reviewed-data.mjs'].map(name => [name, fs.readFileSync(new URL('./' + name, import.meta.url), 'utf8')]));
+reviewedModules.set('tools/search-text.mjs', fs.readFileSync(new URL('../tools/search-text.mjs', import.meta.url), 'utf8'));
 const css=fs.readFileSync(new URL('./catalog.css',import.meta.url),'utf8');
+
+test('shared normalized search, selected counts and grading credit work in the browser',{skip:!chromium},async()=>{
+ const browser=await chromium.launch({headless:true});
+ try{
+  const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true});
+  const catUrl='https://cdn.jsdelivr.net/gh/StaticQuasar931/Images@main/Window_Cleaner_Cat.jpg';
+  const catRequests=[];
+  await page.route('**/*',route=>{
+   const url=route.request().url(),pathname=new URL(url).pathname.slice(1);
+   if(reviewedModules.has(pathname))return route.fulfill({contentType:'text/javascript',body:reviewedModules.get(pathname)});
+   if(url===catUrl){catRequests.push(url);return route.abort();}
+   if(url==='http://polish.test/')return route.fulfill({contentType:'text/html',body:'<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style><main id="root"></main>'});
+   if(url==='http://polish.test/catalog-ui.mjs')return route.fulfill({contentType:'text/javascript',body:moduleSource});
+   if(url==='http://polish.test/review.mjs')return route.fulfill({contentType:'text/javascript',body:reviewSource});
+   return route.abort();
+  });
+  await page.goto('http://polish.test/');await page.addStyleTag({content:fontCss+css});
+  const entries=JSON.parse(fs.readFileSync(new URL('./catalog.json',import.meta.url),'utf8')).slice(0,3);
+  await page.evaluate(async entries=>{
+   const {mountExtraTracks}=await import('/catalog-ui.mjs');
+   window.catalog=mountExtraTracks({document,root:document.querySelector('#root'),entries:[...entries,{id:'alias',name:'B\u26f6XED IN',author:'Jos\u00e9',source:'Test'}]});catalog.open();
+  },entries);
+  const search=page.getByRole('searchbox',{name:'Search tracks'});
+  for(const query of ['boxed in','jose']){
+   await search.fill(query);assert.equal(await page.locator('.sq-extra-card').count(),1);
+   assert.equal(await page.locator('.sq-extra-card h3').textContent(),'B\u26f6XED IN');
+  }
+  await search.fill('');await page.getByRole('button',{name:'Filters & sort',exact:true}).click();
+  await page.getByLabel('Rating',{exact:true}).selectOption('6');
+  assert.equal(await page.getByLabel('Rating',{exact:true}).locator('option:checked').textContent(),'At least 6/10 (2)');
+  assert.equal(await page.locator('.sq-extra-card').count(),2);
+  await page.getByRole('button',{name:'Reset filters',exact:true}).click();
+  const help=page.locator('.sq-extra-grading-help');await help.locator('summary').click();
+  assert.match(await help.innerText(),/Thanks to Window Cleaner for help with track gradings/);
+  assert.deepEqual(catRequests,[],'normal discovery does not request the cat');
+  await search.fill('window cleaner');
+  const cat=page.getByAltText('Window Cleaner cat');await cat.scrollIntoViewIfNeeded();
+  await page.waitForFunction(()=>document.querySelector('.sq-extra-cleaner img')?.complete);
+  assert.equal(await cat.getAttribute('src'),catUrl);
+  assert.equal(await page.locator('.sq-extra-cleaner').isVisible(),true);
+  assert.equal(await page.locator('.sq-extra-empty').count(),0,'the credit reveal is not called an empty search');
+  assert.deepEqual(catRequests,[catUrl],'only the requested external image URL is used');
+  await search.fill('');assert.equal(await page.locator('.sq-extra-cleaner').isHidden(),true);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ }finally{await browser.close();}
+});
 test('toolbar groups stay adjacent with expanded filters at requested sizes and never fetch catalog data',{skip:!chromium},async()=>{
  const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE}:{})});
  try{

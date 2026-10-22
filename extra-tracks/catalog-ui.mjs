@@ -1,15 +1,16 @@
+const { normalizeSearchText, searchMatches, searchAliases } = await import(new URL(`../tools/search-text.mjs${new URL(import.meta.url).search}`, import.meta.url));
 const { reviewedSummary, effectiveReviewTags, hasTagEdits, hasLocalReview, reviewTagOptions, tagLabel, reviewExportRow, hasReviewExportData } =
   await import(new URL(`review.mjs${new URL(import.meta.url).search}`, import.meta.url));
 
 const SUBMIT_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSel-vg-VwzQuA2dRTEPoKiLIUgDvJ4bCvjMI8u4hqB33gkvrQ/viewform';
 const PAGE_SIZE = 12;
 const REVIEW_SORT_DESCRIPTIONS = {
-  'review-quality-high': 'Reviewer quality scores, highest first',
-  'review-quality-low': 'Reviewer quality scores, lowest first',
-  'review-difficulty-high': 'Reviewer difficulty scores, hardest first',
-  'review-difficulty-low': 'Reviewer difficulty scores, easiest first',
-  'review-votes-high': 'Reviewer net votes, highest first',
-  'review-votes-low': 'Reviewer net votes, lowest first'
+  'review-quality-high': 'Published ratings, highest first (10 to 1)',
+  'review-quality-low': 'Published ratings, lowest first (1 to 10)',
+  'review-difficulty-high': 'Published difficulty, hardest first (10 to 1)',
+  'review-difficulty-low': 'Published difficulty, easiest first (1 to 10)',
+  'review-votes-high': 'Published net votes, highest first',
+  'review-votes-low': 'Published net votes, lowest first'
 };
 const SUBMISSION_PENDING_MESSAGE = 'A previous track submission is still processing.';
 const REPORT_PENDING_MESSAGE = 'A previous report is still processing.';
@@ -170,6 +171,9 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   });
   inviteRow.append(invitation, submit);
   dialog.append(inviteRow);
+  const gradingHelp = make('details', 'sq-extra-grading-help');
+  gradingHelp.append(make('summary', '', 'About ratings & difficulty'));
+  gradingHelp.append(make('p', '', 'Rating measures track quality; Difficulty measures challenge, both out of 10. Published grades stay separate from your ratings saved on this device. Thanks to Window Cleaner for help with track gradings.'));
 
 
 
@@ -186,6 +190,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   const selectField = (caption, choices) => {
     const label = make('label', 'sq-extra-field', caption);
     const select = make('select');
+    select.setAttribute('aria-label', caption);
     select.setAttribute('data-sq-control', caption.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
     for (const [value, name] of choices) {
       const option = make('option', '', name);
@@ -206,7 +211,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   const difficultyField = selectField('Catalog level', [['', 'Any level'], ...DIFFICULTY_LABELS.slice(1).map((label, index) => [String(index + 1), label])]);
   const progressLabels = {all: 'All tracks', activity: 'Has my activity', untouched: 'No activity yet', completed: 'Completed', uncompleted: 'Not completed', loaded: 'Imported, not completed'};
   const completionField = selectField('Progress', Object.entries(progressLabels));
-  const reviewField = selectField('Review status', [['all', 'All tracks'], ['edited', 'Reviewed by me'], ['not-edited', 'Not reviewed by me'], ['published', 'Has reviewer opinions'], ['no-published', 'No reviewer opinions']]);
+  const reviewField = selectField('Review status', [['all', 'All tracks'], ['edited', 'Reviewed by me'], ['not-edited', 'Not reviewed by me'], ['published', 'Has published ratings'], ['no-published', 'No published ratings']]);
   const baseSortChoices = [['recommended', 'Recommended'], ['name', 'Name A-Z'], ['author', 'Author A-Z']];
   const sortField = selectField('Sort', baseSortChoices);
   sortField.count.remove();
@@ -226,11 +231,11 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   quickFilters.append(favoritesLabel, curatedLabel);
   advancedControls.append(sourceField.label, tagField.label, difficultyField.label, completionField.label, reviewField.label, sortControls, quickFilters);
   const reviewedControls = make('div', 'sq-extra-reviewed-controls');
-  const reviewedCaption = make('span', 'sq-extra-reviewed-caption', 'Reviewer opinions');
-  const qualityField = selectField('Quality', [['', 'Any score'], ...Array.from({length: 10}, (_, i) => [String(i + 1), `At least ${i + 1}/10`])]);
-  const reviewedDifficultyField = selectField('Reviewed difficulty', [['', 'Any score'], ...DIFFICULTY_LABELS.slice(1).map((label, i) => [String(i + 1), `${i + 1}/10 - ${label}`])]);
-  reviewedDifficultyField.select.setAttribute('aria-description', 'Reviewed difficulty rounded to the nearest whole level.');
-  const voteField = selectField('Reviewer votes', [['', 'Any votes'], ['positive', 'Net positive'], ['negative', 'Net negative'], ['voted', 'Has votes'], ['unvoted', 'No votes']]);
+  const reviewedCaption = make('span', 'sq-extra-reviewed-caption', 'Published ratings');
+  const qualityField = selectField('Rating', [['', 'Any score'], ...Array.from({length: 10}, (_, i) => [String(i + 1), `At least ${i + 1}/10`])]);
+  const reviewedDifficultyField = selectField('Difficulty', [['', 'Any score'], ...DIFFICULTY_LABELS.slice(1).map((label, i) => [String(i + 1), `${i + 1}/10 - ${label}`])]);
+  reviewedDifficultyField.select.setAttribute('aria-description', 'Published difficulty rounded to the nearest whole level.');
+  const voteField = selectField('Votes', [['', 'Any votes'], ['positive', 'Net positive'], ['negative', 'Net negative'], ['voted', 'Has votes'], ['unvoted', 'No votes']]);
   reviewedControls.append(reviewedCaption, qualityField.label, reviewedDifficultyField.label, voteField.label);
   advancedControls.append(reviewedControls);
   controls.append(searchLabel, advancedToggle, advancedControls);
@@ -242,7 +247,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   count.setAttribute('role', 'status');
   count.setAttribute('aria-live', 'polite');
   search.setAttribute('aria-describedby', count.id);
-  summary.append(count);
+  summary.append(count, gradingHelp);
   dialog.append(summary);
   const submissionModal = make('div', 'sq-extra-submission-modal');
   submissionModal.hidden = true;
@@ -330,6 +335,11 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   list.id = `sq-extra-results-${mountNumber}`;
   search.setAttribute('aria-controls', list.id);
   dialog.append(list);
+  const cleanerReveal = make('figure', 'sq-extra-cleaner');
+  let cleanerImageCreated = false;
+  cleanerReveal.hidden = true;
+  cleanerReveal.append(make('figcaption', '', 'Window Cleaner - thanks for helping with track gradings!'));
+  dialog.append(cleanerReveal);
   const pagination = make('nav', 'sq-extra-pagination');
   pagination.setAttribute('aria-label', 'Track pages');
   dialog.append(pagination);
@@ -359,12 +369,12 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     if (all.some(entry => Number.isSafeInteger(entry.sizeBytes) && entry.sizeBytes >= 0)) choices.push(['size-largest', 'Largest track'], ['size-smallest', 'Smallest track']);
     if (all.some(entry => Number.isSafeInteger(entry.sourceCopies) && entry.sourceCopies >= 0 || Number.isSafeInteger(entry.sourcePlays) && entry.sourcePlays >= 0)) choices.push(['plays', 'Most plays']);
     if (all.some(entry => forumActivity(entry) !== null)) choices.push(['forum', 'Forum activity']);
-    if (typeof getLocalRating === 'function') choices.push(['my-rating', 'My ratings']);
+    if (typeof getLocalRating === 'function') choices.push(['my-rating', 'My rating: 10 to 1']);
     choices.push(['edited-first', 'My reviews first'], ['unedited-first', 'Not reviewed by me first']);
     if (all.some(entry => reviewedSummary(entry).count)) choices.push(
-      ['review-quality-high', 'Review quality: high'], ['review-quality-low', 'Review quality: low'],
-      ['review-difficulty-high', 'Review: hardest'], ['review-difficulty-low', 'Review: easiest'],
-      ['review-votes-high', 'Review votes: high'], ['review-votes-low', 'Review votes: low']);
+      ['review-quality-high', 'Rating: 10 to 1'], ['review-quality-low', 'Rating: 1 to 10'],
+      ['review-difficulty-high', 'Difficulty: 10 to 1'], ['review-difficulty-low', 'Difficulty: 1 to 10'],
+      ['review-votes-high', 'Votes: highest first'], ['review-votes-low', 'Votes: lowest first']);
     if (all.some(entry => Number.isFinite(Date.parse(entry.submittedAt || entry.codeModifiedAt)))) choices.push(['date-newest', 'Newest Track'], ['date-oldest', 'Oldest Track']);
 
     const capabilityKey = choices.map(([value]) => value).join('|');
@@ -589,19 +599,18 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     const reviewed = reviewedSummary(entry);
     if (reviewed.count) {
       const opinions = make('div', 'sq-extra-reviewed');
-      const label = `${reviewed.count} reviewer${reviewed.count === 1 ? '' : 's'}${reviewed.count === 1 ? ' - one opinion' : ' - opinions, not consensus'}`;
+      const label = 'Published rating and difficulty';
       opinions.setAttribute('aria-label', label);
       opinions.title = label;
       const number = value => Number.isInteger(value) ? String(value) : value.toFixed(1);
-      if (reviewed.quality !== null) opinions.append(make('span', 'sq-extra-reviewed-quality', `Quality ${number(reviewed.quality)}/10`));
+      if (reviewed.quality !== null) opinions.append(make('span', 'sq-extra-reviewed-quality', `Rating ${number(reviewed.quality)}/10`));
       if (reviewed.difficulty !== null) opinions.append(make('span', 'sq-extra-reviewed-difficulty', `Difficulty ${number(reviewed.difficulty)}/10`));
       if (reviewed.votes) opinions.append(make('span', 'sq-extra-reviewed-votes', `Votes: ${reviewed.up} up · ${reviewed.down} down`));
-      opinions.append(make('span', 'sq-extra-reviewed-count', `${reviewed.count} reviewer${reviewed.count === 1 ? ' - one opinion' : 's'}`));
       body.append(opinions);
     }
     const mine = make('p', 'sq-extra-my-review');
     const mineValues = [];
-    if (Number.isInteger(feedback.rating) && feedback.rating >= 1 && feedback.rating <= 10) mineValues.push(`My quality ${feedback.rating}/10`);
+    if (Number.isInteger(feedback.rating) && feedback.rating >= 1 && feedback.rating <= 10) mineValues.push(`My rating ${feedback.rating}/10`);
     if (Number.isInteger(feedback.difficultyRating) && feedback.difficultyRating >= 1 && feedback.difficultyRating <= 10) mineValues.push(`My difficulty ${feedback.difficultyRating}/10`);
     if (feedback.vote === 1 || feedback.vote === -1) mineValues.push(feedback.vote === 1 ? 'My vote: helpful' : 'My vote: not for me');
     if (mineValues.length) { mine.textContent = mineValues.join(' · '); body.append(mine); }
@@ -695,7 +704,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
         control.append(icon);
       }
       up.setAttribute('aria-pressed', String(feedback.vote === 1)); down.setAttribute('aria-pressed', String(feedback.vote === -1));
-      const ratingLabel = make('label', 'sq-extra-rating sq-extra-rating-quality', 'Track quality');
+      const ratingLabel = make('label', 'sq-extra-rating sq-extra-rating-quality', 'My rating');
       const rating = make('select');
       rating.setAttribute('aria-label', `My rating for ${text(entry.name, 'this track')}`);
       for (let n = 0; n <= 10; n++) { const option = make('option', '', n ? `${n}/10${n === 1 ? ' - Poor' : n === 10 ? ' - Excellent' : ''}` : 'Not rated'); option.value = String(n); rating.append(option); }
@@ -712,9 +721,9 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       };
       rating.addEventListener('change', () => saveRating(Number(rating.value)));
       rating.setAttribute('data-quick-rating', 'true');
-      const ratingHelp = make('span', 'sq-extra-rating-help', 'How good is it? 1-9 rate quality; 0 = 10.');
+      const ratingHelp = make('span', 'sq-extra-rating-help', 'Saved on this device. Keys: 1-9; 0 = 10.');
       ratingLabel.append(rating, ratingHelp); picks.append(up, down); moreMenu.append(picks);
-      const difficultyLabel = make('label', 'sq-extra-rating sq-extra-difficulty-rating sq-extra-rating-difficulty', 'Track difficulty');
+      const difficultyLabel = make('label', 'sq-extra-rating sq-extra-difficulty-rating sq-extra-rating-difficulty', 'My difficulty');
       const difficultyRating = make('select');
       difficultyRating.setAttribute('aria-label', `My difficulty rating for ${text(entry.name, 'this track')}`);
       difficultyRating.setAttribute('data-quick-rating', 'true');
@@ -889,7 +898,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       for (const tag of new Set(effectiveReviewTags(entry, feedback))) tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
     }
     options(sourceField.select, sources, 'All sources', state.source, sourceCounts);
-    options(tagField.select, tags, 'Add a tag', '');
+    options(tagField.select, tags, `Add a tag (${tags.length} tags)`, '');
     for (const option of tagField.select.children) if (option.value) {
       option.textContent = `${tagLabel(option.value)} (${tagCounts.get(option.value) || 0})`;
       if (!tagCounts.get(option.value)) option.disabled = true;
@@ -902,10 +911,6 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     filterCount(tagField, tagMatches === null ? `${tags.length} Tags` : `${tagMatches} tracks`);
     filterCount(difficultyField, state.difficulty ? difficultyCounts.get(state.difficulty) || 0 : all.length);
     syncAdvancedFilters();
-    for (const [field, value, fallback] of [[sourceField, state.source, 'All sources'], [difficultyField, state.difficulty, 'Any level']]) {
-      const selected = [...field.select.children].find(option => option.value === value);
-      if (selected) selected.textContent = value ? field === difficultyField ? `${value} · ${DIFFICULTY_LABELS[Number(value)]}` : value : fallback;
-    }
     tagSuggestions.replaceChildren();
     for (const tag of [...tagCounts].sort((a, b) => b[1] - a[1]).slice(0, 12)) {
       tagSuggestions.append(button(tagLabel(tag[0]), '', () => {
@@ -922,7 +927,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       remove.setAttribute('aria-label', `Remove ${tag.replaceAll('-', ' ')} tag`);
       selectedTags.append(remove);
     }
-    const query = state.search.toLowerCase();
+    const query = normalizeSearchText(state.search);
     const queryTokens = [...searchWords(query)];
     if (!cachedRecords) cachedRecords = all.map(entry => {
       let best = null, loaded = false, rating = null, favorite = false;
@@ -930,16 +935,17 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       try { loaded = typeof isLoaded === 'function' && Boolean(isLoaded(entry)); } catch { /* Local imports are optional. */ }
       try { rating = typeof getLocalRating === 'function' ? Number(getLocalRating(entry)) : null; } catch { /* Local ratings are optional. */ }
       try { favorite = getFeedback?.(entry)?.favorite === true; } catch { /* Device storage is optional. */ }
-      const searchName = text(entry.name, 'Untitled track').toLowerCase();
+      const searchName = normalizeSearchText(text(entry.name, 'Untitled track'));
       const feedback = feedbackById.get(entry.id) || {};
       const effectiveTags = effectiveReviewTags(entry, feedback);
-      const searchable = [entry.name, entry.author, entry.codeName, entry.codeAuthor, entry.source, entry.description, ...effectiveTags]
-        .map(value => text(value).toLowerCase()).join(' ');
+      const searchValues = [entry.name, entry.author, entry.codeName, entry.codeAuthor, entry.source, entry.description, ...effectiveTags];
+      // Cache alias expansion alongside device feedback, not on each keystroke.
+      const searchable = searchValues.flatMap(value => [value, ...searchAliases(value)]).map(normalizeSearchText).join(' ');
       return {
         entry, best, loaded, favorite, effectiveTags, edited: hasLocalReview(entry, feedback),
         activity: hasReviewExportData(reviewExportRow(entry, {feedback, imported: loaded, personalBestMs: best})),
         rating: Number.isFinite(rating) && rating >= 1 && rating <= 10 ? rating : null,
-        searchName, searchNameWords: searchWords(searchName), searchable, searchableWords: searchWords(searchable)
+        searchValues, searchName, searchNameWords: searchWords(searchName), searchable, searchableWords: searchWords(searchable)
       };
     });
     const compare = (a, b) => nameCollator.compare(text(a), text(b));
@@ -990,20 +996,16 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       option.textContent = `${name} (${progressCounts.get(option.value) || 0})`;
     }
     filterCount(completionField, progressCounts.get(state.completion) || 0);
-    const selectedProgress = [...completionField.select.children].find(option => option.value === state.completion);
-    if (selectedProgress) selectedProgress.textContent = progressLabels[state.completion];
     const reviewCounts = new Map([['all', cachedRecords.length], ['edited', 0], ['not-edited', 0], ['published', cachedRecords.filter(record => reviewedSummary(record.entry).count).length], ['no-published', cachedRecords.filter(record => !reviewedSummary(record.entry).count).length]]);
     for (const record of cachedRecords) reviewCounts.set(record.edited ? 'edited' : 'not-edited', reviewCounts.get(record.edited ? 'edited' : 'not-edited') + 1);
     for (const option of reviewField.select.children) {
-      const name = option.value === 'edited' ? 'Reviewed by me' : option.value === 'not-edited' ? 'Not reviewed by me' : option.value === 'published' ? 'Has reviewer opinions' : option.value === 'no-published' ? 'No reviewer opinions' : 'All tracks';
+      const name = option.value === 'edited' ? 'Reviewed by me' : option.value === 'not-edited' ? 'Not reviewed by me' : option.value === 'published' ? 'Has published ratings' : option.value === 'no-published' ? 'No published ratings' : 'All tracks';
       option.textContent = `${name} (${reviewCounts.get(option.value) || 0})`;
     }
     filterCount(reviewField, reviewCounts.get(state.review) || 0);
-    const selectedReview = [...reviewField.select.children].find(option => option.value === state.review);
-    if (selectedReview) selectedReview.textContent = state.review === 'edited' ? 'Reviewed by me' : state.review === 'not-edited' ? 'Not reviewed by me' : state.review === 'published' ? 'Has reviewer opinions' : state.review === 'no-published' ? 'No reviewer opinions' : 'All tracks';
-    let records = sortedRecordsCache.ordered.filter(({ entry, best, loaded, favorite, searchable, searchableWords, effectiveTags, edited, activity }) => {
+    let records = sortedRecordsCache.ordered.filter(({ entry, best, loaded, favorite, searchable, effectiveTags, edited, activity }) => {
       const review = reviewedSummary(entry);
-      const matchesSearch = !query || searchable.includes(query) || queryTokens.length > 0 && queryTokens.every(token => searchableWords.has(token));
+      const matchesSearch = !query || searchMatches(query, searchable);
       // A curator can mark a track by tier or by the curated tag.
       const isCurated = text(entry.tier).toLocaleLowerCase() === 'curated' ||
         (Array.isArray(entry.tags) && entry.tags.some(tag => text(tag).toLocaleLowerCase() === 'curated'));
@@ -1026,13 +1028,31 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     page = Math.min(page, pages);
     count.textContent = `${records.length} of ${all.length} tracks`;
     for (const [field, value, predicate] of [
-      [qualityField, state.reviewedQuality, entry => { const r = reviewedSummary(entry); return r.quality !== null && r.quality >= Number(state.reviewedQuality); }],
-      [reviewedDifficultyField, state.reviewedDifficulty, entry => { const r = reviewedSummary(entry); return r.difficulty !== null && Math.round(r.difficulty) === Number(state.reviewedDifficulty); }],
-      [voteField, state.reviewedVote, entry => { const r = reviewedSummary(entry); return state.reviewedVote === 'positive' ? r.up > r.down : state.reviewedVote === 'negative' ? r.down > r.up : state.reviewedVote === 'voted' ? r.votes > 0 : !r.votes; }]
-    ]) filterCount(field, `${value ? all.filter(predicate).length : all.length} tracks`);
+      [qualityField, state.reviewedQuality, (r, v) => r.quality !== null && r.quality >= Number(v)],
+      [reviewedDifficultyField, state.reviewedDifficulty, (r, v) => r.difficulty !== null && Math.round(r.difficulty) === Number(v)],
+      [voteField, state.reviewedVote, (r, v) => v === 'positive' ? r.up > r.down : v === 'negative' ? r.down > r.up : v === 'voted' ? r.votes > 0 : !r.votes]
+    ]) {
+      for (const option of field.select.children) {
+        const optionCount = option.value ? all.filter(entry => predicate(reviewedSummary(entry), option.value)).length : all.length;
+        const label = option.textContent.replace(/ \(\d+\)$/, '');
+        option.textContent = `${label} (${optionCount})`;
+      }
+      filterCount(field, `${value ? all.filter(entry => predicate(reviewedSummary(entry), value)).length : all.length} tracks`);
+    }
+    const showCleaner = ['window cleaner', 'windowcleaner'].includes(normalizeSearchText(query));
+    cleanerReveal.hidden = !showCleaner;
+    if (showCleaner && !cleanerImageCreated) {
+      const cat = make('img');
+      cat.src = 'https://cdn.jsdelivr.net/gh/StaticQuasar931/Images@main/Window_Cleaner_Cat.jpg';
+      cat.alt = 'Window Cleaner cat';
+      cat.loading = 'lazy';
+      cat.referrerPolicy = 'no-referrer';
+      cleanerReveal.append(cat);
+      cleanerImageCreated = true;
+    }
     list.replaceChildren();
     const visible = records.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-    if (!visible.length) {
+    if (!visible.length && !showCleaner) {
       const empty = make('div', 'sq-extra-empty');
       empty.setAttribute('role', 'status');
       empty.setAttribute('aria-live', 'polite');
