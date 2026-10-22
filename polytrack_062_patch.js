@@ -37,10 +37,10 @@
     moderators: '0.6.2_moderators'
   });
 
-  const eventsModuleUrl=new URL('./events/client.mjs?v=174',document.currentScript?.src||location.href).href;
+  const eventsModuleUrl=new URL('./events/client.mjs?v=175',document.currentScript?.src||location.href).href;
   const rankedFiltersModuleUrl=new URL('../tools/ranked-filters.mjs',eventsModuleUrl).href;
   const extraTracksBaseUrl=new URL('../extra-tracks/',eventsModuleUrl);
-  const extraCatalogRevision='174';
+  const extraCatalogRevision='175';
   const extraTrackIdsKey='polytrack-0.6.3-extra-track-ids-v1';
   const unrankedExtraBestKey='polytrack-0.6.3-unranked-extra-bests-v1';
   // Persist the oversized challenge policy even when it is launched from saved Custom Tracks.
@@ -58,12 +58,16 @@
   function loadKodubTrackHistory(){
     if(kodubHistoryLoad)return kodubHistoryLoad;
     kodubHistoryLoad=fetch(new URL('./kodub/history.json',eventsModuleUrl),{cache:'default',signal:eventRequestSignal(4000)}).then(async response=>{
-      if(!response.ok)return;
+      if(!response.ok)throw Error('Saved weekly track history is unavailable.');
       const records=await response.json();
-      if(!Array.isArray(records)||records.length>520)return;
+      let trusted=[];
+      try{const manifest=await fetch(new URL('./kodub/trusted-tracks.json',eventsModuleUrl),{cache:'default',signal:eventRequestSignal(4000)});if(manifest.ok)trusted=await manifest.json();}catch{}
+      if(!Array.isArray(trusted)||trusted.length>520)trusted=[];
+      if(!Array.isArray(records)||records.length>520)throw Error('Invalid saved weekly track history.');
       for(const record of records){
         if(!/^[a-f0-9]{64}$/.test(record?.trackId||'')||typeof record.name!=='string'||record.name.length>200||(record.thumbnailUrl!==null&&!/^assets\/[a-f0-9]{64}\.webp$/.test(record.thumbnailUrl||'')))continue;
-        kodubTrackHistory.set(record.trackId,{id:record.trackId,name:record.name,type:'custom',source:'kodub',displayType:'Kodub track',...(record.thumbnailUrl?{thumbnail:new URL('./kodub/'+record.thumbnailUrl,eventsModuleUrl).href}:{})});
+        const asset=trusted.find(entry=>entry?.trackId===record.trackId&&/^[a-f0-9]{64}$/.test(entry.codeHash||'')&&entry.assetPath==='assets/'+entry.codeHash+'.track');
+        kodubTrackHistory.set(record.trackId,{id:record.trackId,name:record.name,type:'custom',source:'kodub',displayType:'Kodub track',...(asset?{trackUrl:new URL('./kodub/'+asset.assetPath,eventsModuleUrl).href,codeHash:asset.codeHash}:{}),...(record.thumbnailUrl?{thumbnail:new URL('./kodub/'+record.thumbnailUrl,eventsModuleUrl).href}:{})});
       }
       for(const frame of document.querySelectorAll('[data-track-preview-id]')){
         const info=kodubTrackHistory.get(frame.dataset.trackPreviewId);
@@ -72,11 +76,12 @@
         image.src=info.thumbnail;image.alt=info.name+' thumbnail';image.loading='lazy';image.decoding='async';
         frame.replaceChildren(image);
       }
-    }).catch(()=>{});
+      if(!trusted.length)kodubHistoryLoad=null;
+    }).catch(()=>{kodubHistoryLoad=null;});
     return kodubHistoryLoad;
   }
   async function nativeWeeklyFeed(){
-    kodubAdapter=await import(new URL('./kodub-weekly.mjs?v=174',eventsModuleUrl).href);
+    kodubAdapter=await import(new URL('./kodub-weekly.mjs?v=175',eventsModuleUrl).href);
     await ensureEventUi();
     const response=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
     nativeWeeklySelection=response.current;
@@ -103,7 +108,7 @@
     if(localWeeklyCatalogRequest||Date.now()<localWeeklyCatalogUntil)return localWeeklyCatalogRequest;
     localWeeklyCatalogUntil=Date.now()+60000;
     const request=(async()=>{
-      kodubAdapter ||= await import(new URL('./kodub-weekly.mjs?v=174',eventsModuleUrl).href);
+      kodubAdapter ||= await import(new URL('./kodub-weekly.mjs?v=175',eventsModuleUrl).href);
       const feed=await kodubAdapter.loadKodubWeekly({baseUrl:eventsModuleUrl,brokerUrl:rankedBrokerUrl()});
       const current=feed.current,end=Date.parse(current?.endTime||'');
       localWeeklyCatalogUntil=current&&end>Date.now()?end:Date.now()+60000;
@@ -176,29 +181,51 @@
     if(eventCloudRequests.has(path))return eventCloudRequests.get(path);
     if(Date.now()<Number(eventCloudRetryAt.get(path)||0)){if(cached)return {...cached.value,_eventRefreshFailed:true};throw Error('Event data retry paused; showing saved results');}
     const request=loadEventCloudRead(path,collection,id,forceRefresh).then(incoming=>{
-      const value=chooseEventReadValue(cached?.value,incoming,id);
+      const value=incoming?.archived===true?incoming:chooseEventReadValue(cached?.value,incoming,id);
       const end=path==='/v1/events/catalog'?Math.min(...(value.periods||[]).map(p=>Number(p.endsAt)).filter(t=>t>Date.now())):0;
-      const ttl=path==='/v1/events/catalog'&&Number.isFinite(end)?Math.max(1,end-Date.now()):5*60000;
+      const ttl=path==='/v1/events/catalog'&&Number.isFinite(end)?Math.max(1,end-Date.now()):Math.max(1,Math.min(5*60000,Number(value.period?.endsAt)>Date.now()?Number(value.period.endsAt)-Date.now():5*60000));
       eventCloudCache.set(path,{value,until:Date.now()+ttl});
       if(eventCloudCache.size>128)eventCloudCache.delete(eventCloudCache.keys().next().value);
       return value;
-    }).catch(error=>{if(error?.eventRateLimited){if(cached)return {...cached.value,_eventRefreshFailed:true};throw error;}noteFirebaseQuota(error);eventCloudRetryAt.set(path,Date.now()+5*60000);if(eventCloudRetryAt.size>256)eventCloudRetryAt.delete(eventCloudRetryAt.keys().next().value);if(cached)return {...cached.value,_eventRefreshFailed:true};throw error;});
+    }).catch(error=>{if(error?.eventArchiveOnly)throw error;if(error?.eventRateLimited){if(cached)return {...cached.value,_eventRefreshFailed:true};throw error;}noteFirebaseQuota(error);eventCloudRetryAt.set(path,Date.now()+5*60000);if(eventCloudRetryAt.size>256)eventCloudRetryAt.delete(eventCloudRetryAt.keys().next().value);if(cached)return {...cached.value,_eventRefreshFailed:true};throw error;});
     eventCloudRequests.set(path,request);
     request.finally(()=>eventCloudRequests.delete(path)).catch(()=>{});
     return request;
   }
+  async function readEventCatalog(){return localEventCatalog();}
+  function currentDailyEventPeriod(at=Date.now()){
+    // Same UTC-midnight boundaries and date key used by the server event schedule.
+    const startsAt=Math.floor(at/86400000)*86400000;
+    return {id:'d_'+new Date(startsAt).toISOString().slice(0,10).replaceAll('-',''),startsAt,endsAt:startsAt+86400000};
+  }
+  function readEventSnapshot(value,period){
+    const actual=value?.period;
+    return !!actual&&(value.id===undefined||value.id===period.id)&&actual.id===period.id&&actual.kind===period.kind&&actual.trackId===period.trackId&&actual.startsAt===period.startsAt&&actual.endsAt===period.endsAt&&actual.maxRp===period.maxRp&&actual.startsAt<=Date.now()&&Date.now()<actual.endsAt&&value.archived!==true&&actual.scheduleOnly!==true&&Number.isSafeInteger(value.updatedAt)&&value.updatedAt>=0&&Array.isArray(value.entries);
+  }
   async function loadEventCloudRead(path,collection,id,forceRefresh=false){
-    if(path==='/v1/events/catalog')try{return await localEventCatalog();}catch{}
-    const published=await readPublicSnapshotBackup(id==='totals'?'event-totals':'event',id);
+    if(path==='/v1/events/catalog')try{return await readEventCatalog();}catch{}
+    let published=await readPublicSnapshotBackup(id==='totals'?'event-totals':'event',id);
+    let daily=null;
+    if(path==='/v1/events/'+encodeURIComponent(id)+'/snapshot'&&/^(?:w_[0-9]{8}|kodub_[0-9]+)$/.test(id)){
+      const date=/^w_([0-9]{4})([0-9]{2})([0-9]{2})$/.exec(id);
+      const end=date?Date.UTC(Number(date[1]),Number(date[2])-1,Number(date[3]))+7*86400000:Number(id.slice(6));
+      if(Number.isFinite(end)&&Date.now()>=end){if(published?.archived===true&&published.period?.id===id)return published;throw Error('Archived event standings are not included in the saved data yet.');}
+    }
+    if(/^d_[0-9]{8}$/.test(id)&&path==='/v1/events/'+encodeURIComponent(id)+'/snapshot'){
+      if(published?.archived===true){
+        if(published.period?.id===id&&(published.id===undefined||published.id===id)&&published.period.kind==='daily'&&/^[a-f0-9]{64}$/.test(published.period.trackId||'')&&Array.isArray(published.entries)&&Number.isSafeInteger(published.updatedAt)&&published.updatedAt>=0)return published;
+        const error=Error('Saved archived standings do not match this event.');error.eventArchiveOnly=true;throw error;
+      }
+      const catalog=await readEventCatalog(),expected=currentDailyEventPeriod();
+      daily=id===expected.id?(catalog.periods||[]).find(period=>period.id===expected.id&&period.kind==='daily'&&period.archived!==true&&period.enabled!==false&&period.startsAt===expected.startsAt&&period.endsAt===expected.endsAt):null;
+      if(!daily){if(published?.archived===true&&published.period?.id===id)return published;throw Error('Archived event standings are not included in the saved data yet.');}
+      if(published&&!readEventSnapshot(published,daily))published=null;
+    }
     if(published&&(!forceRefresh||published.archived===true))return published;
-    if(snapshotOnlyForNewAccount()){
+    if(snapshotOnlyForNewAccount()&&!daily){
       const saved=published;
       if(saved)return saved;
       throw Error('Snapshot standings unavailable for this event. Live leaderboard refresh unlocks after 15 minutes and your first saved finish; run submissions still work.');
-    }
-    if(collection==='0.6.2_event_public'&&path.endsWith('/snapshot')){
-      const saved=await readPublicSnapshotBackup('event',id);
-      if(saved?.archived===true)return saved;
     }
     let eventRateLimited=false;
     if(Date.now()>=Number(eventCloudRetryAt.get(path)||0)){
@@ -212,7 +239,9 @@
         if(!response.headers.get('content-type')?.includes('application/json'))throw Error('Event service unavailable');
         if(!response.ok){const error=Error('Event service unavailable');error.serviceResponse=true;throw error;}
         let payload=await response.json();
-        if(payload?.pagination){const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=174');const saved=await readPublicSnapshotBackup(id==='totals'?'event-totals':'event',id);payload=await completeRankedSnapshot(payload,{saved,kind:id==='totals'?'event-totals':'event',trackId:id,endpoint:rankedBrokerUrl()});}
+        if(daily&&!readEventSnapshot(payload,daily))throw Error('Event service returned standings for a different period.');
+        if(payload?.pagination){const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=175');const saved=await readPublicSnapshotBackup(id==='totals'?'event-totals':'event',id);payload=await completeRankedSnapshot(payload,{saved,kind:id==='totals'?'event-totals':'event',trackId:id,endpoint:rankedBrokerUrl()});}
+        if(daily&&!readEventSnapshot(payload,daily))throw Error('Event service returned standings for a different period.');
         return {...payload,_eventLiveCheckedAt:Date.now()};
         }
       }catch(error){eventCloudRetryAt.set(path,Date.now()+5*60000);log('warn','[EVENT403] Event refresh failed; retaining saved standings',String(error?.message||error));}
@@ -226,7 +255,7 @@
       }catch{}
     }
     const backup=await readPublicSnapshotBackup(id==='totals'?'event-totals':'event',id);
-    if(backup)return {...backup,_publicBackup:true,_eventRefreshFailed:true};
+    if(backup&&(!daily||readEventSnapshot(backup,daily)))return {...backup,_publicBackup:true,_eventRefreshFailed:true};
     if(eventRateLimited){const error=Error('Event service rate limited; retry after cooldown');error.eventRateLimited=true;throw error;}
     throw Error('Event standings are not included in the current snapshot. Your local runs remain saved.');
   }
@@ -1649,8 +1678,9 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   async function openDeveloperInformation(practiceOnly=false,returnFocus=document.activeElement){
     await initializePracticeHistory();
-    const module=await import('./tools/developer-diagnostics.mjs?v=174');
-    const {collectLocalDiagnostics}=await import('./tools/local-diagnostics.mjs?v=174');
+    practiceObserver?.sample();
+    const module=await import('./tools/developer-diagnostics.mjs?v=175');
+    const {collectLocalDiagnostics}=await import('./tools/local-diagnostics.mjs?v=175');
     const localData=await collectLocalDiagnostics({storage:localStorage,hashToken:sha256Hex,localRows:readLocalRaceRows(),trackInfo,practiceRows:id=>practiceHistory?.list(id)||[],profileInfo:id=>overallEntriesCache.find(row=>cleanUserId(row.userId||row.accountId)===id)||{name:getLastKnownName(id)},activeId:activeRankedAccountId()});
     module.openDiagnostics({practiceOnly,returnFocus,report:includePublicId=>{
       const account=activeRankedAccountId(),entry=overallEntriesCache.find(row=>cleanUserId(row.userId||row.accountId)===account);
@@ -1663,6 +1693,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         events:developerEvents,viewport:{width:innerWidth,height:innerHeight,pixelRatio:devicePixelRatio}});
     }});
   }
+  let practiceObserver=null;
   let practiceHistory=null,practiceAdviceFor=()=>({factor:1,text:''}),renderPracticeProfile=()=>'',installPracticeProfileControls=()=>{},capturePracticeProfileView=()=>null,restorePracticeProfileView=()=>{};
 
   let practiceFullWarmTimer=0,practiceWarmTrack='';const practiceFullWarmed=new Set(),predictedWarmTracks=new Set();
@@ -1684,12 +1715,13 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function initializePracticeHistory(){
     if(practiceInitPromise)return practiceInitPromise;
     practiceInitPromise=(async()=>{
-      const module=await import('./tools/practice-history.mjs?v=174');
+      const module=await import('./tools/practice-history.mjs?v=175');
       let storage;try{storage=window.localStorage;}catch{}
       practiceHistory=module.createPracticeHistory({storage});practiceAdviceFor=module.practiceAdvice;
-      const insightsModule=await import('./tools/local-insights.mjs?v=174');
-      localInsights=insightsModule.createLocalInsights({storage,revision:174});
-      const profileModule=await import('./tools/practice-profile.mjs?v=174');renderPracticeProfile=profileModule.renderPracticeProfile;installPracticeProfileControls=profileModule.installPracticeProfileControls;capturePracticeProfileView=profileModule.capturePracticeProfileView;restorePracticeProfileView=profileModule.restorePracticeProfileView;
+      const insightsModule=await import('./tools/local-insights.mjs?v=175');
+      localInsights=insightsModule.createLocalInsights({storage,revision:175});
+      void import('./tools/control-usage.mjs?v=175').then(module=>module.installControlUsage({document,record:(menu,control)=>localInsights?.control(menu,control)})).catch(()=>{});
+      const profileModule=await import('./tools/practice-profile.mjs?v=175');renderPracticeProfile=profileModule.renderPracticeProfile;installPracticeProfileControls=profileModule.installPracticeProfileControls;capturePracticeProfileView=profileModule.capturePracticeProfileView;restorePracticeProfileView=profileModule.restorePracticeProfileView;
       document.addEventListener('toggle',event=>{if(event.target.matches?.('.profile-guide')&&event.target.open)localInsights.action('planner-open');},true);
       window.addEventListener('error',()=>localInsights.action('runtime-error'));
       window.addEventListener('unhandledrejection',()=>localInsights.action('unhandled-rejection'));
@@ -1697,11 +1729,11 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible')localInsights.flush(true);});
       const account=activeRankedAccountId(),own=overallEntriesCache.find(row=>cleanUserId(row.userId||row.accountId)===account);
       practiceHistory.observeCoverage(account,Math.max(currentPlaytimeMs(),Number(own?.totalPlaytimeMs||0)));
-      const native=await import('./tools/practice-native.mjs?v=174');
+      const native=await import('./tools/practice-native.mjs?v=175');
       for(let attempt=0;attempt<10;attempt++){
         const require=__pt062WebpackRequire();
         if(require){
-          try{native.installPracticeObserver({require,history:practiceHistory,accountId:activeRankedAccountId,
+          try{practiceObserver=native.installPracticeObserver({require,history:practiceHistory,accountId:activeRankedAccountId,
             bestMs:(accountId,trackId)=>{const row=readTrackSnapshotCache(trackId)?.entries?.find(row=>cleanUserId(row.accountId||row.userId)===accountId);const values=[localPersonalBestMs(trackId,accountId),canonicalRaceTimeMs(row)].filter(value=>Number.isFinite(value)&&value>0);return values.length?Math.min(...values):0;},
             visible:()=>document.visibilityState==='visible'&&document.hasFocus(),onTrack:warmPlayedTrack,onLeave:()=>{practiceWarmTrack='';clearTimeout(practiceFullWarmTimer);localInsights?.leave();}});break;}
           catch(error){if(error?.message==='practice_binding_already_active')break;}
@@ -2531,7 +2563,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   let firebaseAuthAppLoader=null;
   function ensureFirebaseAuthApp(){
-    if(!firebaseAuthAppLoader)firebaseAuthAppLoader=import('./tools/firebase-auth-app.mjs?v=174').then(({createFirebaseAuthApp})=>createFirebaseAuthApp({window,loadScript,resolveFirebaseConfig,waitForInitialAuth,assertOnlineCompatibility})).catch(error=>{firebaseAuthAppLoader=null;throw error;});
+    if(!firebaseAuthAppLoader)firebaseAuthAppLoader=import('./tools/firebase-auth-app.mjs?v=175').then(({createFirebaseAuthApp})=>createFirebaseAuthApp({window,loadScript,resolveFirebaseConfig,waitForInitialAuth,assertOnlineCompatibility})).catch(error=>{firebaseAuthAppLoader=null;throw error;});
     return firebaseAuthAppLoader.then(ensure=>ensure());
   }
   async function db(){
@@ -3057,7 +3089,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Events have separate cards; never decorate the ordinary version of a track.
     document.querySelectorAll('.sq-weekly-title').forEach(title=>title.classList.remove('sq-weekly-title'));
   }
-  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=174',eventsModuleUrl).href;
+  const recordPlacementModuleUrl=new URL('../tools/record-placement.mjs?v=175',eventsModuleUrl).href;
   let recordPlacementUi=null,recordPlacementUiPromise=null,recordPlacementWarningShown=false;
   let recordPlacementOverallKey='',recordPlacementOverallPlacements=null,recordPlacementOverallSnapshot=null;
   let placementSnapshotGeneration=-1;
@@ -4057,11 +4089,15 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
 
   function rankedHelpMarkup(){
     const groups=[
+      ['Main menu',[
+        ['P / Space','Play.'],['R','Rankings.'],['G','Garage.'],['S','Settings.'],
+        ['M','Multiplayer.'],['E','Track editor.'],['C','Community.'],['H','Help.'],['1-9','Open that menu button.']
+      ]],
       ['Rankings and pages',[
-        ['1 / 2 / 3 / 4','Open the matching Quick Ranking.'],
+        ['1-4','Open that Quick Ranking.'],
         ['Left / Right or A / D','Previous / next page. Also works in track boards, Extra Tracks and archives.'],
-        ['Shift + 1..9 / 0','Jump to page 1..9 / 10.'],
-        ['Shift + plus / minus, then number','Move that many pages in Overall Rankings. Release Shift to reset.'],
+        ['Shift + number','Go to that page. 0 = page 10.'],
+        ['Shift + plus/minus + number','Move forward/back that many pages.'],
         ['Page field + Enter','Go to a typed page. Left and right buttons also switch pages.'],
         ['Right-click Filters','Pause or resume your Ranked filters.'],
         ['Arrow keys / Home / End','Move within a ranking-category menu. Enter selects; Escape closes.']
@@ -4075,9 +4111,10 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
         ['Enter in search','Apply the Extra Tracks search.']
       ]],
       ['Track boards and ghosts',[
-        ['Click a racer / 1..9 / 0','Toggle that row as a ghost. Zero selects row 10.'],
-        ['Hold two number keys','Select the inclusive range of rows.'],
-        ['T, then number','Select the top racers up to that number.'],
+        [opponentPresetModule?.opponentShortcutLabel(opponentPreset?.key||'KeyG')||'G','Select your saved ghost group. Change it in Filters > Ghost shortcut.'],
+        ['Click a racer / number','Select or unselect a ghost. 0 = row 10.'],
+        ['Hold two numbers','Select every row between them.'],
+        ['T, then number','Select that many leading racers.'],
         ['C','Clear ghost selections.'],
         ['Equals / Backspace','Select leading racers and your own ghost where available.'],
         ['Minus','Select the racer immediately ahead of you.'],
@@ -4109,7 +4146,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       ]]
     ];
     const sections=groups.map(([title,rows],index)=>`<details class="ranked-help-controls"${index===0?' open':''}><summary>${escapeHtml(title)}</summary><dl>${rows.map(([keys,action])=>`<div><dt><kbd>${escapeHtml(keys)}</kbd></dt><dd>${escapeHtml(action)}</dd></div>`).join('')}</dl></details>`).join('');
-    return `<div class="overall-help-grid"><section><b>Scores</b><p>Lower Overall RP is better. Higher Event and Casual RP is better. A checkmark means the replay was verified.</p></section><section><b>Your next improvement</b><p>Your profile combines saved results and local practice to suggest tracks.</p><button class="button" type="button" data-help-action="profile">Your profile</button></section><section><b>Filters</b><p>Normal filters hide racers. Smart filters calculate a separate group score.</p><button class="button" type="button" data-help-action="filters">Open Filters</button></section></div><h4>Controls and shortcuts</h4><p class="ranked-help-note">Shortcuts apply to the open screen, not while typing. Expand a section below.</p><div class="ranked-help-sections">${sections}</div>`;
+    return `<div class="overall-help-grid"><section><b>Scores</b><p>Lower Overall RP is better. Higher Event and Casual RP is better. A checkmark means the replay was verified.</p></section><section><b>Your next improvement</b><p>Your profile combines saved results and local practice to suggest tracks.</p><button class="button" type="button" data-help-action="profile">Your profile</button></section><section><b>Filters</b><p>Normal filters hide racers. Smart filters calculate a separate group score.</p><button class="button" type="button" data-help-action="filters">Open Filters</button></section></div><button class="button" type="button" data-help-action="ghost-shortcut">Ghost shortcut</button><h4>Controls and shortcuts</h4><p class="ranked-help-note">Shortcuts apply to the open screen, not while typing. Expand a section below.</p><div class="ranked-help-sections">${sections}</div>`;
   }
 
   function ensurePanel(){
@@ -4131,7 +4168,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     });
     panel.addEventListener('click', (event)=>{
       const helpAction=event.target.closest?.('[data-help-action]');
-      if(helpAction){closeRankedDialog(panel.querySelector('#overallHelpPopup'));if(helpAction.dataset.helpAction==='filters')void openPersonalFilterMenu();else if(activeRankedAccountId())void openRankedProfile(activeRankedAccountId());return;}
+      if(helpAction){closeRankedDialog(panel.querySelector('#overallHelpPopup'));if(helpAction.dataset.helpAction==='ghost-shortcut')void openOpponentShortcutMenu();else if(helpAction.dataset.helpAction==='filters')void openPersonalFilterMenu();else if(activeRankedAccountId())void openRankedProfile(activeRankedAccountId());return;}
       if(!event.target.closest?.('[data-category-info]')){
         const categoryControl=panel.querySelector('.overall-category-control');
         categoryControl?.classList.remove('is-explaining');
@@ -4993,6 +5030,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(!panel)return;
     document.getElementById('personalRacerActions')?.__close?.(false);
     panel.style.display='none';
+    if(typeof syncLocalOverallProjection==='function')void syncLocalOverallProjection();
     if(rankedFreshnessTimer){clearInterval(rankedFreshnessTimer);rankedFreshnessTimer=0;}
   }
   let lastRankedManualRefreshAt = 0;
@@ -5284,7 +5322,9 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
 
   function activeRankedAccountId(){
-    return cleanUserId(localStorage.getItem('polytrack-0.6.2-active-account-id') || guestAccountId || '');
+    const accountId=cleanUserId(localStorage.getItem('polytrack-0.6.2-active-account-id') || guestAccountId || '');
+    if(typeof noteLocalOverallAccount==='function')noteLocalOverallAccount(accountId);
+    return accountId;
   }
 
   function eligibleWinCount(entry){
@@ -5408,6 +5448,65 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     document.body.classList.toggle('personal-filters-active',Boolean(active));
     document.body.classList.toggle('personal-filters-colored',Boolean(active&&filter.colorLevel==='everywhere'));
   }
+  let opponentPresetModule=null,opponentPresetPromise=null,opponentPreset=null;
+  function ensureOpponentShortcut(){
+    if(opponentPresetPromise)return opponentPresetPromise;
+    opponentPresetPromise=import('./tools/opponent-presets.mjs?v=175').then(module=>{
+      opponentPresetModule=module;opponentPreset=module.loadOpponentPreset(localStorage);return module;
+    }).catch(error=>{opponentPresetPromise=null;log('warn','[GHOST-SHORTCUT]',String(error?.message||error));return null;});
+    return opponentPresetPromise;
+  }
+  function opponentShortcutBoard(){
+    return [...document.querySelectorAll('.track-info-ui > .leaderboard-ui:not(.sq-event-board)')].find(isElementVisible)||null;
+  }
+  function opponentShortcutStatus(board,text,error=false){
+    const side=board?.closest('.track-info-ui')?.querySelector('.side-panel .opponents-container');
+    if(!side)return;
+    let status=side.parentElement.querySelector('.sq-opponent-shortcut-status');
+    if(!status){status=document.createElement('p');status.className='sq-opponent-shortcut-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.style.cssText='font-size:14px;line-height:1.3;margin:6px 0;text-align:center;white-space:normal';side.after(status);}
+    status.style.color=error?'#ffb7aa':'#8ce7ff';status.textContent=text;
+  }
+  async function applyOpponentShortcut(value=opponentPreset){
+    const module=await ensureOpponentShortcut(),board=opponentShortcutBoard(),trackId=currentTrackLoadState?.trackId,accountId=activeRankedAccountId();
+    if(!module||!board||!trackId)throw Error('Open a track leaderboard first.');
+    const bridge=board.__pt062OpponentSelection,snapshot=readTrackSnapshotCache(trackId);
+    if(bridge?.version!==1||bridge.trackId()!==trackId||bridge.accountId()!==accountId)throw Error('Reload the game to enable the ghost shortcut.');
+    if(!snapshot)throw Error('Wait for the saved standings to finish loading.');
+    const rows=visibleTrackEntries(localTrackDisplayEntries(trackId,snapshot.entries||[],accountId,true),false,accountId);
+    let filteredIds=[];
+    if(value?.mode==='filters'){
+      await ensurePersonalFilters();
+      const core=await import(new URL('../tools/filter-groups.mjs?v=175',eventsModuleUrl).href),data=personalFilterDataSource();
+      const result=core.filterGroupRows(rows,{...personalFilterRuntime.getFilter(),enabled:true,scope:'all',mode:'normal'},
+        {...core.prepareGroupFilterData(data),trackId,complete:(id,kind)=>kind==='track'?data.boards.some(board=>board.trackId===id&&board.complete===true):snapshot.complete===true});
+      filteredIds=result.rows.map(row=>cleanUserId(row.accountId||row.userId));
+    }
+    const result=module.selectOpponentRows(rows,value,{selfId:accountId,complete:snapshot.complete===true,totalEntries:snapshot.totalEntries,filteredIds});
+    if(!result.rows.length)throw Error(result.reason||'No ghosts match this shortcut.');
+    if(opponentShortcutBoard()!==board||currentTrackLoadState?.trackId!==trackId||activeRankedAccountId()!==accountId)throw Error('The track or racer changed. Try the shortcut again.');
+    bridge.set(result.rows.map(row=>({recordingId:module.opponentRecordingId(row),nickname:canonicalDisplayName(row.accountId||row.userId,row.nickname||row.name||'Racer',rowIdentityFreshness(row)),isSelf:cleanUserId(row.accountId||row.userId)===accountId})),{trackId,accountId});
+    opponentShortcutStatus(board,`${result.rows.length} ghost${result.rows.length===1?'':'s'} selected${result.missing?` · ${result.missing} racer${result.missing===1?' has':'s have'} no saved finish here`:''}.`);
+    localInsights?.action('ghost-shortcut-used');return true;
+  }
+  async function openOpponentShortcutMenu(returnFocus=document.activeElement){
+    try{
+      const module=await ensureOpponentShortcut();if(!module)return;
+      module.openOpponentPresetDialog({document,storage:localStorage,returnFocus,
+        getProfiles:()=>[...personalFilterDataSource().profiles,...Object.entries(snapshotRacerDirectoryEntries).map(([accountId,row])=>({...row,accountId}))],
+        onSave:value=>{opponentPreset=value;localInsights?.action('ghost-shortcut-saved');},
+        onRun:opponentShortcutBoard()?async value=>{await applyOpponentShortcut(value);personalFilterMenu?.close?.();}:null});
+    }catch(error){log('warn','[GHOST-SHORTCUT]',String(error?.message||error));}
+  }
+  function handleOpponentPresetShortcut(event){
+    if(!opponentPresetModule||!opponentPreset||!opponentPresetModule.opponentShortcutMatches(event,opponentPreset))return false;
+    if(event.target?.closest?.('input,textarea,select,[contenteditable=true]'))return false;
+    if([...document.querySelectorAll('dialog[open],[role="dialog"][aria-modal="true"],.sq-events-dialog')].some(isElementVisible))return false;
+    const board=opponentShortcutBoard();if(!board)return false;
+    event.preventDefault();event.stopPropagation();
+    void applyOpponentShortcut().catch(error=>opponentShortcutStatus(board,error.message||'Ghosts could not be selected.',true));return true;
+  }
+
+
   function personalFilterButton(root){
     let button=root.querySelector('[data-personal-filter-button]');if(button)return button;
     button=document.createElement('button');button.type='button';button.className='button personal-filter-toggle';button.dataset.personalFilterButton='';button.textContent='Filters';
@@ -5420,7 +5519,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   }
   function ensurePersonalFilters(){
     if(personalFilterPromise)return personalFilterPromise;
-    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=174',eventsModuleUrl).href).then(module=>{
+    personalFilterPromise=import(new URL('../tools/filter-runtime.mjs?v=175',eventsModuleUrl).href).then(module=>{
       personalFilterRuntime=module.createFilterRuntime({storage:localStorage,getData:personalFilterDataSource,onChange:personalFilterChanged});
       window.__pt062PersonalFilters={apply:applyPersonalFilters,open:openPersonalFilterMenu,revision:()=>personalFilterRuntime.getRevision(),active:()=>personalFilterRuntime.active(),state:()=>personalFilterRuntime.getFilter(),button:personalFilterButton};
       refreshPersonalFilterButtons();return personalFilterRuntime;
@@ -5440,10 +5539,11 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function openPersonalFilterMenu(show=true){
     await ensurePersonalFilters();if(!personalFilterRuntime)return;
     if(!personalFilterMenu){
-      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=174',eventsModuleUrl).href;document.head.appendChild(link);}
-      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=174',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=174',eventsModuleUrl).href)]);
+      if(!document.getElementById('personalFilterCss')){const link=document.createElement('link');link.id='personalFilterCss';link.rel='stylesheet';link.href=new URL('../tools/filter-menu.css?v=175',eventsModuleUrl).href;document.head.appendChild(link);}
+      const [ui,core]=await Promise.all([import(new URL('../tools/filter-menu.mjs?v=175',eventsModuleUrl).href),import(new URL('../tools/filter-groups.mjs?v=175',eventsModuleUrl).href)]);
       personalFilterMenu=ui.mountFilterMenu({document,root:document.body,storage:localStorage,
         getRows:()=>personalFilterDataSource().profiles,getTracks:personalFilterTracks,
+        onOpponentShortcut:button=>void openOpponentShortcutMenu(button),
         renderRacer:row=>carModelPreview(row.carStyle,row.carColorId||row.carColors,row.userId||row.accountId),onRenderRacers:root=>hydrateOverallCarModels(root),
         getFilter:()=>personalFilterRuntime.getFilter(),onApply:filter=>personalFilterRuntime.setFilter(filter),onToggle:()=>personalFilterRuntime.toggle(),
         getGroupCode:()=>localStorage.getItem('polytrack-personal-group-code')||'',onGroupCodeSave:savePersonalGroupCode,
@@ -5991,37 +6091,107 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     }
     throw Error('The weekly track could not load. Open Community tracks and try again.');
   }
+  let rankedTrackNavigationEpoch=0;
+  function showRankedTrackNavigationError(message){
+    document.getElementById('rankedTrackNavigationError')?.remove();
+    const notice=document.createElement('div');notice.id='rankedTrackNavigationError';notice.className='overall-empty compact';notice.setAttribute('role','alert');
+    const label=document.createElement('span');label.textContent=message;
+    const close=document.createElement('button');close.type='button';close.className='button';close.textContent='Close';close.onclick=()=>notice.remove();notice.append(label,close);
+    (document.querySelector('.track-selection-ui > .container')||document.body).prepend(notice);
+  }
+  async function importRankedTrackCode(code,isCurrent){
+    const tab=document.querySelector('.track-selection-ui > .image-button-container > button:nth-child(3)');
+    if(!isCurrent())return false;
+    if(tab&&!tab.classList.contains('selected'))tab.click();
+    let importer=null;
+    for(let attempt=0;attempt<30;attempt++){
+      if(!isCurrent())return false;
+      importer=[...document.querySelectorAll('.track-selection-ui > .bar > button')].find(button=>button.querySelector('img[src*="import.svg"]'));
+      if(importer)break;
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    if(!importer)throw Error('The track importer is unavailable. Open Custom Tracks and try again.');
+    if(document.querySelector('.track-export-ui:not(.hidden)'))throw Error('Close the open track dialog and try again.');
+    importer.click();
+    for(let attempt=0;attempt<30;attempt++){
+      if(!isCurrent())return false;
+      const dialog=document.querySelector('.track-export-ui:not(.hidden)');
+      const field=dialog?.querySelector('textarea:not([readonly])');
+      const confirm=[...dialog?.querySelectorAll('button')||[]].find(button=>button.querySelector('img[src*="import.svg"]'));
+      if(field&&confirm){field.value=code;field.dispatchEvent(new Event('input',{bubbles:true}));if(!isCurrent())return false;confirm.click();return true;}
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    throw Error('The track importer did not open. Please try again.');
+  }
   async function focusTrackFromRanked(trackId,{event=false,source='profile'}={}){
+    const epoch=++rankedTrackNavigationEpoch,account=activeRankedAccountId();
+    const isCurrent=()=>epoch===rankedTrackNavigationEpoch&&account===activeRankedAccountId()&&(!event||(typeof eventUi?.isTrackNavigationCurrent==='function'?eventUi.isTrackNavigationCurrent(String(trackId||''),account):eventUi?.isEntered(String(trackId||''))));
+    const cancel=event=>{if(event.key==='Escape'||event.type==='pointerdown'&&event.target?.closest?.('.bar button,.main-buttons-container button,.track-selection-ui button,[data-track-id],[data-summary-track-id]'))rankedTrackNavigationEpoch++;};
+    document.addEventListener('keydown',cancel,true);document.addEventListener('pointerdown',cancel,true);
+    try{
     if(!event){eventUi?.leave();eventTrackReturnContext=null;eventTrackReturnEpoch++;}
     const id=String(trackId||'');
+    if(!/^[a-f0-9]{64}$/.test(id))throw Error('This track is unavailable.');
+    if(trackInfo(id).type==='custom')await loadKodubTrackHistory();if(!isCurrent())return false;
     localInsights?.navigate(id,event?'event':source);warmPracticeTrack(id);
     let info=trackInfo(id);
     if(info.type==='custom'&&!kodubTrackHistory.has(id)&&id!==nativeWeeklySelection?.trackId){try{await loadExtraTracksCatalog();info=trackInfo(id);}catch{}}
+    if(!isCurrent())return false;
+    // Native selection/import callbacks assume the previous track panel is disposed.
+    // Use its native Back handler so listeners and async ownership are released too.
+    const openBoards=[...document.querySelectorAll('.track-info-ui > .leaderboard-ui')].filter(board=>board.__pt062OpponentSelection?.version===1&&isElementVisible(board));
+    if(openBoards.length>1)throw Error('More than one track is open. Close the track menus and try again.');
+    for(const board of openBoards){
+      if(board.__pt062OpponentSelection.trackId()===id)return true;
+      const back=board.querySelector('button.back');
+      if(!back||back.disabled)throw Error('Close the current track before opening another one.');
+      back.click();
+      for(let attempt=0;attempt<40&&board.isConnected&&isElementVisible(board);attempt++){
+        if(!isCurrent())return false;
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      if(!isCurrent())return false;
+      if(board.isConnected&&isElementVisible(board))throw Error('The current track did not close. Please use Back and try again.');
+    }
     const panel=document.getElementById('overallLeaderboardPanel');
     closeOverallPanel(panel);
     const play=[...document.querySelectorAll('.main-buttons-container button')].find((button)=>button.textContent.trim()==='Play'&&isElementVisible(button));
     if(play)play.click();
+    if(kodubTrackHistory.has(id)||id===nativeWeeklySelection?.trackId){
+      const record=kodubTrackHistory.get(id);
+      if(!record?.trackUrl)throw Error('This weekly track is not included in the saved track files yet.');
+      const {readKodubPracticeTrack}=await import(new URL('../tools/kodub-practice-track.mjs?v=175',eventsModuleUrl).href);
+      const code=await readKodubPracticeTrack(record,{decode:value=>__pt062WebpackRequire()?.(9117)?.A?.fromExportString(value),baseUrl:eventsModuleUrl,isCurrent});
+      if(!isCurrent()||!code)return false;
+      return await importRankedTrackCode(code,isCurrent);
+    }
     if(info.type==='extra'){
       try{
         const entry=(await loadExtraTracksCatalog()).find(row=>row.trackId===id);if(!entry)throw Error('Extra Track is not in the saved catalog.');
         for(let attempt=0;attempt<30;attempt++){
+          if(!isCurrent())return false;
           const tab=document.querySelector('.track-selection-ui > .image-button-container > button:nth-child(3)');
-          if(tab){if(!tab.classList.contains('selected'))tab.click();await importExtraTrack(entry);return;}
+          if(tab){if(!tab.classList.contains('selected'))tab.click();await importExtraTrack(entry,{isCurrent});return isCurrent();}
           await new Promise(resolve=>setTimeout(resolve,100));
         }
         throw Error('The Custom Tracks menu did not open.');
-      }catch(error){log('warn','[EXTRA421] Profile track could not open',String(error?.message||error));await openExtraTracks().catch(()=>{});return;}
+      }catch(error){throw error;}
     }
     const tabIndex=info.type==='official'?1:info.type==='community'?2:3;
     if(event)rememberEventTrackSelection();
     const tab=document.querySelector('.track-selection-ui > .image-button-container > button:nth-child('+tabIndex+')');if(tab&&!tab.classList.contains('selected'))tab.click();
     for(let attempt=0;attempt<30;attempt++){
+      if(!isCurrent())return false;
       const title=[...document.querySelectorAll('.track-title p')].find(node=>node.textContent.trim()===info.name);
       const button=title?.closest('button');
-      if(button){button.click();return;}
+      if(button){button.click();return true;}
       await new Promise(resolve=>setTimeout(resolve,100));
     }
-    throw Error('The selected track did not become available.');
+    throw Error('This track could not open. Please try again from the track menu.');
+    }catch(error){
+      if(isCurrent()){log('warn','[TRACK421] Track navigation failed',String(error?.message||error));showRankedTrackNavigationError(error?.message||'This track could not open. Please try again.');}
+      return false;
+    }finally{document.removeEventListener('keydown',cancel,true);document.removeEventListener('pointerdown',cancel,true);}
   }
   function trackSummaryLine(label,finish,fallback){
     if(!finish?.trackId) return `<div class="profile-result muted no-track" aria-label="${escapeHtml(label)} is not available"><div><b>${label}</b><span>N/A</span><small>${escapeHtml(fallback)}</small></div></div>`;
@@ -6715,6 +6885,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     return [...byTrack.values()];
   }
   function openRankedProfile(userId){
+    practiceObserver?.sample();
     const profileContent=document.querySelector('#overallProfileContent');if(profileContent)profileContent.dataset.accountId=cleanUserId(userId);
     let entry=overallEntriesCache.find((row)=>cleanUserId(row.userId||row.accountId||'')===cleanUserId(userId));
     const savedProfile=profileSnapshotResults.get(cleanUserId(userId));
@@ -6867,6 +7038,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function renderEntries(entries,snapshotMeta,{preservePage=false}={}){
     const listEl = document.getElementById('overallLeaderboardList');
     if (!listEl) return;
+    if(typeof syncLocalOverallProjection==='function')void syncLocalOverallProjection();
     if (Array.isArray(entries)) { overallEntriesCache = overlaySnapshotRacerDirectory(entries,Number(snapshotMeta?.updatedAt||snapshotMeta?.serverUpdatedAt||overallLoadState.serverUpdatedAt||overallLoadState.fetchedAt||0)); setRankedFilterSnapshotMeta(snapshotMeta,entries.length); if(!preservePage&&overallCategory!=='events')overallPage = 0; }
     const filterRoot=document.getElementById('overallFilterPanel');
     if(filterRoot)filterRoot.hidden=false;
@@ -6936,11 +7108,13 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     el.className='overall-freshness'+(failed?' is-stale':status==='loading'?' is-loading':'');
     el.dataset.old=String(Boolean(ageAt&&Date.now()-ageAt>2*60*60*1000));
     el.dataset.source=fromPackage?'snapshot':'cache';
+    const localProjection=typeof currentLocalOverallResult==='function'?currentLocalOverallResult():null;
     el.textContent=status==='loading'?'Checking published snapshot...':
       status==='pending'?'Snapshot not ready':status==='error'?'Snapshot unavailable':
-      (fromPackage?'Snapshot':'Saved standings')+(ageAt?' · '+ageLabel(ageAt).replace(/ ago$/,' old'):'')+(failed?' · Check failed':'');
+      (localProjection?'Snapshot + local recalculation':fromPackage?'Snapshot':'Saved standings')+(ageAt?' · '+ageLabel(ageAt).replace(/ ago$/,' old'):'')+(failed?' · Check failed':'');
     el.dataset.fullStatus=el.textContent;
-    el.title='Published standings. Select to check for a newer snapshot. Your local PBs remain saved while rankings await the next publication.';
+    el.title=localProjection?'Published standings with your separate local estimate, pending verification. Select to check for a newer snapshot.':'Published standings. Select to check for a newer snapshot. Your local PBs remain saved while rankings await the next publication.';
+    if(typeof localOverallController!=='undefined'&&localOverallController)void localOverallController.update();
     if(el.dataset.sqSnapshotRefreshLock){delete el.dataset.sqSnapshotRefreshLock;el.style.removeProperty('opacity');}
     applyRankedRefreshCooldown(el);
     const streakEl=document.getElementById('overallStreakLeader');
@@ -7154,6 +7328,89 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     if(rankedVisible)updateRankedFreshness();
     if(trackVisible)updateTrackFreshnessBanner();
   }
+  let localOverallController=null,localOverallControllerPromise=null,localOverallReader=null;
+  let localOverallState=null,localOverallInitRetryAt=0,localOverallObservedAccount='',localOverallSyncQueued=false;
+  function localOverallIsVisible(){
+    return !document.hidden&&overallCategory==='overall'&&isElementVisible(document.getElementById('overallLeaderboardPanel'));
+  }
+  function currentLocalOverallResult(){
+    const info=localOverallReader?.packageInfo?.();
+    return localOverallIsVisible()&&localOverallState?.status==='projected'&&
+      localOverallState.accountId===activeRankedAccountId()&&localOverallState.generation===info?.generation&&
+      localOverallState.packageEpoch===info?.epoch&&localOverallState.packageBaseUrl===info?.baseUrl&&
+      localOverallState.result?.calculationExact===true&&localOverallState.result?.projection?.localPending===true
+      ?localOverallState.result:null;
+  }
+  function renderLocalOverallProjection(){
+    const panel=document.getElementById('overallLeaderboardPanel'),result=currentLocalOverallResult();
+    let card=document.getElementById('localOverallEstimate');
+    if(!result){if(card)card.remove();return;}
+    if(!card){
+      if(!panel?.querySelector('.overall-top'))return;
+      card=document.createElement('aside');card.id='localOverallEstimate';card.className='sq-local-overall-estimate';
+      card.setAttribute('role','status');card.setAttribute('aria-live','polite');
+      panel.querySelector('.overall-top').insertAdjacentElement('afterend',card);
+    }
+    if(!document.getElementById('localOverallEstimateStyle')){
+      const style=document.createElement('style');style.id='localOverallEstimateStyle';
+      style.textContent='.sq-local-overall-estimate{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;margin:6px 10px;padding:7px 10px;border-left:3px solid #ffce75;background:#17264d;color:#e4edff;font:14px/1.35 ForcedSquare,sans-serif;min-width:0}.sq-local-overall-estimate strong{color:#ffdc96;font-size:16px}.sq-local-overall-estimate small{color:#b9cbed;font-size:13px}';
+      document.head.appendChild(style);
+    }
+    const estimate=result.projection,place=estimate.projectedRank===null?'Provisional':`Estimated #${estimate.projectedRank}`;
+    const content=`<span>Your local estimate</span><strong>${escapeHtml(formatRp(estimate.score))} RP</strong><span>${escapeHtml(place)}</span><small>Pending verification</small>`;
+    if(card.innerHTML!==content)card.innerHTML=content;
+    card.title=result.assumption;
+    card.setAttribute('aria-label',`Your local estimate: ${formatRp(estimate.score)} RP. ${place}. Pending verification. ${result.assumption}`);
+  }
+  function noteLocalOverallAccount(accountId){
+    if(!localOverallController||localOverallObservedAccount===accountId)return;
+    localOverallObservedAccount=accountId;
+    if(localOverallSyncQueued)return;
+    localOverallSyncQueued=true;
+    queueMicrotask(()=>{localOverallSyncQueued=false;void syncLocalOverallProjection();});
+  }
+  async function ensureLocalOverallController(){
+    if(localOverallController)return localOverallController;
+    if(Date.now()<localOverallInitRetryAt)return null;
+    if(!localOverallControllerPromise)localOverallControllerPromise=(async()=>{
+      const readerPromise=publicSnapshotReaderPromise||readPublicSnapshotBackup('snapshot-meta').then(()=>publicSnapshotReaderPromise);
+      const [module,reader]=await Promise.all([import('./tools/overall-local-controller.mjs?v=175'),readerPromise]);
+      if(!reader?.packageInfo)throw Error('Static package information is unavailable');
+      localOverallReader=reader;localOverallObservedAccount=activeRankedAccountId();
+      localOverallController=module.createLocalOverallController({storage:localStorage,read:(...args)=>reader(...args),
+        packageInfo:()=>reader.packageInfo(),getAccount:activeRankedAccountId,isVisible:localOverallIsVisible,
+        onState:state=>{
+          const info=reader.packageInfo();
+          localOverallState={...state,packageEpoch:info.epoch,packageBaseUrl:info.baseUrl};
+          renderLocalOverallProjection();updateRankedFreshness();
+        }});
+      const panel=document.getElementById('overallLeaderboardPanel');
+      if(panel)new MutationObserver(()=>{void syncLocalOverallProjection();}).observe(panel,{attributes:true,attributeFilter:['style','data-category']});
+      return localOverallController;
+    })().catch(()=>{localOverallControllerPromise=null;localOverallInitRetryAt=Date.now()+60000;return null;});
+    return localOverallControllerPromise;
+  }
+  async function syncLocalOverallProjection(){
+    renderLocalOverallProjection();
+    if(localOverallController)return localOverallController.update();
+    if(!localOverallIsVisible())return null;
+    try{if(!localStorage.getItem('polytrack-overall-accepted-pbs-v1'))return null;}catch{return null;}
+    const controller=await ensureLocalOverallController();
+    return controller?.update();
+  }
+  async function acknowledgeLocalOverallPb(accountId,row,acceptedAt){
+    // Capture the reader binding before lazy module loading, then refuse a
+    // receipt if its package changed while this acknowledgement was waiting.
+    if(!publicSnapshotReaderPromise)await readPublicSnapshotBackup('snapshot-meta');
+    const reader=await publicSnapshotReaderPromise,info=reader?.packageInfo?.();
+    if(!info)return;
+    const controller=await ensureLocalOverallController(),latest=reader.packageInfo();
+    if(!controller||latest.generation!==info.generation||latest.epoch!==info.epoch||latest.baseUrl!==info.baseUrl)return;
+    controller.acknowledge({accountId,trackId:String(row.trackId),timeMs:canonicalRaceTimeMs(row),acceptedAt});
+  }
+  document.addEventListener('visibilitychange',()=>{if(localOverallController)void syncLocalOverallProjection();});
+  window.addEventListener('storage',event=>{if(event.key==='polytrack-0.6.2-active-account-id')void syncLocalOverallProjection();});
+
   let publicSnapshotReaderPromise=null;
   let publicSnapshotRetryAt=0;
   let publicSnapshotCapturedAt=0;
@@ -7180,10 +7437,11 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   let snapshotTrackStatistics = {};
   let metadataRecovery=null;
   async function readPublicSnapshotBackup(kind,id='',accountId='',{refresh=false}={}){
-    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=174').then(async module=>{
-      const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=174');
+    if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=175').then(async module=>{
+      const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=175');
       const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]')),bootstrap:true,optimizedIndex:true,onRead:metric=>noteDeveloperEvent('snapshot',String(metric.kind).toUpperCase(),metric.durationMs,metric.source==='failed'?0:200),onGenerationChange:()=>{
         metadataRecovery.reset();
+        if(typeof syncLocalOverallProjection==='function')void syncLocalOverallProjection();
         snapshotTrackStatistics={};snapshotCosmeticEntries={};snapshotRacerDirectoryEntries={};publicSnapshotCapturedAt=0;
         profileSnapshotEpoch++;profileSnapshotResults.clear();profileSnapshotRequests.clear();profileSnapshotRetryAt.clear();profilePlacementRequests.clear();profileGuideCache.clear();
         cosmeticEpoch++;overallCacheGeneration++;
@@ -7256,7 +7514,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       if(!contentType.includes('application/json'))throw new Error('Ranked edge was replaced by a network filter');
       let payload=await response.json();
       if(payload?.pagination){
-        const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=174');
+        const {completeRankedSnapshot}=await import('./tools/ranked-live-snapshot.mjs?v=175');
         payload=await completeRankedSnapshot(payload,{saved,kind,trackId,endpoint});
       }
       clearRankedEdgeFailure();
@@ -8027,9 +8285,11 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function rememberConfirmedLocalPb(accountId,row){
     const state=readJsonStorage(LOCAL_PB_RECONCILE_STATE_KEY,{})||{};
     const prior=state[accountId]||{};
-    const confirmed={...(prior.confirmed||{}),[String(row.trackId)]:localPbSyncSignature(row)};
+    const signature=localPbSyncSignature(row),newlyConfirmed=prior.confirmed?.[String(row.trackId)]!==signature;
+    const confirmed={...(prior.confirmed||{}),[String(row.trackId)]:signature};
     state[accountId]={...prior,confirmed};
     writeJsonStorage(LOCAL_PB_RECONCILE_STATE_KEY,state);
+    if(newlyConfirmed&&canonicalRaceTimeMs(row)>0&&typeof acknowledgeLocalOverallPb==='function')void acknowledgeLocalOverallPb(accountId,row,Date.now()).catch(()=>{});
   }
 
   function scheduleLocalPbCloudReconcile(accountId,delay=900){
@@ -8897,7 +9157,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       const statusLabel=status==='verified'?'Run verified':status==='local'?'PB saved on this device; upload pending':status==='submitted'?'PB submitted; verification pending':'Verification pending';
       const at=Number(state.dataset.sqPbAt||0);
       const exact=at>0&&Number.isFinite(new Date(at).getTime())?new Date(at).toLocaleString(undefined,{year:'numeric',month:'2-digit',day:'2-digit',hour:'numeric',minute:'2-digit'}):state.dataset.sqNativeDate||'';
-      const title=exact?`${statusLabel} - ${exact}`:statusLabel+(date?' - '+date:'');
+      const title=exact?`${exact} - ${statusLabel}`:(date?date+' - ':'')+statusLabel;
       if(state.title!==title)state.title=title;
       const aria=title;
       if(state.getAttribute('aria-label')!==aria)state.setAttribute('aria-label',aria);
@@ -9133,6 +9393,9 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   function updateTrackFreshnessBanner(){
     const nativeLeaderboard=document.querySelector('.leaderboard-ui');
     let banner=document.getElementById('polytrackTrackFreshness');
+    let nativeTrackId=null;
+    try{const bridge=nativeLeaderboard?.__pt062OpponentSelection;if(bridge?.version===1&&typeof bridge.trackId==='function')nativeTrackId=String(bridge.trackId()||'');}catch{nativeTrackId='';}
+    if(nativeTrackId!==null&&nativeTrackId!==currentTrackLoadState?.trackId){banner?.remove();positionTrackFreshnessBanner(null,null);return;}
     if(!nativeLeaderboard||nativeLeaderboard.classList.contains('sq-event-board')||!isElementVisible(nativeLeaderboard)||!currentTrackLoadState||eventUi?.isEntered(currentTrackLoadState.trackId)||currentTrackLoadState.trackId===nativeWeeklySelection?.trackId||kodubTrackHistory.has(currentTrackLoadState.trackId)){if(banner)banner.remove();positionTrackFreshnessBanner(null,null);return;}
     if(!banner){banner=document.createElement('div');banner.id='polytrackTrackFreshness';banner.className='polytrack-track-freshness';}
     if(banner.parentElement!==document.body)document.body.appendChild(banner);
@@ -9311,6 +9574,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     // Warm one small same-origin board after startup, never replays or Firestore.
     setTimeout(()=>{if(document.visibilityState!=='visible')return;const id='5803f9e963625804e3de3246d043dc7dde847aa32e991f7f7326b0453f1fa038';warmPracticeTrack(id);},2000);
     void ensurePersonalFilters();
+    void ensureOpponentShortcut();
     window.addEventListener('storage',event=>{
       if(event.key===null){jsonStorageCache.clear();volatileLeaderboardCache.clear();}else{jsonStorageCache.delete(event.key);volatileLeaderboardCache.delete(event.key);}
       if(event.key===null||event.key===LEADERBOARD_USAGE_KEY)refreshLeaderboardArcade();
@@ -9323,7 +9587,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       personalFilterChanged();
     });
     install();
-    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=174',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:174,document,
+    setTimeout(()=>void import(new URL('../tools/site-updates.mjs?v=175',eventsModuleUrl).href).then(module=>module.installSiteUpdates({revision:175,document,
       onCompatibilityChange:state=>{compatibilityOnlineAllowed=state.onlineAllowed!==false;},
       isIdle:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
       canReload:()=>isElementVisible(document.querySelector('.menu-ui,.menu')),
@@ -9348,6 +9612,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       }
       if(handleArchivePageShortcut(event))return;
       if(handleOverallLeaderboardShortcut(event))return;
+      if(handleOpponentPresetShortcut(event))return;
       if(handleTrackLeaderboardShortcut(event))return;
       if(handleOfficialTrackShortcut(event))return;
       if(handleTrackMenuShortcut(event))return;
@@ -9376,7 +9641,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
       if(event.target.closest?.('[data-open-practice]')){const section=document.querySelector('#overallProfileContent .polytrack-practice-profile');if(section){section.open=true;section.querySelector('summary')?.focus({preventScroll:true});section.scrollIntoView({block:'nearest'});}return;}
       const clear=event.target.closest?.('[data-clear-practice-history]');if(!clear)return;
       const account=activeRankedAccountId();
-      void import('./tools/developer-diagnostics.mjs?v=174').then(module=>module.openClearPracticeConfirmation({returnFocus:clear,onConfirm:()=>{if(activeRankedAccountId()!==account)throw Error('Racer changed; nothing cleared');practiceHistory?.clear(account);const section=document.querySelector('#overallProfileContent .polytrack-practice-profile');if(section)section.outerHTML=renderPracticeProfile({rows:[],coverage:practiceHistory?.coverage(account)});void refreshOpenProfilePlanner();}})).catch(()=>{if(clear.isConnected)clear.textContent='History controls unavailable - try again';});
+      void import('./tools/developer-diagnostics.mjs?v=175').then(module=>module.openClearPracticeConfirmation({returnFocus:clear,onConfirm:()=>{if(activeRankedAccountId()!==account)throw Error('Racer changed; nothing cleared');practiceHistory?.clear(account);const section=document.querySelector('#overallProfileContent .polytrack-practice-profile');if(section)section.outerHTML=renderPracticeProfile({rows:[],coverage:practiceHistory?.coverage(account)});void refreshOpenProfilePlanner();}})).catch(()=>{if(clear.isConnected)clear.textContent='History controls unavailable - try again';});
     });
     for(const type of ['pointerover','focusin'])document.addEventListener(type,event=>{const info=event.target.closest?.('.planner-explanation');if(info)info.open=true;});
     for(const type of ['pointerout','focusout'])document.addEventListener(type,event=>{const info=event.target.closest?.('.planner-explanation');if(info&&!info.contains(event.relatedTarget))info.open=false;});
@@ -9403,7 +9668,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
     });
   }
 
-  const nativeLeaderboardLatencyUrl = new URL('./tools/leaderboard-latency-hook.mjs?v=174', document.currentScript?.src || location.href).href;
+  const nativeLeaderboardLatencyUrl = new URL('./tools/leaderboard-latency-hook.mjs?v=175', document.currentScript?.src || location.href).href;
   void import(nativeLeaderboardLatencyUrl).then(({installNativeInitialOpenLatencyHook})=>installNativeInitialOpenLatencyHook({onInitialOpen:()=>{
       const host=document.querySelector('.track-info-ui > .leaderboard-ui:not(.sq-event-board)');
       ensureNativeAllRunsDefault(host,undefined,callback=>callback(),()=>{});

@@ -7,6 +7,7 @@ const require=createRequire(import.meta.url);
 let chromium;try{({chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright'));}catch{}
 const moduleSource=fs.readFileSync(new URL('./catalog-ui.mjs',import.meta.url),'utf8');
 const reviewSource=fs.readFileSync(new URL('./review.mjs',import.meta.url),'utf8');
+const reviewedModules = new Map(['reviewed.mjs', 'reviewed-data.mjs'].map(name => [name, fs.readFileSync(new URL('./' + name, import.meta.url), 'utf8')]));
 const css=fs.readFileSync(new URL('./catalog.css',import.meta.url),'utf8');
 test('toolbar groups stay adjacent with expanded filters at requested sizes and never fetch catalog data',{skip:!chromium},async()=>{
  const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE}:{})});
@@ -15,6 +16,7 @@ test('toolbar groups stay adjacent with expanded filters at requested sizes and 
   const dataRequests=[];
   await page.route('**/*',route=>{
    const url=route.request().url();
+   if(reviewedModules.has(new URL(url).pathname.slice(1)))return route.fulfill({contentType:'text/javascript',body:reviewedModules.get(new URL(url).pathname.slice(1))});
    if(url==='http://toolbar.test/')return route.fulfill({contentType:'text/html',body:'<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style><main id="root"></main>'});
    if(url==='http://toolbar.test/catalog-ui.mjs')return route.fulfill({contentType:'text/javascript',body:moduleSource});
    if(url==='http://toolbar.test/review.mjs')return route.fulfill({contentType:'text/javascript',body:reviewSource});
@@ -28,8 +30,8 @@ test('toolbar groups stay adjacent with expanded filters at requested sizes and 
   });
   for(const [width,height] of [[1366,600],[820,1180],[390,844],[844,320]]){
    await page.setViewportSize({width,height});
-   await page.waitForFunction(()=>document.querySelector('.sq-extra-advanced-toggle').hidden===!matchMedia('(max-width:600px)').matches);
-   if(width<=600){
+   await page.waitForFunction(()=>document.querySelector('.sq-extra-advanced-toggle').hidden===!matchMedia('(max-width:600px), (max-height:650px)').matches);
+   if(width<=600||height<=650){
     const toggle=page.locator('.sq-extra-advanced-toggle');
     if(await toggle.getAttribute('aria-expanded')==='false')await toggle.click();
    }
@@ -46,7 +48,7 @@ test('toolbar groups stay adjacent with expanded filters at requested sizes and 
    assert.equal(layout.searchBackground,'rgba(0, 0, 0, 0)','search shares the toolbar surface');
    assert.equal(layout.advancedBackground,'rgba(0, 0, 0, 0)','filters share the toolbar surface');
    assert.equal(layout.advancedBorder,'0px','filters have no separate boxed band');
-   if(width<=600)assert.ok(layout.filterToggle.bottom<=layout.firstFilter.top,'mobile filter toggle precedes its fields');
+   if(width<=600||height<=650)assert.ok(layout.filterToggle.bottom<=layout.firstFilter.top,'compact filter toggle precedes its fields');
    assert.ok(Math.abs(layout.checks[0].top-layout.checks[1].top)<1,'quick filters share a row');
    for(const control of [layout.sort,layout.reset,...layout.checks])assert.ok(control.left>=0&&control.right<=width&&control.height>=44,'toolbar controls fit and retain touch height');
    if([1366,390,844].includes(width)&&process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR){await page.evaluate(()=>document.querySelector('.sq-extra-menu').scrollTop=0);await page.screenshot({path:process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR+`/catalog-toolbar-${width}x${height}.png`});}
@@ -65,6 +67,7 @@ test('catalog header, filters and review controls fit small touch screens with e
   const page=await browser.newPage({hasTouch:true});
   await page.route('**/*',route=>{
    const url=route.request().url();
+   if(reviewedModules.has(new URL(url).pathname.slice(1)))return route.fulfill({contentType:'text/javascript',body:reviewedModules.get(new URL(url).pathname.slice(1))});
    if(url==='http://catalog.test/')return route.fulfill({contentType:'text/html',body:'<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style><main id="root"></main>'});
    if(url==='http://catalog.test/catalog-ui.mjs')return route.fulfill({contentType:'text/javascript',body:moduleSource});
    if(url==='http://catalog.test/review.mjs')return route.fulfill({contentType:'text/javascript',body:reviewSource});
@@ -119,6 +122,7 @@ test('local review filter and ordering include ratings and update after a review
   const page=await browser.newPage({viewport:{width:1366,height:600}}),unexpected=[];
   await page.route('**/*',route=>{
    const url=route.request().url();
+   if(reviewedModules.has(new URL(url).pathname.slice(1)))return route.fulfill({contentType:'text/javascript',body:reviewedModules.get(new URL(url).pathname.slice(1))});
    if(url==='http://review.test/')return route.fulfill({contentType:'text/html',body:'<!doctype html><main id="root"></main>'});
    if(url==='http://review.test/catalog-ui.mjs')return route.fulfill({contentType:'text/javascript',body:moduleSource});
    if(url==='http://review.test/review.mjs')return route.fulfill({contentType:'text/javascript',body:reviewSource});
@@ -131,6 +135,13 @@ test('local review filter and ordering include ratings and update after a review
    window.reviews=[{}, {rating:8}, {favorite:true}];
    window.catalog=mountExtraTracks({document,root:document.querySelector('#root'),entries,getFeedback:e=>reviews[e.id],getLocalRating:e=>reviews[e.id].rating});catalog.open();
   });
+  const filters=page.locator('.sq-extra-advanced');
+  const disclosure=page.getByRole('button',{name:'Filters & sort',exact:true});
+  assert.equal(await filters.isHidden(),true,'short-height catalog starts with filters collapsed');
+  assert.equal(await disclosure.getAttribute('aria-expanded'),'false');
+  await disclosure.click();
+  assert.equal(await filters.isVisible(),true,'open the existing disclosure before using its controls');
+  assert.equal(await disclosure.getAttribute('aria-expanded'),'true');
   const names=()=>page.locator('.sq-extra-card h3').allTextContents();
   await page.locator('.sq-extra-review-field select').selectOption('edited');assert.deepEqual(await names(),['Beta']);
   await page.locator('.sq-extra-review-field select').selectOption('not-edited');assert.deepEqual(await names(),['Alpha','Gamma']);

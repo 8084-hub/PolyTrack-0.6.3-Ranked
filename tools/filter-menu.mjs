@@ -254,6 +254,7 @@ export function mountFilterMenu({
   renderRacer = () => '',
   onRenderRacers = () => undefined,
   getRuleCounts = () => null,
+  onOpponentShortcut = null,
   showNotice = true,
   exportCode = filter => JSON.stringify(filter),
   importCode = code => JSON.parse(code)
@@ -313,6 +314,11 @@ export function mountFilterMenu({
   pauseButton.setAttribute('aria-pressed', String(local.paused || !filter.enabled));
   const closeButton = button('Close', 'fm-button fm-button-quiet');
   closeButton.setAttribute('aria-label', 'Close advanced filters');
+  if(typeof onOpponentShortcut==='function'){
+    const ghosts=button('Ghost shortcut','fm-button fm-button-quiet');
+    ghosts.dataset.opponentShortcut='';ghosts.addEventListener('click',()=>onOpponentShortcut(ghosts));
+    headerActions.append(ghosts);
+  }
   headerActions.append(pauseButton, closeButton);
   header.append(titleWrap, headerActions);
   const body = el('div', 'fm-body');

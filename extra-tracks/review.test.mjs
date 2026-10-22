@@ -58,3 +58,25 @@ test('local review includes ratings, votes and tag deltas, but not bookmarks or 
  for(const feedback of [{rating:8},{difficultyRating:5},{vote:1},{vote:-1},{addedTags:['mini']},{removedTags:['technical']}])assert.equal(hasLocalReview(track,feedback),true);
  for(const feedback of [{},{favorite:true},{rating:0,difficultyRating:0,vote:0},{rating:'8',difficultyRating:99,vote:2},{addedTags:['technical'],removedTags:['missing']}])assert.equal(hasLocalReview(track,feedback),false);
 });
+
+
+test('local tags override future published additions and removals without rewriting saved choices', () => {
+  const entry = {tags: ['technical', 'stunt']};
+  const summary = {addedTags: ['scenic'], removedTags: ['technical']};
+  const local = {rating: 4, difficultyRating: 8, addedTags: ['technical', 'mini'], removedTags: ['scenic'], editedAt: 1790000000000};
+  const before = JSON.stringify(local);
+  assert.deepEqual(effectiveReviewTags(entry, local, summary), ['stunt', 'technical', 'mini']);
+  assert.deepEqual(normalizeReviewFeedback(entry, local, summary).addedTags, ['technical', 'mini']);
+  assert.deepEqual(normalizeReviewFeedback(entry, local, summary).removedTags, ['scenic']);
+  assert.equal(JSON.stringify(local), before);
+  assert.deepEqual(entry.tags, ['technical', 'stunt']);
+});
+
+test('an existing local addition remains a personal choice when a reviewer adds the same tag', () => {
+  const entry = {tags: ['technical']};
+  const summary = {addedTags: ['scenic'], removedTags: []};
+  const feedback = {addedTags: ['scenic']};
+  assert.deepEqual(normalizeReviewFeedback(entry, feedback, summary).addedTags, ['scenic']);
+  assert.deepEqual(effectiveReviewTags(entry, feedback, summary), ['technical', 'scenic']);
+  assert.deepEqual(feedback, {addedTags: ['scenic']});
+});

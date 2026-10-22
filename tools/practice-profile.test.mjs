@@ -12,7 +12,7 @@ const row = (overrides = {}) => ({
 
 test('renders compact summary and per-track useful data with trusted preview markup', () => {
   const html = renderPracticeProfile({ rows: [row()], trackPreview: id => `<img src="/thumb/${id}.png" alt="">` });
-  assert.match(html, /MEASURED DRIVE TIME/);
+  assert.match(html, /ACTIVE RACE TIME/);
   assert.match(html, /2m/);
   assert.match(html, /TRACKS DRIVEN/);
   assert.match(html, /7 attempts/);
@@ -21,7 +21,7 @@ test('renders compact summary and per-track useful data with trusted preview mar
   assert.match(html, /47\.25s/);
   assert.match(html, /1m 1s since last recorded best/);
   assert.match(html, /Last played<\/small><strong>[^<]*2026/);
-  assert.match(html, /Measured drive time<\/small><strong>2m 5s/);
+  assert.match(html, /Active race time<\/small><strong>2m 5s/);
   assert.match(html, /<img src="\/thumb\/track-a\.png" alt="">/);
   assert.match(html, /<li class="pp-track" data-pp-track-id="track-a"/);
   assert.doesNotMatch(html, /<li class="pp-track" data-track-id=/);
@@ -139,7 +139,7 @@ test('attempt-only tracks omit empty evidence panels and retain meaningful time 
   const before = structuredClone(rows);
   const html = renderPracticeProfile({ rows });
   assert.equal((html.match(/7 attempts/g) || []).length, 15);
-  assert.equal((html.match(/Measured drive time<\/small><strong>2m 5s/g) || []).length, 15);
+  assert.equal((html.match(/Active race time<\/small><strong>2m 5s/g) || []).length, 15);
   assert.doesNotMatch(html, /pp-results|No finish|Saved PB|Not available|recommend/i);
   assert.doesNotMatch(html, /value="improvement"/);
   assert.match(renderPracticeProfile({ rows: [row({ improvedMs: 100 })] }), /value="improvement"/);
@@ -161,8 +161,8 @@ test('offers only observed finish and hunt sorts and marks their selected metric
 test('measured active time switches to one-decimal days at 100 hours', () => {
   const hours = renderPracticeProfile({ rows: [row({ activeMs: (99 * 60 + 59) * 60000 })] });
   const days = renderPracticeProfile({ rows: [row({ activeMs: 100 * 3600000 })] });
-  assert.match(hours, /Measured drive time<\/small><strong>99h 59m 0s/);
-  assert.match(days, /Measured drive time<\/small><strong>4\.2d/);
+  assert.match(hours, /Active race time<\/small><strong>99h 59m 0s/);
+  assert.match(days, /Active race time<\/small><strong>4\.2d/);
   assert.doesNotMatch(days, /100h/);
 });
 
@@ -179,6 +179,7 @@ try { ({ chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')); }
 test('practice identity and controls survive injected popup CSS in narrow grid and list layouts', { skip: !chromium }, async () => {
   const module = await fs.readFile(new URL('./practice-profile.mjs', import.meta.url), 'utf8');
   const activeTimeModule = await fs.readFile(new URL('./active-time.mjs', import.meta.url), 'utf8');
+  const historyModule = await fs.readFile(new URL('./practice-history.mjs', import.meta.url), 'utf8');
   const patch = await fs.readFile(new URL('../polytrack_062_patch.js', import.meta.url), 'utf8');
   const injectedCss = [...patch.matchAll(/(?:style|rankedPolish)\.textContent\s*(?:\+=|=)\s*("(?:\\.|[^"\\])*?")/g)]
     .map(match => JSON.parse(match[1])).join('\n');
@@ -191,8 +192,9 @@ test('practice identity and controls survive injected popup CSS in narrow grid a
     const page = await browser.newPage();
     // Fulfil every request locally: this regression never contacts the game or Firebase.
     await page.route('**/*', route => route.fulfill({
-      contentType: /\/(practice|active-time)\.mjs$/.test(route.request().url()) ? 'text/javascript' : 'text/html',
-      body: route.request().url().endsWith('active-time.mjs') ? activeTimeModule :
+      contentType: /\/(practice|active-time|practice-history)\.mjs$/.test(route.request().url()) ? 'text/javascript' : 'text/html',
+      body: route.request().url().endsWith('practice-history.mjs') ? historyModule :
+        route.request().url().endsWith('active-time.mjs') ? activeTimeModule :
         route.request().url().endsWith('practice.mjs') ? module :
         '<!doctype html><html lang="en"><title>Practice regression</title>' +
         '<main id="overallProfilePopup" style="display:flex"><article class="overall-profile-card">' +
@@ -364,4 +366,25 @@ test('secondary PB evidence stays available in a compact per-track disclosure',(
  const html=renderPracticeProfile({rows:[row()],results:[{trackId:'track-a',source:'snapshot',timeMs:48000},{trackId:'track-a',local:true,timeMs:46000}]});
  assert.ok(html.indexOf('46.00s')<html.indexOf('48.00s'));assert.match(html,/data-pp-details-key="track:track-a"/);
  assert.match(html,/More history for Summer Run/);assert.match(html,/Snapshot PB/);
+});
+
+test('per-track history exposes recent pace and separates earlier time estimates',()=>{
+ const html=renderPracticeProfile({rows:[row({activeTimeVersion:2,activeMs:90000,legacyActiveMs:60000,
+  recentFinishes:[{at:Date.now()-1000,timeMs:50000},{at:Date.now(),timeMs:48000}],furthestCheckpoint:4})]});
+ assert.match(html,/Earlier time estimate/);assert.match(html,/New race progress/);
+ assert.match(html,/Latest finish/);assert.match(html,/Recent finish range/);assert.match(html,/48.00s to 50.00s/);
+ assert.match(html,/Checkpoint progress/);assert.match(html,/Includes earlier time estimates/);assert.match(html,/PRACTICE TIME/);
+});
+
+test('a substantial older hunt gets a revisit suggestion without claiming guaranteed improvement',()=>{
+ const html=renderPracticeProfile({rows:[row({lastPlayedAt:Date.now()-8*86400000})]});
+ assert.match(html,/aria-label="Practice suggestion"/);assert.match(html,/Last practised 8 days ago/);
+ assert.doesNotMatch(html,/guaranteed|will improve/);
+ const sparse=renderPracticeProfile({rows:[row({attempts:1,activeMs:1000})]});
+ assert.doesNotMatch(sparse,/Practice suggestion|Recent finish range|Latest finish|Earlier time estimate/);
+});
+
+test('compact active sort label keeps the full accessible option name',()=>{
+ const html=renderPracticeProfile({rows:[row()]});
+ assert.match(html,/<option value="active" aria-label="Active race time">Active time<\/option>/);
 });

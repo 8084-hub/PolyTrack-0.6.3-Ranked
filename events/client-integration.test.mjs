@@ -63,7 +63,7 @@ const setup=async ({focus,nativeRow,nativeTimeFormatter,queue,deferReady,receipt
   class Car{constructor(state){this.state=state;this.callbacks=[];}getCarState(){return this.state;}addFinishCallback(c){this.callbacks.push(c);}getRecording(){return {serialize:()=> 'AAAA'};}getTime(){return {numberOfFrames:this.ms};}getCarStyle(){return {serialize:()=>''};}finish(ms){this.ms=ms;this.callbacks.forEach(c=>c(this));}}
   const modules={641:Car,5220:Physics,2522:Profiles,5492:Profile,9117:Track};const manager=new Profiles(),physics=new Physics(),track=new Track();
   window.makeCar=()=>{manager.getCurrentUserProfile();const created=physics.createCar(null,null,null,track,null);physics.controlCar(created.id);const car=new Car(created.carState);car.addFinishCallback(()=>{});return car;};
-  const trackInfo=()=>({name:'Fixture track'}),isElementVisible=()=>true,closeOverallPanel=panel=>{if(panel)panel.style.display='none';};
+  const trackInfo=()=>({name:'Fixture track',type:'official'}),isElementVisible=()=>true,closeOverallPanel=panel=>{if(panel)panel.style.display='none';};
   // Execute the real game row function; only its surrounding services are fixtures.
   const {eventRunDate}=await import('/events/client.mjs');
   const Oo=new WeakMap(),$o=new WeakMap(),el=new WeakMap(),zo=new WeakMap(),Do=new WeakMap(),Io=new WeakMap(),Ro={},owner={};
@@ -75,7 +75,9 @@ const setup=async ({focus,nativeRow,nativeTimeFormatter,queue,deferReady,receipt
   document.querySelector('.leaderboard-ui').__pt062EventRows={version:1,render:(container,row)=>{Oo.set(owner,container);return render.call(owner,row.rank,row.name,row.countryCode||null,row.timeMs,new Date(row.runAt),null,row.pending?0:1,row.isSelf,row.accountId,new Date(),{isCancelled:false},{event:true});}};
   const localInsights=null,warmPracticeTrack=()=>{};
   // Parent navigation owns the token; these tests exercise the events-side bridge.
-  let eventTrackReturnContext=null,eventTrackReturnEpoch=0;
+  let eventTrackReturnContext=null,eventTrackReturnEpoch=0,rankedTrackNavigationEpoch=0;
+  const activeRankedAccountId=()=>window.bridgeFixture?.accountId?.()||id,kodubTrackHistory=new Map(),nativeWeeklySelection=null;
+  const log=()=>{},showRankedTrackNavigationError=message=>{throw Error('Unexpected fixture navigation failure: '+message);};
   const rememberEventTrackSelection=()=>{eventTrackReturnContext={epoch:++eventTrackReturnEpoch};};
   let eventUi; const nativeFocus=eval('('+focus.trim()+')');
   window.ui=eventUi=(await import('/events/client.mjs')).installEvents(window.bridgeFixture={accountId:()=>id,trackInfo,thumbnail:()=>'',formatTime:ms=>String(ms),readCatalog:async()=>{window.catalogReads++;if(deferCatalog)return new Promise(resolve=>window.resolveCatalog=()=>resolve({periods:cachedPeriods||[period]}));return {periods:[period]};},readSnapshot:async requested=>{window.reads++;const archived=requested==='old-event';return {period:archived?{...period,id:requested,startsAt:Date.now()-172800000,endsAt:Date.now()-86400000,racerCount:1}:period,updatedAt:period.startsAt,entries:archived?[{accountId:'b'.repeat(64),name:'Archived racer',rank:1,timeMs:21000,rp:100}]:[]};},readArchivedSnapshot:async requested=>{window.reads++;return {period:{...period,id:requested,startsAt:Date.now()-172800000,endsAt:Date.now()-86400000,racerCount:1},updatedAt:period.startsAt,archived:true,entries:[{accountId:'b'.repeat(64),name:'Archived racer',rank:1,timeMs:21000,rp:100}]};},readOwnStatus:async()=>receipt||null,readArchiveMonth:async()=>({periods:[{...period,id:'old-event',archived:true,racerCount:1,startsAt:Date.now()-172800000,endsAt:Date.now()-86400000}]}),readTotals:async()=>({entries:[]}),submit:async run=>{window.submits.push(run);return {runId:'fixture',status:'waiting'};},ready:()=>deferReady?new Promise(resolve=>window.resolveReady=resolve):Promise.resolve(),require:()=>n=>({A:modules[n]}),openTrack:id=>nativeFocus(id,{event:true})});

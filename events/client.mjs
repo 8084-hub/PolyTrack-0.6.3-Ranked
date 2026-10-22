@@ -23,6 +23,11 @@ export function eventRunDate(row,at=Date.now()){
   const seconds=Math.floor((at-stamp)/1000),minutes=Math.floor(seconds/60),hours=Math.floor(minutes/60),days=Math.floor(hours/24);
   return {label:days?days+' day'+(days===1?'':'s')+' ago':hours?hours+' hour'+(hours===1?'':'s')+' ago':minutes?minutes+' min ago':'Just now',title:new Date(stamp).toLocaleString()};
 }
+export function eventVerificationLabel(row,pending=!!row?.pending,locale){
+  const at=eventExactRunAt(row);
+  const date=at?new Date(at).toLocaleString(locale,{year:'numeric',month:'2-digit',day:'2-digit',hour:'numeric',minute:'2-digit'}):'Date unavailable';
+  return date+' - '+(pending?'Pending':'Verified');
+}
 export function eventExactRunAt(row){
   for(const field of ['runCreatedAt','pbAt','createdAt']){
     const value=Number(row?.[field]);
@@ -324,7 +329,7 @@ export function installEvents(bridge){
     shell();selected=period;body('<p role="status">Opening event...</p><p>You can cancel with Close. Your saved PBs are unchanged.</p>');message('Preparing event racing.');
     const attempt=++entryRequest,accountId=bridge.accountId();
     let timer,intent=null;
-    try{if(now()>=period.endsAt)throw Error('This event has ended.');await Promise.race([bridge.ready(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Event preparation timed out. Close and try again.')),12000);})]);if(attempt!==entryRequest||accountId!==bridge.accountId()||!dialog||selected?.id!==period.id)return false;ensureCapture();intent=sessions.enter(period,bridge.accountId());eventIntent=intent;tick({cachedOnly:true});close();message('Opening event track...');nativeOpenPermit=true;try{await bridge.openTrack(period.trackId);}finally{nativeOpenPermit=false;}tick();void refreshNativeEventData(period,sessions.current());return true;}
+    try{if(now()>=period.endsAt)throw Error('This event has ended.');await Promise.race([bridge.ready(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Event preparation timed out. Close and try again.')),12000);})]);if(attempt!==entryRequest||accountId!==bridge.accountId()||!dialog||selected?.id!==period.id)return false;ensureCapture();intent=sessions.enter(period,bridge.accountId());eventIntent=intent;tick({cachedOnly:true});close();message('Opening event track...');nativeOpenPermit=true;try{if(await bridge.openTrack(period.trackId)===false)throw Error('The event track could not open. Please try again.');}finally{nativeOpenPermit=false;}tick();void refreshNativeEventData(period,sessions.current());return true;}
     catch(error){const ownsIntent=!!intent&&sessions.current()===intent&&eventIntent===intent;if(attempt===entryRequest||ownsIntent){if(ownsIntent){sessions.leave();eventIntent=null;}shell();message(error.message);body('<p>The event track could not be opened. Your saved records are unchanged.</p>');}return false;}finally{clearTimeout(timer);}
   }
   async function openEvent({kind,trackId}={}){
@@ -448,12 +453,16 @@ export function installEvents(bridge){
     }catch{if(token===requestId)body('<p>Past events are unavailable. Please try again.</p>');}
   }
   let nativeView=null,eventIntent=null,archiveIntent=null,featuredSelection=null;
+  function isTrackNavigationCurrent(trackId,accountId=bridge.accountId()){
+    const context=sessions.current()||archiveIntent;
+    return context?.trackId===trackId&&context.accountId===accountId&&bridge.accountId()===accountId;
+  }
   async function openArchivedTrack(period,saved){
     if(period?.kind==='kodub'||period?.kind==='custom')return importArchived(period);
     const snapshot=saved||cache.get(period?.id)||read(STORE+'-'+period?.id,null);
     if(!period?.id||!period.trackId||!snapshot||!Array.isArray(snapshot.entries)||snapshot.period?.id&&snapshot.period.id!==period.id||snapshot.period?.trackId&&snapshot.period.trackId!==period.trackId){message('Archived standings are not loaded or do not match this track. Reopen the archive card and try again.');return false;}
     entryRequest++;sessions.leave();eventIntent=null;archiveIntent={archive:true,period,periodId:period.id,trackId:period.trackId,accountId:bridge.accountId(),snapshot};knownPeriods.set(period.id,period);close();message('Opening archived track for normal practice.');
-    nativeOpenPermit=true;try{await bridge.openTrack(period.trackId);}catch(error){archiveIntent=null;message(error?.message||'Archived track could not be opened.');return false;}finally{nativeOpenPermit=false;}
+    nativeOpenPermit=true;try{if(await bridge.openTrack(period.trackId)===false)throw Error('The archived track could not open. Please try again.');}catch(error){archiveIntent=null;message(error?.message||'Archived track could not be opened.');return false;}finally{nativeOpenPermit=false;}
     tick();return true;
   }
   let launching=false,nativeOpenPermit=false,nativePlayPermit=false,selectedGhost=null,replayRequest=0,topSelectionToken=0,eventTopPrefixUntil=0,eventTopHeld=false,eventDigitBoard=null;const selectedGhosts=new Map(),pendingGhosts=new Map(),replayCache=new Map(),preparedGhosts=new Map(),preparedOwnGhosts=new Map(),replayFailures=new Map(),eventDigitsHeld=new Map(),eventDigitsConsumed=new Set();
@@ -805,7 +814,7 @@ export function installEvents(bridge){
       button.querySelector('.left p:not(.position)').classList.add('event-time');
       const state=button.querySelector('.verified-state');state.dataset.sqRunStatus='verified';
       const exactRunAt=eventExactRunAt(row);if(exactRunAt)state.dataset.sqPbAt=String(exactRunAt);else delete state.dataset.sqPbAt;
-      if(!runAt){state.firstChild.textContent='Date unavailable';state.title='Archived verified result - run date unavailable';}const actions=event=>{if(typeof bridge.racerActions!=='function')return;event.preventDefault();event.stopPropagation();const rect=button.getBoundingClientRect();bridge.racerActions(row,{clientX:event.clientX||rect.left+rect.width/2,clientY:event.clientY||rect.top+rect.height/2});};button.oncontextmenu=actions;button.onkeydown=event=>{if(event.key==='ContextMenu'||event.shiftKey&&event.key==='F10')actions(event);};
+      if(!runAt)state.firstChild.textContent='Date unavailable';state.title=eventVerificationLabel(row,false);state.setAttribute('aria-label',state.title);const actions=event=>{if(typeof bridge.racerActions!=='function')return;event.preventDefault();event.stopPropagation();const rect=button.getBoundingClientRect();bridge.racerActions(row,{clientX:event.clientX||rect.left+rect.width/2,clientY:event.clientY||rect.top+rect.height/2});};button.oncontextmenu=actions;button.onkeydown=event=>{if(event.key==='ContextMenu'||event.shiftKey&&event.key==='F10')actions(event);};
       const points=document.createElement('span');points.className='sq-event-earned-rp';points.textContent=Math.round(Number(row.groupRp??row.rp)||0)+' ERP';points.title='Archived Event RP';state.prepend(points);bridge.decorateRacer?.(button,row);
     }
     if(!rows.length){const empty=document.createElement('p');empty.className='error-message';empty.textContent='No verified archived times were recorded.';container.append(empty);}
@@ -937,7 +946,7 @@ export function installEvents(bridge){
       button.querySelector('.left p:not(.position)').classList.add('event-time');
       const state=button.querySelector('.verified-state');state.dataset.sqRunStatus=row.pending?'unchecked':'verified';
       const exactRunAt=eventExactRunAt(row);if(exactRunAt)state.dataset.sqPbAt=String(exactRunAt);else delete state.dataset.sqPbAt;
-      if(!runAt){state.firstChild.textContent='Date unavailable';state.title='Run date unavailable - '+(row.pending?'Pending':'Verified');}
+      if(!runAt)state.firstChild.textContent='Date unavailable';state.title=eventVerificationLabel(row);state.setAttribute('aria-label',state.title);
       if(!row.pending){const points=document.createElement('span');points.className='sq-event-earned-rp';points.textContent=Math.round(Number(row.groupRp??row.rp)||0)+(row.groupRp!=null?' Group ERP':' ERP');points.title=row.groupRp!=null?'Filtered group Event RP':'Verified Event RP';state.prepend(points);}
       const actions=event=>{if(typeof bridge.racerActions!=='function')return;event.preventDefault();event.stopPropagation();const rect=button.getBoundingClientRect();bridge.racerActions(row,{clientX:event.clientX||rect.left+rect.width/2,clientY:event.clientY||rect.top+rect.height/2});};
       button.oncontextmenu=actions;button.onkeydown=event=>{if(event.key==='ContextMenu'||event.shiftKey&&event.key==='F10')actions(event);};
@@ -1172,5 +1181,5 @@ export function installEvents(bridge){
     tick({cachedOnly:true});
     await catalogPromise;
   }
-  return {prepareCapture,captureReady:()=>!!capture,finishPositions,isEntered:trackId=>sessions.current()?.trackId===trackId,featuredSection:selection=>{if(selection?.matches?.('.track-selection-ui'))featuredSelection=selection;return ensureFeaturedSection(document,selection);},open,openEvent,totals,tick,flush,getOwnReplay,resumeRace,refreshCatalog:loadCatalog,leave(){entryRequest++;sessions.leave();eventIntent=null;archiveIntent=null;tick();}};
+  return {prepareCapture,captureReady:()=>!!capture,finishPositions,isTrackNavigationCurrent,isEntered:trackId=>sessions.current()?.trackId===trackId,featuredSection:selection=>{if(selection?.matches?.('.track-selection-ui'))featuredSelection=selection;return ensureFeaturedSection(document,selection);},open,openEvent,totals,tick,flush,getOwnReplay,resumeRace,refreshCatalog:loadCatalog,leave(){entryRequest++;sessions.leave();eventIntent=null;archiveIntent=null;tick();}};
 }

@@ -1,6 +1,6 @@
 import { EXTRA_TRACK_IDS } from './extra-track-ids.js';
 
-export const VERIFIER_ENGINE_DIGEST = '8249dd184ae2e804b77a2eb3b6551a5569ace0e2695a9de235ecae0bb32efd4b';
+export const VERIFIER_ENGINE_DIGEST = '7cd54f05e02b66c67133fd856f025c829c21d600d8ef6a9071df62b4fb5905c4';
 export const VERIFIER_VERSION = 'polytrack-native-bounded-v1';
 export const VERIFICATION_COLLECTION = '0.6.2_s1_verification';
 export const EXTRA_VERIFICATION_COLLECTION = '0.6.2_s1_extra_verification';
@@ -13,6 +13,7 @@ export const PRE_REPLAY_UI_PROOF_ENGINE = '246a1dcdc272cc2c59a1433da3e31b2cd3dfd
 const REVIEWED_GHOST_ENGINE = '32bfe32b8680597d9f1322dbcbb19242be38bee9ab243a379f5e449c3f4030fd';
 const REVIEWED_REPLAY_UI_ENGINE = '46aba6e247567f5954d412e0988e3d2cd04e9ec154c294bdf3fcaa830d9d12f3';
 const REVIEWED_NATIVE_ROW_UI_ENGINE = '8249dd184ae2e804b77a2eb3b6551a5569ace0e2695a9de235ecae0bb32efd4b';
+const REVIEWED_OPPONENT_SHORTCUT_UI_ENGINE = '7cd54f05e02b66c67133fd856f025c829c21d600d8ef6a9071df62b4fb5905c4';
 export function verificationKey(row) { return boundVerificationKey(row, VERIFIER_ENGINE_DIGEST); }
 function boundVerificationKey(row, engineDigest) {
   return JSON.stringify([VERIFIER_VERSION,engineDigest,String(row.accountId||row.userId||''),String(row.trackId||''),Number(row.timeMs),Number(row.raceTimeFrames||row.frames||0),Number(row.uploadId||row.id||0),String(row.replayHash||'').toLowerCase()]);
@@ -20,6 +21,8 @@ function boundVerificationKey(row, engineDigest) {
 export function hasAcceptedVerifiedProof(row, verdict) {
   const digest = verdict?.engineDigest;
   const compatible = digest === VERIFIER_ENGINE_DIGEST ||
+    VERIFIER_ENGINE_DIGEST === REVIEWED_OPPONENT_SHORTCUT_UI_ENGINE &&
+      [REVIEWED_NATIVE_ROW_UI_ENGINE, REVIEWED_REPLAY_UI_ENGINE, PRE_REPLAY_UI_PROOF_ENGINE, REVIEWED_GHOST_ENGINE, PRE_GHOST_PROOF_ENGINE].includes(digest) ||
     VERIFIER_ENGINE_DIGEST === REVIEWED_NATIVE_ROW_UI_ENGINE &&
       [REVIEWED_REPLAY_UI_ENGINE, PRE_REPLAY_UI_PROOF_ENGINE, REVIEWED_GHOST_ENGINE, PRE_GHOST_PROOF_ENGINE].includes(digest) ||
     VERIFIER_ENGINE_DIGEST === REVIEWED_GHOST_ENGINE && digest === PRE_GHOST_PROOF_ENGINE ||
@@ -46,7 +49,7 @@ export function verificationSchedule(slots, now = Date.now()) {
 
 // This reviewed UI-only change does not require another historical queue scan.
 export const VERIFICATION_BOOTSTRAP_ID = 'verification_snapshot_v3_' + VERIFIER_VERSION + '_' +
-  (VERIFIER_ENGINE_DIGEST === REVIEWED_NATIVE_ROW_UI_ENGINE ? REVIEWED_REPLAY_UI_ENGINE : VERIFIER_ENGINE_DIGEST);
+  ([REVIEWED_NATIVE_ROW_UI_ENGINE, REVIEWED_OPPONENT_SHORTCUT_UI_ENGINE].includes(VERIFIER_ENGINE_DIGEST) ? REVIEWED_REPLAY_UI_ENGINE : VERIFIER_ENGINE_DIGEST);
 export const VERIFICATION_BOOTSTRAP_BATCH = 4;
 
 export function legacyTimingFrames(row) {

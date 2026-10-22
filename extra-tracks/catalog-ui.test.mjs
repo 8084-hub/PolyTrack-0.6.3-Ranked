@@ -37,8 +37,16 @@ function walk(node) { return node.children.flatMap(child => [child, ...walk(chil
 function cls(root, name) { return walk(root).filter(node => node.className?.split(' ').includes(name)); }
 function tag(root, name) { return walk(root).filter(node => node.tagName === name.toUpperCase()); }
 function click(node) { return node.dispatch('click'); }
-function fixture(entries, callbacks = {}) {
+function fixture(entries, callbacks = {}, viewport = null) {
   const document = { baseURI: 'https://polytrack.example/', activeElement: null, listeners: new Map() };
+  if (viewport) {
+    const listeners = new Set();
+    const media = {matches: viewport.width <= 600 || viewport.height <= 650,
+      addEventListener: (type, callback) => listeners.add(callback), removeEventListener: (type, callback) => listeners.delete(callback)};
+    document.defaultView = {matchMedia: query => {assert.equal(query, '(max-width: 600px), (max-height: 650px)');return media;}, addEventListener() {}, removeEventListener() {}};
+    document.resizeTo = (width, height) => {const matches = width <= 600 || height <= 650;if (matches !== media.matches) {media.matches = matches;for (const callback of listeners) callback({matches});}};
+    document.mediaListeners = listeners;
+  }
   document.createElement = name => new FakeNode(document, name);
   document.addEventListener = (name, handler) => document.listeners.set(name, handler);
   document.removeEventListener = name => document.listeners.delete(name);
@@ -411,7 +419,7 @@ test('difficulty and imported-only progress filter independently of tags', () =>
   progress.value = 'loaded'; progress.dispatch('change');
   assert.equal(cls(root, 'sq-extra-count')[0].textContent, '1 of 3 tracks');
   assert.match(cls(root, 'sq-extra-card')[0].textContent, /Track 02/);
-  assert.match(cls(root, 'sq-extra-card')[0].textContent, /Difficulty 7\/10 · Expert/);
+  assert.match(cls(root, 'sq-extra-card')[0].textContent, /Catalog level 7\/10 · Expert/);
   assert.equal(cls(fields[3], 'sq-extra-filter-count')[0].textContent, '2');
   assert.equal(cls(fields[4], 'sq-extra-filter-count')[0].textContent, '1');
   assert.match(cls(root, 'sq-extra-card')[0].textContent, /Imported, not completed/);
@@ -1005,4 +1013,119 @@ test('all local review signals filter and sort consistently after changes and re
  review.value='edited';await review.dispatch('change');const source=tag(fields[1],'select')[0];source.value='Community';await source.dispatch('change');
  assert.deepEqual(names(),['Track 02','Track 04','Track 06']);
  await click(tag(root,'button').find(b=>b.textContent==='Reset filters'));assert.equal(names().length,8);assert.equal(review.value,'all');api.destroy();
+});
+
+
+test('published reviews are independent of local activity and combine reviewed filters, ordering and reset', async () => {
+  const entries = JSON.parse(fs.readFileSync(new URL('./catalog.json', import.meta.url), 'utf8')).slice(0, 3);
+  let writes = 0;
+  const local = {rating: 1, difficultyRating: 2};
+  const {root, api} = fixture(entries, {getFeedback: e => e === entries[0] ? local : {}, onFeedback: () => {writes++;}});
+  api.open();
+  const firstSort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  firstSort.value = 'review-quality-high'; await firstSort.dispatch('change');
+  assert.match(cls(root, 'sq-extra-reviewed')[0].textContent, /Quality 9\/10Difficulty 7\/10.*1 reviewer - one opinion/);
+  assert.match(cls(root, 'sq-extra-my-review')[0].textContent, /My quality 1\/10 · My difficulty 2\/10/);
+  assert.equal(cls(root, 'sq-extra-reviewed')[0].getAttribute('aria-label'), '1 reviewer - one opinion');
+  const fields = cls(root, 'sq-extra-field');
+  const select = caption => tag(fields.find(field => field._text === caption), 'select')[0];
+  const names = () => cls(root, 'sq-extra-card').map(card => tag(card, 'h3')[0].textContent);
+  select('Sort').value = 'review-quality-low'; await select('Sort').dispatch('change');
+  assert.deepEqual(names(), [entries[1].name, entries[2].name, entries[0].name]);
+  select('Sort').value = 'review-quality-high'; await select('Sort').dispatch('change');
+  assert.deepEqual(names(), [entries[0].name, entries[2].name, entries[1].name]);
+  select('Quality').value = '6'; await select('Quality').dispatch('change');
+  assert.deepEqual(names(), [entries[0].name, entries[2].name]);
+  assert.equal(fields.find(field => field._text === 'Quality').children.at(-1).textContent, '2 tracks');
+  select('Reviewer votes').value = 'positive'; await select('Reviewer votes').dispatch('change');
+  assert.deepEqual(names(), [entries[2].name]);
+  await click(cls(root, 'sq-extra-clear')[0]);
+  select('Reviewed difficulty').value = '7'; await select('Reviewed difficulty').dispatch('change');
+  assert.deepEqual(names(), [entries[0].name]);
+  await click(cls(root, 'sq-extra-clear')[0]);
+  select('Review status').value = 'edited'; await select('Review status').dispatch('change');
+  assert.deepEqual(names(), [entries[0].name], 'only the personal score counts as local review');
+  select('Review status').value = 'not-edited'; await select('Review status').dispatch('change');
+  assert.equal(names().length, 2, 'published reviews do not become personal activity');
+  assert.equal(writes, 0); assert.deepEqual(local, {rating: 1, difficultyRating: 2});
+  api.destroy();
+});
+
+test('reviewed missing scores remain last in either direction and unknown identities stay unrated', async () => {
+  const known = JSON.parse(fs.readFileSync(new URL('./catalog.json', import.meta.url), 'utf8')).slice(0, 2);
+  const missing = entry(99, {trackId: 'f'.repeat(64)});
+  const {root, api} = fixture([...known, missing]); api.open();
+  const sort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  for (const value of ['review-quality-high', 'review-quality-low', 'review-difficulty-high', 'review-difficulty-low', 'review-votes-high', 'review-votes-low']) {
+    sort.value = value; await sort.dispatch('change');
+    assert.equal(tag(cls(root, 'sq-extra-card').at(-1), 'h3')[0].textContent, missing.name);
+  }
+  const review = tag(cls(root, 'sq-extra-field')[5], 'select')[0];
+  review.value = 'no-published'; await review.dispatch('change');
+  assert.equal(cls(root, 'sq-extra-reviewed').length, 0);
+  assert.equal(cls(root, 'sq-extra-card').length, 1);
+  api.destroy();
+});
+
+
+test('review sort labels stay short while the selected control exposes the full meaning', async () => {
+  const entries = JSON.parse(fs.readFileSync(new URL('./catalog.json', import.meta.url), 'utf8')).slice(0, 3);
+  const {root, api} = fixture(entries); api.open();
+  const sort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  for (const [value, label, description] of [
+    ['review-quality-high','Review quality: high','Reviewer quality scores, highest first'],
+    ['review-quality-low','Review quality: low','Reviewer quality scores, lowest first'],
+    ['review-difficulty-high','Review: hardest','Reviewer difficulty scores, hardest first'],
+    ['review-difficulty-low','Review: easiest','Reviewer difficulty scores, easiest first'],
+    ['review-votes-high','Review votes: high','Reviewer net votes, highest first'],
+    ['review-votes-low','Review votes: low','Reviewer net votes, lowest first']
+  ]) {
+    const option = sort.children.find(child => child.value === value);
+    assert.equal(option.textContent, label);assert.ok(label.length <= 20);
+    assert.equal(option.getAttribute('aria-label'), description);
+    sort.value = value; await sort.dispatch('change');
+    assert.equal(sort.title, description);assert.equal(sort.getAttribute('aria-description'), description);
+  }
+  sort.value = 'recommended'; await sort.dispatch('change');
+  assert.equal(sort.getAttribute('aria-description'), undefined);api.destroy();
+});
+
+
+test('short and narrow game windows default collapsed at the actual media boundaries',()=>{
+  for (const [width,height,compact] of [[1366,600,true],[1366,650,true],[1366,651,false],[600,900,true],[601,900,false],[844,320,true],[1920,1080,false]]) {
+    const {root,api,document}=fixture([entry(1)],{}, {width,height});api.open();
+    const advanced=cls(root,'sq-extra-advanced')[0],toggle=cls(root,'sq-extra-advanced-toggle')[0];
+    assert.equal(advanced.hidden,compact,width+'x'+height);assert.equal(advanced.inert,compact);
+    assert.equal(toggle.hidden,!compact);assert.equal(toggle.getAttribute('aria-expanded'),String(!compact));
+    assert.equal(toggle.getAttribute('aria-controls'),advanced.id);
+    api.destroy();assert.equal(document.mediaListeners.size,0);
+  }
+});
+
+test('short-window disclosure exposes all filters, preserves chosen counts, focus and resize state',async()=>{
+  const {root,api,document}=fixture([entry(1),entry(2)],{}, {width:1366,height:600});api.open();
+  const advanced=cls(root,'sq-extra-advanced')[0],toggle=cls(root,'sq-extra-advanced-toggle')[0];
+  await click(toggle);assert.equal(advanced.hidden,false);assert.equal(advanced.inert,false);
+  const source=tag(cls(root,'sq-extra-field')[1],'select')[0];source.value='Kacky';await source.dispatch('change');
+  source.focus();await click(toggle);
+  assert.equal(advanced.hidden,true);assert.equal(toggle.textContent,'Filters & sort (1)');
+  assert.equal(document.activeElement,toggle,'collapsing cannot strand focus in hidden controls');
+  api.refresh();api.close();api.open();assert.equal(advanced.hidden,true);assert.equal(toggle.textContent,'Filters & sort (1)');
+  document.resizeTo(1366,900);assert.equal(advanced.hidden,false);assert.equal(toggle.hidden,true);
+  document.resizeTo(1366,650);assert.equal(advanced.hidden,true);assert.equal(toggle.hidden,false);
+  await click(toggle);document.resizeTo(1920,1080);document.resizeTo(844,320);
+  assert.equal(advanced.hidden,false,'an explicitly expanded compact layout survives a resize');
+  assert.equal(source.value,'Kacky');assert.equal(toggle.textContent,'Filters & sort (1)');api.destroy();
+});
+
+test('short-wide CSS reserves disclosure and expanded filter rows without changing narrow rows',()=>{
+  const css=fs.readFileSync(new URL('./catalog.css',import.meta.url),'utf8');
+  assert.ok(css.includes('@media(max-width:600px),(max-height:650px){.sq-extra-advanced-toggle'));
+  const short=css.slice(css.indexOf('/* Short game windows'));
+  assert.ok(short.includes('@media(min-width:601px) and (max-height:650px)'));
+  assert.match(short,/\.sq-extra-controls>\.sq-extra-advanced-toggle\{grid-column:1\/-1;grid-row:2\}/);
+  assert.match(short,/nth-child\(-n\+3\)\{grid-row:3\}/);
+  assert.match(short,/sq-extra-reviewed-controls\{grid-row:5\}/);
+  assert.ok(short.includes('@media(min-width:601px) and (max-width:1100px) and (max-height:650px)'));
+  assert.match(short,/sq-extra-reviewed-controls\{grid-row:6\}/);
 });

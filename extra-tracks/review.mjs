@@ -1,3 +1,12 @@
+const {default: reviewedData} = await import(new URL(`reviewed-data.mjs${new URL(import.meta.url).search}`, import.meta.url));
+const {summarizeReviews, reviewedTags} = await import(new URL(`reviewed.mjs${new URL(import.meta.url).search}`, import.meta.url));
+const reviewSummaries = new WeakMap();
+export function reviewedSummary(entry) {
+  if (!entry || typeof entry !== 'object') return summarizeReviews({}, reviewedData);
+  if (!reviewSummaries.has(entry)) reviewSummaries.set(entry, summarizeReviews(entry, reviewedData));
+  return reviewSummaries.get(entry);
+}
+
 const HIDDEN_TAGS = new Set(['slide', 'easy', 'medium', 'hard', 'expert', 'throwback', 'curated']);
 const NEW_TAGS = ['scenic', 'elite-track', 'kacky', 'mini', 'other-route'];
 
@@ -19,15 +28,17 @@ export function tagLabel(tag) {
 
 export function reviewTagOptions(entries = []) {
   const options = new Set(NEW_TAGS);
-  for (const entry of entries) for (const tag of tags(entry?.tags)) options.add(tag);
+  for (const entry of entries) for (const tag of [...tags(entry?.tags), ...reviewedTags(entry, reviewedSummary(entry))]) options.add(tag);
   return [...options]
     .sort((a, b) => tagLabel(a).localeCompare(tagLabel(b)));
 }
 
-export function normalizeReviewFeedback(entry, value) {
+export function normalizeReviewFeedback(entry, value, summary = reviewedSummary(entry)) {
   const data = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const original = new Set(tags(entry?.tags));
-  const addedTags = tags(data.addedTags).filter(tag => !original.has(tag));
+  const sourceTags = new Set(tags(entry?.tags));
+  const original = new Set([...sourceTags, ...reviewedTags(entry, summary)]);
+  const published = new Set(reviewedTags(entry, summary));
+  const addedTags = tags(data.addedTags).filter(tag => !sourceTags.has(tag) || !published.has(tag));
   const removedTags = tags(data.removedTags).filter(tag => original.has(tag));
   return {
     favorite: data.favorite === true,
@@ -40,9 +51,9 @@ export function normalizeReviewFeedback(entry, value) {
   };
 }
 
-export function effectiveReviewTags(entry, value) {
-  const review = normalizeReviewFeedback(entry, value);
-  return [...tags(entry?.tags).filter(tag => !review.removedTags.includes(tag)), ...review.addedTags];
+export function effectiveReviewTags(entry, value, summary = reviewedSummary(entry)) {
+  const review = normalizeReviewFeedback(entry, value, summary);
+  return [...new Set([...reviewedTags(entry, summary).filter(tag => !review.removedTags.includes(tag)), ...review.addedTags])];
 }
 
 export function hasTagEdits(entry, value) {

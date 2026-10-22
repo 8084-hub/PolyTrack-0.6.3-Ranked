@@ -51,12 +51,16 @@ test('Extra Track profile previews use the catalog thumbnail, not a community pa
 });
 
 test('Extra Track profile links call the native importer on the selected Custom tab',async()=>{
-  const entry={trackId:'extra'};let imported=null,left=0,closed=0;
+  const trackId='a'.repeat(64),entry={trackId};let imported=null,importOptions=null,left=0,closed=0;
+  const listeners=new Map(),errors=[];
   const tab={classList:{contains:()=>true},click:()=>{throw Error('Already selected tab should not be clicked');}};
-  const context=vm.createContext({eventTrackReturnContext:{},eventTrackReturnEpoch:0,localInsights:null,warmPracticeTrack:()=>{},eventUi:{leave:()=>left++},trackInfo:()=>({type:'extra'}),loadExtraTracksCatalog:async()=>[entry],document:{getElementById:()=>({}),querySelectorAll:()=>[],querySelector:()=>tab},closeOverallPanel:()=>closed++,importExtraTrack:async row=>{imported=row;},isElementVisible:()=>true});
-  const start=source.indexOf('  async function focusTrackFromRanked('),end=source.indexOf('    const tabIndex=',start);
-  vm.runInContext(source.slice(start,end)+'  }',context);
-  await context.focusTrackFromRanked('extra');
+  const context=vm.createContext({rankedTrackNavigationEpoch:0,eventTrackReturnContext:{},eventTrackReturnEpoch:0,activeRankedAccountId:()=> 'account',localInsights:null,warmPracticeTrack:()=>{},eventUi:{leave:()=>left++},trackInfo:()=>({type:'extra'}),kodubTrackHistory:new Map(),nativeWeeklySelection:null,loadExtraTracksCatalog:async()=>[entry],document:{getElementById:()=>({}),querySelectorAll:()=>[],querySelector:()=>tab,addEventListener:(type,handler,capture)=>{assert.equal(capture,true);listeners.set(type,handler);},removeEventListener:(type,handler,capture)=>{assert.equal(capture,true);assert.equal(listeners.get(type),handler);listeners.delete(type);}},closeOverallPanel:()=>closed++,importExtraTrack:async(row,options)=>{imported=row;importOptions=options;assert.equal(options.isCurrent(),true);},isElementVisible:()=>true,log:()=>{},showRankedTrackNavigationError:message=>errors.push(message)});
+  const start=source.indexOf('  async function focusTrackFromRanked('),end=source.indexOf('  function trackSummaryLine(',start);
+  assert.ok(start>=0&&end>start,'complete production navigation function exists');
+  vm.runInContext(source.slice(start,end),context);
+  assert.equal(await context.focusTrackFromRanked(trackId),true);
   assert.equal(imported,entry);assert.equal(left,1);assert.equal(closed,1);
   assert.equal(context.eventTrackReturnContext,null);assert.equal(context.eventTrackReturnEpoch,1);
+  assert.equal(context.rankedTrackNavigationEpoch,1);assert.equal(listeners.size,0);assert.deepEqual(errors,[]);
+  context.activeRankedAccountId=()=> 'another-account';assert.equal(importOptions.isCurrent(),false,'import cancellation remains bound to the initiating account');
 });

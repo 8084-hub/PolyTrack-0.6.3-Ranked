@@ -19,7 +19,7 @@ async function createAuditFixture(t){
   const closeBrowser=()=>browser?(closingBrowser ||= browser.close()):undefined;
   // Close active browser requests before draining the server, in either hook order.
   t.after(async()=>{try{await closeBrowser();}finally{await server.close();}});
-  browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE}:{})});
+  browser=await chromium.launch({headless:true,...(process.env.POLYTRACK_TEST_SWIFTSHADER==='1'?{args:['--use-angle=swiftshader','--enable-unsafe-swiftshader']}:{}),...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE}:{})});
   t.after(closeBrowser);
   const page=await browser.newPage({viewport:{width:1366,height:768}});
   t.after(()=>page.close());

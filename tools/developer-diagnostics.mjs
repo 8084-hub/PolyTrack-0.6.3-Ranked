@@ -1,9 +1,10 @@
+import {normalizeControlUsage} from './control-usage.mjs';
 const finite = value => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
 const positiveInt = value => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
 const cleanText = value => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 100);
 const hash = value => /^[a-f0-9]{64}$/.test(value || '');
 const publicIdPattern = /^[A-Za-z0-9_-]{1,256}$/;
-const numbers = ['activeMs', 'simulatedMs', 'sincePbMs', 'attempts', 'finishes', 'pbs', 'restarts', 'restartsSincePb', 'respawns', 'lastPlayedAt', 'lastPbAt', 'trackingStartedAt', 'legacyActiveMs', 'furthestCheckpoint', 'bestMs', 'improvedMs', 'focusedMs', 'pausedMs', 'hiddenMs', 'movingMs', 'longestHuntMs', 'biggestImprovementMs', 'biggestObservedImprovementMs', 'biggestPbImprovementMs', 'trackedBestMs', 'lastObservedFinishMs', 'lastObservedFinishAt', 'motionObservedMs', 'stationaryMs', 'progressingMs', 'idleMs', 'unobservedGapMs', 'observationVersion', 'observedStartedAt'];
+const numbers = ['activeTimeVersion', 'activeMs', 'simulatedMs', 'sincePbMs', 'attempts', 'finishes', 'pbs', 'restarts', 'restartsSincePb', 'respawns', 'lastPlayedAt', 'lastPbAt', 'trackingStartedAt', 'legacyActiveMs', 'furthestCheckpoint', 'bestMs', 'improvedMs', 'focusedMs', 'pausedMs', 'hiddenMs', 'movingMs', 'longestHuntMs', 'biggestImprovementMs', 'biggestObservedImprovementMs', 'biggestPbImprovementMs', 'trackedBestMs', 'lastObservedFinishMs', 'lastObservedFinishAt', 'motionObservedMs', 'stationaryMs', 'progressingMs', 'idleMs', 'unobservedGapMs', 'observationVersion', 'observedStartedAt'];
 const resultNumbers = ['timeMs', 'rank', 'fieldSize', 'weight', 'cachedAt', 'snapshotCapturedAt'];
 const settingNames = new Set(['music', 'sound', 'showFps', 'showGhost', 'cameraShake', 'sensitivity', 'volume', 'fov', 'renderDistance', 'resolutionScale', 'graphics', 'shadows', 'antialiasing', 'uiTextScale', 'compactTrackPanel', 'plannerCurrentOnly', 'plannerOfficialOnly']);
 const insightSources = ['planner', 'profile', 'leaderboard', 'event', 'selection', 'unknown'];
@@ -29,7 +30,7 @@ function sanitizeInsights(insights) {
  const metrics = {};
  for (const [key, row] of Object.entries(insights.metrics || {}).filter(([key]) => /^[A-Z0-9_-]{1,32}$/.test(key)).slice(0, 32)) metrics[key] = { count: finite(row?.count), totalMs: finite(row?.totalMs), maxMs: finite(row?.maxMs), over5s: finite(row?.over5s), over30s: finite(row?.over30s), averageMs: finite(row?.averageMs), over5sPercent: finite(row?.over5sPercent), over30sPercent: finite(row?.over30sPercent) };
  const actions = Object.fromEntries(Object.entries(insights.actions || {}).filter(([key]) => /^[a-z-]{1,32}$/.test(key)).slice(0, 32).map(([key, value]) => [key, finite(value)]));
- return { version: 1, scope: 'This browser device; navigation and version observations may span local racer profiles', startedAt: finite(insights.startedAt), latencyCapMs: insights.latencyCapMs === 30000 ? 30000 : null, revisions, tracks, transitions, metrics, actions };
+ return { version: 1, scope: 'This browser device; navigation and version observations may span local racer profiles', startedAt: finite(insights.startedAt), latencyCapMs: insights.latencyCapMs === 30000 ? 30000 : null, revisions, tracks, transitions, metrics, actions, controls:normalizeControlUsage(insights.controls) };
 }
 
 function practiceEvidence(row){

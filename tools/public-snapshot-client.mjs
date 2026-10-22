@@ -409,5 +409,9 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     }
   };
   read.refresh=()=>recoverCurrentGeneration({manual:true});
+  Object.defineProperty(read,'packageInfo',{value:()=>Object.freeze({
+    generation:Number(/(?:^|\/)public-snapshots([1-9]\d*)\/$/.exec(packageBase.pathname)?.[1]||0),
+    epoch:generation,baseUrl:packageBase.href
+  }),writable:false,configurable:false});
   return read;
 }

@@ -78,3 +78,11 @@ test('practice modules follow the client cache revision',()=>{
 test('local insights and embedded practice use the release cache key',()=>{const result=stampClientRelease(patch+"import('./tools/local-insights.mjs?v=155');import('./tools/practice-profile.mjs?v=155');",index,156);assert.match(result.patch,/local-insights\.mjs\?v=156/);assert.match(result.patch,/practice-profile\.mjs\?v=156/);});
 
 test('future releases advance local observed revision tracking',()=>{const result=stampClientRelease(patch+'createLocalInsights({storage,revision:156});',index,157);assert.match(result.patch,/createLocalInsights\(\{storage,revision:157\}\)/);});
+
+test('new local features advance coherently with future client revisions',()=>{
+ const modules=['opponent-presets','control-usage','kodub-practice-track','overall-local-controller','overall-local-projection'];
+ const input=patch+modules.map(name=>"import('./tools/"+name+".mjs?v=174');").join('');
+ const result=stampClientRelease(input,index,175);
+ for(const name of modules)assert.ok(result.patch.includes(name+'.mjs?v=175'));
+ assert.deepEqual(stampClientRelease(result.patch,result.index,175),result);
+});

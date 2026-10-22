@@ -1,4 +1,5 @@
 import { formatActiveTime } from './active-time.mjs';
+import { practiceAdvice } from './practice-history.mjs';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 0;
@@ -115,7 +116,7 @@ function sessionDetailsMarkup(rows, lookup) {
           ['Paused', row.pausedMs],
           ['Hidden / unfocused', row.hiddenMs],
           ['Observed moving', row.movingMs],
-          ['Stationary', row.stationaryMs]
+          ['Stationary', row.stationaryMs], ['Unobserved gaps', row.unobservedGapMs]
         ].filter(([, value]) => num(value) > 0)
       : [];
     if (num(row.longestHuntMs)) observations.push(['Longest hunt', row.longestHuntMs, formatActiveTime]);
@@ -148,17 +149,30 @@ function cardDetails(row, evidence) {
     ['Hidden / unfocused', row.hiddenMs], ['Observed moving', row.movingMs],
     ['Stationary', row.stationaryMs]
   ].filter(([, value]) => num(value) > 0) : [];
+  const recent = (Array.isArray(row.recentFinishes) ? row.recentFinishes : [])
+    .filter(run => run && num(run.timeMs)).slice(-8);
+  const earlier = Math.min(num(row.activeMs), num(row.legacyActiveMs));
+  const raceTime = row.activeTimeVersion === 2 ? Math.max(0, num(row.activeMs) - earlier) : 0;
+  const practical = [
+    ...(earlier ? [['Earlier time estimate', formatActiveTime(earlier)]] : []),
+    ...(raceTime && earlier ? [['New race progress', formatActiveTime(raceTime)]] : []),
+    ...(recent.length ? [['Latest finish', time(recent.at(-1).timeMs)]] : []),
+    ...(recent.length > 1 ? [['Recent finish range', time(Math.min(...recent.map(run => num(run.timeMs)))) + ' to ' + time(Math.max(...recent.map(run => num(run.timeMs))))]] : []),
+    ...(count(row.furthestCheckpoint) ? [['Checkpoint progress', String(count(row.furthestCheckpoint))]] : [])
+  ];
   const additional = evidence.slice(1).map(evidenceMarkup).join('');
-  if (!additional && !observations.length) return '';
+  if (!additional && !observations.length && !practical.length) return '';
   return '<details class="pp-card-details" data-pp-details-key="track:' + esc(row.trackId) + '">' +
     '<summary aria-label="More history for ' + esc(row.trackName || row.trackId) + '">More history</summary>' +
     (additional ? '<div class="pp-extra-evidence">' + additional + '</div>' : '') +
     (observations.length ? '<dl class="pp-card-observations">' + observations.map(([label, value]) =>
       '<div><dt>' + esc(label) + '</dt><dd>' + formatActiveTime(value) + '</dd></div>').join('') + '</dl>' : '') +
+    (practical.length ? '<dl class="pp-card-observations">' + practical.map(([label, value]) =>
+      '<div><dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd></div>').join('') + '</dl>' : '') +
     '</details>';
 }
 
-function card(row, lookup, preview, results) {
+function card(row, lookup, preview, results, rows) {
   const name = nameOf(row, lookup);
   const attempts = count(row.attempts);
   const finishes = count(row.finishes);
@@ -175,6 +189,9 @@ function card(row, lookup, preview, results) {
       { sort: 'improvement', zero: true, text: 'No driven PB gain recorded' }
   ].filter(Boolean);
   if (num(row.longestHuntMs)) metrics.push({ sort: 'longest-hunt', text: formatActiveTime(row.longestHuntMs) + ' longest hunt' });
+  const advice = practiceAdvice(row, Date.now(), { otherTracks: rows });
+  const guidance = advice.factor !== 1 && date(row.lastPlayedAt) ? advice.text : '';
+  const includesEarlier = num(row.legacyActiveMs) > 0;
   const lastPlayed = date(row.lastPlayedAt);
   const activeTime = num(row.activeMs) ? formatActiveTime(row.activeMs) : 'Not measured';
   const knownResults = evidence.length
@@ -199,15 +216,18 @@ function card(row, lookup, preview, results) {
     '">' + esc(name) + '</button></h3>' +
     '<p class="pp-last-played pp-sort-metric pp-sort-recent"><small>Last played</small><strong>' +
     (lastPlayed ? esc(lastPlayed) : 'Date not recorded') + '</strong></p>' +
-    '<p class="pp-active pp-sort-metric pp-sort-active"><small>Measured drive time</small><strong>' +
+    '<p class="pp-active pp-sort-metric pp-sort-active" title="' +
+    (includesEarlier ? 'Includes earlier time estimates. See More history for the split.' : 'Focused race-clock progress; excludes pauses and time away. Observed movement is shown in More history.') +
+    '"><small>' + (includesEarlier ? 'Practice time' : 'Active race time') + '</small><strong>' +
     esc(activeTime) + '</strong></p></div></div>' +
     (knownResults || trackedHistory ? '<div class="pp-results">' + knownResults + trackedHistory + '</div>' : '') +
     (metrics.length ? '<p class="pp-track-data">' + metrics.map(value => '<span' +
       (value.sort ? ' class="pp-sort-' + value.sort + (value.zero ? ' pp-zero' : '') + '"' : '') + '>' + esc(value.text) + '</span>').join('') + '</p>' : '') +
     (num(row.sincePbMs)
-      ? '<p class="pp-since-pb" title="Measured drive time; only PBs observed by practice tracking count here">' +
+      ? '<p class="pp-since-pb" title="Practice time since a PB observed by tracking; may include earlier estimates">' +
         esc(formatActiveTime(row.sincePbMs)) + (num(row.lastPbAt) >= Date.UTC(2020, 0, 1) && num(row.lastPbAt) <= Date.now() ? ' since last recorded best' : ' without a tracked PB') + '</p>'
       : '') +
+    (guidance ? '<p class="pp-note" aria-label="Practice suggestion">' + esc(guidance) + '</p>' : '') +
     cardDetails(row, evidence) + '</li>';
 }
 
@@ -236,7 +256,7 @@ function coverageMarkup(coverage) {
       : 'Good evidence: most visible time is covered.';
   return '<details class="pp-coverage-details"><summary>About history coverage</summary>' +
     '<p class="pp-coverage-note">' + percent + '% visible-time coverage. ' + esc(description) +
-    ' Attempts and active time are practice observations; saved PB evidence is shown separately and does not imply a tracked finish.</p></details>';
+    ' Active race time is focused race-clock progress, including stationary attempts. Earlier estimates are retained separately in More history. Saved PBs do not imply a tracked finish.</p></details>';
 }
 
 export function renderPracticeProfile({ rows = [], coverage = null, trackName, trackPreview, results = [] } = {}) {
@@ -269,17 +289,17 @@ export function renderPracticeProfile({ rows = [], coverage = null, trackName, t
       ' of ' + first.firstPlacement.total + '</strong><small>' + esc(nameOf(first, trackName)) +
       ' · first known during tracking, not first-ever</small></span>'
     : '';
-  const cards = observed.map(row => card(row, trackName, trackPreview, results)).join('');
+  const cards = observed.map(row => card(row, trackName, trackPreview, results, observed)).join('');
 
   const body = observed.length
     ? '<div class="pp-summary" aria-label="Practice summary">' +
-      '<span><small>MEASURED DRIVE TIME</small><strong>' + formatActiveTime(total) + '</strong></span>' +
+      '<span><small>' + (observed.some(row => num(row.legacyActiveMs)) ? 'PRACTICE TIME' : 'ACTIVE RACE TIME') + '</small><strong>' + formatActiveTime(total) + '</strong></span>' +
       '<span><small>TRACKS DRIVEN</small><strong>' + observed.length + '</strong></span>' +
       summaryStats + firstStat + '</div>' + coverageMarkup(coverage) +
       '<div class="pp-toolbar">' +
       '<label>Search tracks <input type="search" data-pp-search placeholder="Track name or ID" autocomplete="off"></label>' +
       '<div class="pp-sort-control"><label>Sort by <select data-pp-sort>' +
-      '<option value="recent">Last played</option><option value="active">Active time</option>' +
+      '<option value="recent">Last played</option><option value="active" aria-label="Active race time">Active time</option>' +
       '<option value="attempts">Attempts</option>' +
       (observed.some(row => count(row.finishes)) ? '<option value="finishes">Finishes</option>' : '') +
       (observed.some(row => num(row.longestHuntMs)) ? '<option value="longest-hunt">Longest hunt</option>' : '') +
@@ -342,7 +362,8 @@ export function installPracticeProfileControls(root) {
     const key = sort?.value || 'recent';
     const sign = direction?.dataset.ppDirection === 'asc' ? 1 : -1;
     if (direction) {
-      const label = sort?.selectedOptions?.[0]?.textContent || 'Practice history';
+      const selected = sort?.selectedOptions?.[0];
+      const label = selected?.getAttribute('aria-label') || selected?.textContent || 'Practice history';
       const order = sign === 1 ? 'ascending' : 'descending';
       direction.textContent = sign === 1 ? '\u2191' : '\u2193';
       direction.setAttribute('aria-label', label + ', ' + order + '. Switch to ' + (sign === 1 ? 'descending' : 'ascending'));

@@ -8,7 +8,7 @@ const row={accountId:'racer',trackId:'a'.repeat(64),timeMs:19997,frames:19997,
 const current={...pendingSlot(row),status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST};
 const oldKey=JSON.parse(verificationKey(row));oldKey[1]=PRE_EVENT_LAUNCH_ENGINE;
 const old={...current,key:JSON.stringify(oldKey),engineDigest:PRE_EVENT_LAUNCH_ENGINE};
-test('repin has a fresh bootstrap key and requeues previous exact verified bindings without changing PBs',()=>{
+test('UI repin retains historical bootstrap and requeues only unreviewed exact bindings',()=>{
   assert.notEqual(VERIFIER_ENGINE_DIGEST,PRE_EVENT_LAUNCH_ENGINE);
   assert.ok(VERIFICATION_BOOTSTRAP_ID.endsWith('46aba6e247567f5954d412e0988e3d2cd04e9ec154c294bdf3fcaa830d9d12f3'));
   assert.ok(!VERIFICATION_BOOTSTRAP_ID.endsWith(VERIFIER_ENGINE_DIGEST));
@@ -18,7 +18,7 @@ test('repin has a fresh bootstrap key and requeues previous exact verified bindi
   assert.deepEqual(row,before);assert.equal(old.status,'verified');
   assert.equal(bootstrapSlots(row.trackId,[row],{racer:current}).racer,current);
 });
-test('weekly target rejects cached verified label without exact current engine and PB proof',()=>{
+test('weekly target requires exact accepted engine and PB proof',()=>{
   assert.equal(verifiedTargetMs([row],{}),null);
   assert.equal(verifiedTargetMs([row],{racer:old}),null);
   assert.equal(verifiedTargetMs([row],{racer:{...current,status:'waiting'}}),null);
@@ -28,24 +28,26 @@ test('weekly target rejects cached verified label without exact current engine a
   assert.equal(verifiedTargetMs([row],{racer:{...current,verifierVersion:VERIFIER_VERSION}}),19997);
 });
 
-test('manifest, geometry review and reviewed Worker compatibility use the same pin',async()=>{
+test('manifest, opponent review chain and reviewed Worker compatibility use the same pin',async()=>{
   const fs=await import('node:fs');
-  const {MIGRATION_063_ENGINE,EVENT_REPLAY_UI_ENGINE,EVENT_NATIVE_ROW_UI_ENGINE}=await import('../src/event-engine-compatibility.js');
+  const {MIGRATION_063_ENGINE,EVENT_REPLAY_UI_ENGINE,EVENT_NATIVE_ROW_UI_ENGINE,EVENT_OPPONENT_SHORTCUT_UI_ENGINE}=await import('../src/event-engine-compatibility.js');
   const manifest=JSON.parse(fs.readFileSync(new URL('../../../tools/verifier/engine-manifest.json',import.meta.url),'utf8'));
   const geometry=JSON.parse(fs.readFileSync(new URL('../../../tools/verifier/track-geometry.json',import.meta.url),'utf8'));
-  const review=JSON.parse(fs.readFileSync(new URL('../../../docs/events/native-row-ui-engine-review.json',import.meta.url),'utf8'));
+  const review=JSON.parse(fs.readFileSync(new URL('../../../docs/events/opponent-shortcut-ui-engine-review.json',import.meta.url),'utf8'));
+  const nativeReview=JSON.parse(fs.readFileSync(new URL('../../../docs/events/native-row-ui-engine-review.json',import.meta.url),'utf8'));
   const priorReview=JSON.parse(fs.readFileSync(new URL('../../../docs/events/replay-ui-engine-review.json',import.meta.url),'utf8'));
   const historical=JSON.parse(fs.readFileSync(new URL('../../../docs/migration/engine-review.json',import.meta.url),'utf8'));
   assert.equal(manifest.engineDigest,VERIFIER_ENGINE_DIGEST);
   assert.equal(geometry.engineDigest,VERIFIER_ENGINE_DIGEST);
   assert.equal(review.currentEngine,VERIFIER_ENGINE_DIGEST);
-  assert.equal(review.previousEngine,priorReview.currentEngine);
+  assert.equal(review.previousEngine,nativeReview.currentEngine);
+  assert.equal(nativeReview.previousEngine,priorReview.currentEngine);
   assert.equal(priorReview.currentEngine,'46aba6e247567f5954d412e0988e3d2cd04e9ec154c294bdf3fcaa830d9d12f3');
-  assert.equal(review.previousEngine,priorReview.currentEngine);
   assert.equal(historical.engineDigest,priorReview.previousEngine);
   assert.equal(MIGRATION_063_ENGINE,historical.engineDigest);
   assert.equal(EVENT_REPLAY_UI_ENGINE,priorReview.currentEngine);
-  assert.equal(EVENT_NATIVE_ROW_UI_ENGINE,review.currentEngine);
+  assert.equal(EVENT_NATIVE_ROW_UI_ENGINE,nativeReview.currentEngine);
+  assert.equal(EVENT_OPPONENT_SHORTCUT_UI_ENGINE,review.currentEngine);
   assert.deepEqual(review.changedAssets,['main.bundle.js']);
   assert.equal(review.trackPinsUnchanged,true);assert.equal(review.geometryPinsReusedBecausePhysicsAndTracksUnchanged,true);
   assert.deepEqual(review.unchangedPhysicsAssets,historical.unchangedPhysicsAssets);
@@ -57,9 +59,10 @@ const previousKey=JSON.parse(verificationKey(row));previousKey[1]=PRE_GHOST_PROO
 const previous={...current,key:JSON.stringify(previousKey),engineDigest:PRE_GHOST_PROOF_ENGINE};
 const reviewedGhostEngine='32bfe32b8680597d9f1322dbcbb19242be38bee9ab243a379f5e449c3f4030fd';
 const proofFor=digest=>{const key=JSON.parse(verificationKey(row));key[1]=digest;return {...current,key:JSON.stringify(key),engineDigest:digest};};
+const previousNative=proofFor(EVENT_NATIVE_ROW_UI_ENGINE);
 const oldCurrent=proofFor(PRE_REPLAY_UI_PROOF_ENGINE),reviewedGhost=proofFor(reviewedGhostEngine),previousUi=proofFor(EVENT_REPLAY_UI_ENGINE);
 test('reviewed previous exact physics proof survives bootstrap and supplies verified target',()=>{
- for(const proof of [oldCurrent,reviewedGhost,previous,previousUi]) {
+ for(const proof of [oldCurrent,reviewedGhost,previous,previousUi,previousNative]) {
   assert.equal(verifiedVerdict(row,proof),true);
   assert.equal(bootstrapSlots(row.trackId,[row],{racer:proof}).racer,proof);
   assert.equal(verifiedTargetMs([row],{racer:proof}),19997);
@@ -68,11 +71,11 @@ test('reviewed previous exact physics proof survives bootstrap and supplies veri
  }
 });
 test('prior proof requires every exact run field and trusted verdict, never a client label',()=>{
- for(const proof of [oldCurrent,reviewedGhost,previous,previousUi]) for(const change of [{accountId:'other'},{trackId:'c'.repeat(64)},{timeMs:19996},{frames:19996},{raceTimeFrames:19998},{uploadId:2},{replayHash:'d'.repeat(64)}]){
+ for(const proof of [oldCurrent,reviewedGhost,previous,previousUi,previousNative]) for(const change of [{accountId:'other'},{trackId:'c'.repeat(64)},{timeMs:19996},{frames:19996},{raceTimeFrames:19998},{uploadId:2},{replayHash:'d'.repeat(64)}]){
   const changed={...row,...change};assert.equal(verifiedVerdict(changed,proof),false,proof.engineDigest+JSON.stringify(change));
   if(changed.trackId===row.trackId) assert.equal(bootstrapSlots(row.trackId,[changed],{racer:proof})[changed.accountId].status,'waiting');
  }
- for(const proof of [oldCurrent,reviewedGhost,previous,previousUi]) for(const change of [{status:'waiting'},{verifierVersion:'future'},{engineDigest:'f'.repeat(64)},{key:'untrusted'}])assert.equal(verifiedVerdict(row,{...proof,...change}),false);
+ for(const proof of [oldCurrent,reviewedGhost,previous,previousUi,previousNative]) for(const change of [{status:'waiting'},{verifierVersion:'future'},{engineDigest:'f'.repeat(64)},{key:'untrusted'}])assert.equal(verifiedVerdict(row,{...proof,...change}),false);
  assert.equal(verifiedVerdict(row,{runVerified:true,verified:true}),false);
  assert.equal(verifiedVerdict(row,current),true);
 });
@@ -82,7 +85,8 @@ test('future repin cannot implicitly inherit proof or immutable-period compatibi
    .replace("import { EXTRA_TRACK_IDS } from './extra-track-ids.js';",'const EXTRA_TRACK_IDS = new Set();')
    .replace("export const VERIFIER_ENGINE_DIGEST = '"+VERIFIER_ENGINE_DIGEST+"'","export const VERIFIER_ENGINE_DIGEST = '"+future+"'");
  const module=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
- for(const proof of [oldCurrent,reviewedGhost,previous,previousUi,current])assert.equal(module.verifiedVerdict(row,proof),false);
+ for(const proof of [oldCurrent,reviewedGhost,previous,previousUi,previousNative,current])assert.equal(module.verifiedVerdict(row,proof),false);
+ assert.equal(module.VERIFICATION_BOOTSTRAP_ID,'verification_snapshot_v3_'+VERIFIER_VERSION+'_'+future);
  const compat=fs.readFileSync(new URL('../src/event-engine-compatibility.js',import.meta.url),'utf8').replace("import { VERIFIER_ENGINE_DIGEST } from './verification.js';","const VERIFIER_ENGINE_DIGEST = '"+future+"';");
  const next=await import('data:text/javascript;base64,'+Buffer.from(compat).toString('base64'));
  for(const digest of [PRE_EVENT_LAUNCH_ENGINE,EVENT_LAUNCH_ENGINE,EVENT_REPLAY_UI_ENGINE,EVENT_NATIVE_ROW_UI_ENGINE,VERIFIER_ENGINE_DIGEST])assert.equal(next.compatibleEventEngine(digest),false);
@@ -90,8 +94,9 @@ test('future repin cannot implicitly inherit proof or immutable-period compatibi
 });
 test('preserved previous approval is not permission for a new obsolete completion',async()=>{
  const {completedSlot}=await import('../../../tools/verifier/queue.mjs');
- for(const engineDigest of [PRE_REPLAY_UI_PROOF_ENGINE,reviewedGhostEngine,PRE_GHOST_PROOF_ENGINE])
+ for(const engineDigest of [PRE_REPLAY_UI_PROOF_ENGINE,reviewedGhostEngine,PRE_GHOST_PROOF_ENGINE,EVENT_REPLAY_UI_ENGINE,EVENT_NATIVE_ROW_UI_ENGINE])
   assert.throws(()=>completedSlot(pendingSlot(row),{status:'verified',engineDigest}),/engine pin mismatch/);
+ assert.equal(completedSlot(pendingSlot(row),{status:'verified',engineDigest:VERIFIER_ENGINE_DIGEST}).engineDigest,VERIFIER_ENGINE_DIGEST);
 });
 
 test('0.6.3 release gate binds all served assets and reviewed geometry',async()=>{
@@ -99,11 +104,76 @@ test('0.6.3 release gate binds all served assets and reviewed geometry',async()=
  const root=new URL('../../../',import.meta.url), actual=snapshot(fileURLToPath(root));
  const manifest=JSON.parse(fs.readFileSync(new URL('tools/verifier/engine-manifest.json',root),'utf8'));
  assert.equal(actual.engineFingerprint,VERIFIER_ENGINE_DIGEST);assert.deepEqual(actual.manifest,manifest.files);assert.deepEqual(actual.tracks,manifest.tracks);
- const review=JSON.parse(fs.readFileSync(new URL('docs/events/native-row-ui-engine-review.json',root),'utf8'));
+ const review=JSON.parse(fs.readFileSync(new URL('docs/events/opponent-shortcut-ui-engine-review.json',root),'utf8'));
+ const nativeReview=JSON.parse(fs.readFileSync(new URL('docs/events/native-row-ui-engine-review.json',root),'utf8'));
  const priorReview=JSON.parse(fs.readFileSync(new URL('docs/events/replay-ui-engine-review.json',root),'utf8'));
  const historical=JSON.parse(fs.readFileSync(new URL('docs/migration/engine-review.json',root),'utf8'));
- assert.equal(review.currentEngine,VERIFIER_ENGINE_DIGEST);assert.equal(review.previousEngine,priorReview.currentEngine);
+ assert.equal(review.currentEngine,VERIFIER_ENGINE_DIGEST);assert.equal(review.previousEngine,nativeReview.currentEngine);
+  assert.equal(nativeReview.previousEngine,priorReview.currentEngine);
  assert.equal(priorReview.previousEngine,historical.engineDigest);
  assert.deepEqual(review.unchangedPhysicsAssets,historical.unchangedPhysicsAssets);
  for(const [file,hash] of Object.entries(historical.unchangedPhysicsAssets))assert.equal(actual.manifest[file],hash);
+});
+
+
+test('opponent review proves two UI insertions are the entire bundle change and bootstrap alias is exact', async () => {
+ const fs=await import('node:fs'),{createHash}=await import('node:crypto');
+ const root=new URL('../../../',import.meta.url);
+ const review=JSON.parse(fs.readFileSync(new URL('docs/events/opponent-shortcut-ui-engine-review.json',root),'utf8'));
+ const sha=value=>createHash('sha256').update(value).digest('hex');
+ let bundle=fs.readFileSync(new URL('main.bundle.js',root),'utf8').replace(/\r\n?/g,'\n');
+ const manifest=JSON.parse(fs.readFileSync(new URL('tools/verifier/engine-manifest.json',root),'utf8'));
+ const geometry=JSON.parse(fs.readFileSync(new URL('tools/verifier/track-geometry.json',root),'utf8'));
+ const previousFiles={...manifest.files,'main.bundle.js':review.previousMainBundleSha256};
+ assert.equal(sha(JSON.stringify(previousFiles)),review.previousEngine,'all other engine file pins are unchanged');
+ assert.equal(sha(fs.readFileSync(new URL(review.previousReview,root),'utf8').replace(/\r\n?/g,'\n')),review.previousReviewSha256,'prior review is immutable');
+ assert.equal(sha(JSON.stringify(Object.entries(manifest.tracks).sort(([a],[b])=>a<b?-1:a>b?1:0))),review.trackPinsSha256);
+ assert.equal(sha(JSON.stringify(geometry.tracks)),review.geometryRowsSha256);
+ for(const [name,digest] of Object.entries(review.unchangedSimulationAssets))assert.equal(manifest.files[name],digest);
+ assert.equal(sha(bundle),review.currentMainBundleSha256);
+ assert.equal(review.normalizedUiInsertions.length,2);
+ assert.equal(review.previousEngine,EVENT_NATIVE_ROW_UI_ENGINE);
+ assert.equal(review.previousReview,'docs/events/native-row-ui-engine-review.json');
+ assert.equal(review.historicalBootstrapUnchanged,true);
+ assert.match(review.normalizedUiInsertions[0],/^d\.dataset\.sqRecordingId=String\(l\),$/);
+ assert.match(review.normalizedUiInsertions[1],/\.__pt062OpponentSelection=\{version:1,/);
+ for(const insertion of review.normalizedUiInsertions){assert.equal(bundle.split(insertion).length,2);bundle=bundle.replace(insertion,'');}
+ assert.equal(sha(bundle),review.previousMainBundleSha256);
+ assert.equal(VERIFICATION_BOOTSTRAP_ID,'verification_snapshot_v3_'+VERIFIER_VERSION+'_46aba6e247567f5954d412e0988e3d2cd04e9ec154c294bdf3fcaa830d9d12f3');
+});
+
+
+test('native-row event periods stay usable while fresh completions require the new opponent UI pin', async () => {
+ const {createEventService,EVENT_COLLECTIONS:C}=await import('../src/events.js');
+ const {createHash}=await import('node:crypto'),{deflateSync}=await import('node:zlib');
+ const data=new Map();
+ const store={transaction:async fn=>{
+   const copy=structuredClone(data);
+   const result=await fn({get:async key=>structuredClone(copy.get(key)||null),
+     create:(key,value)=>{assert.ok(!copy.has(key));copy.set(key,structuredClone(value));},
+     set:(key,value)=>copy.set(key,structuredClone(value)),
+     patch:(key,value)=>copy.set(key,structuredClone({...copy.get(key),...value})),delete:key=>copy.delete(key)});
+   data.clear();for(const [key,value] of copy)data.set(key,value);return result;
+ }};
+ const account='b'.repeat(64),track='a'.repeat(64);let now=0,nonce=0;
+ data.set(C.profiles+'/'+account,{accountId:account,ownerUid:'owner',name:'Racer'});
+ const service=createEventService({store,now:()=>now,hash:value=>createHash('sha256').update(value).digest('hex'),randomId:()=> 'lease_'+nonce++});
+ await service.bindOwner('owner',account);
+ await service.createPeriod({id:'day1',enabled:true,trackId:track,startsAt:1000,endsAt:86401000,graceMs:3600000,targetMs:10000,maxRp:1000,
+   eligibility:'best-submitted-during-period',capacity:{policyVersion:'test-reviewed-v1',entrants:200,admissionsPerPeriod:512,replayBytesPerPeriod:8388608,minIntervalMs:1000,verificationsPerDay:128}});
+ data.get(C.periods+'/day1').engineDigest=EVENT_NATIVE_ROW_UI_ENGINE;
+ const periodBefore=structuredClone(data.get(C.periods+'/day1'));now=1000;
+ await service.snapshot('day1');
+ const submitted=await service.submit('day1','owner',{accountId:account,trackId:track,attemptId:'first',timeMs:20402,frames:20402,replay:deflateSync(Buffer.alloc(15)).toString('base64url'),carStyle:''});
+ const [job]=await service.leaseJobs('day1');assert.ok(job);
+ const verdict=digest=>({status:'verified',resultId:job.resultId,trackId:job.trackId,timeMs:job.timeMs,replayHash:job.replayHash,engineDigest:digest,
+   binding:{resultId:job.resultId,trackId:job.trackId,nativeTrackId:job.trackId,timeMs:job.timeMs,replayHash:job.replayHash,actualReplayHash:job.replayHash,engineDigest:digest,verifierVersion:VERIFIER_VERSION}});
+ for(const digest of [EVENT_NATIVE_ROW_UI_ENGINE,EVENT_REPLAY_UI_ENGINE,PRE_REPLAY_UI_PROOF_ENGINE]){
+   const before=JSON.stringify([...data]);
+   await assert.rejects(service.completeJob('day1',job,verdict(digest)),/verifier_proof_mismatch/);
+   assert.equal(JSON.stringify([...data]),before,'an obsolete completion cannot publish any state');
+ }
+ await service.completeJob('day1',job,verdict(VERIFIER_ENGINE_DIGEST));
+ assert.equal(data.get(C.runs+'/'+submitted.runId).status,'verified');
+ assert.deepEqual(data.get(C.periods+'/day1'),periodBefore,'immutable old period binding is retained');
 });

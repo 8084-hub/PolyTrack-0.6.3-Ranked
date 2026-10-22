@@ -10,6 +10,7 @@ try { ({chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright')); } c
 const browserSkip = !chromium && 'Set PLAYWRIGHT_MODULE to the bundled Playwright package to run this browser test.';
 const moduleSource = fs.readFileSync(new URL('./catalog-ui.mjs', import.meta.url), 'utf8');
 const reviewSource = fs.readFileSync(new URL('./review.mjs', import.meta.url), 'utf8');
+const reviewedModules = new Map(['reviewed.mjs', 'reviewed-data.mjs'].map(name => [name, fs.readFileSync(new URL('./' + name, import.meta.url), 'utf8')]));
 const css = fs.readFileSync(new URL('./catalog.css', import.meta.url), 'utf8');
 const catalog = JSON.parse(fs.readFileSync(new URL('./catalog.json', import.meta.url), 'utf8'));
 const homeCss = fs.readFileSync(new URL('../home-ui.css', import.meta.url), 'utf8');
@@ -25,6 +26,7 @@ test('phone filter disclosure stays accessible and preserves state across rerend
     const page = await browser.newPage({viewport: {width: 844, height: 900}});
     await page.route('**/*', async route => {
       const url = route.request().url();
+      if (reviewedModules.has(new URL(url).pathname.slice(1))) return route.fulfill({contentType: 'text/javascript', body: reviewedModules.get(new URL(url).pathname.slice(1))});
       if (url === 'http://extra-tracks.test/review.mjs') await route.fulfill({contentType: 'text/javascript', body: reviewSource});
       else if (url === 'http://extra-tracks.test/catalog-ui.mjs') await route.fulfill({contentType: 'text/javascript', body: moduleSource});
       else if (url === 'http://extra-tracks.test/') await route.fulfill({contentType: 'text/html', body: '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><main id="root"></main>'});
@@ -44,7 +46,7 @@ test('phone filter disclosure stays accessible and preserves state across rerend
     assert.equal(await advanced.isVisible(), true, 'desktop starts expanded');
     assert.equal(await toggle.isHidden(), true, 'desktop hides the disclosure');
     await page.setViewportSize({width: 390, height: 844});
-    await page.waitForFunction(() => matchMedia('(max-width: 600px)').matches && document.querySelector('.sq-extra-advanced')?.hidden);
+    await page.waitForFunction(() => matchMedia('(max-width: 600px), (max-height: 650px)').matches && document.querySelector('.sq-extra-advanced')?.hidden);
     assert.equal(await search.isVisible(), true, 'search remains visible on a phone');
     assert.equal(await advanced.isHidden(), true, 'first desktop-to-phone resize starts collapsed before any toggle');
     assert.equal(await advanced.evaluate(el => el.inert), true, 'collapsed controls leave the tab order');
@@ -70,11 +72,11 @@ test('phone filter disclosure stays accessible and preserves state across rerend
     assert.equal(await toggle.textContent(), 'Filters & sort (1)', 'active advanced group is counted while search is excluded');
 
     await page.setViewportSize({width: 844, height: 390});
-    await page.waitForFunction(() => !matchMedia('(max-width: 600px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
+    await page.waitForFunction(() => matchMedia('(max-width: 600px), (max-height: 650px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
     assert.equal(await advanced.isVisible(), true, 'desktop/tablet layout stays expanded');
     assert.equal(await toggle.isHidden(), true, 'disclosure is hidden outside the phone breakpoint');
     await page.setViewportSize({width: 390, height: 844});
-    await page.waitForFunction(() => matchMedia('(max-width: 600px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
+    await page.waitForFunction(() => matchMedia('(max-width: 600px), (max-height: 650px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
     assert.equal(await advanced.isVisible(), true, 'expanded phone state survives a desktop round trip');
     await toggle.click();
     assert.equal(await advanced.isHidden(), true);
@@ -86,8 +88,8 @@ test('phone filter disclosure stays accessible and preserves state across rerend
     assert.equal(await search.evaluate(el => el === document.activeElement), true, 'reset returns focus to the always-visible search field');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'phone layout has no horizontal overflow');
     await page.setViewportSize({width: 844, height: 390});
-    await page.waitForFunction(() => !matchMedia('(max-width: 600px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
-    assert.equal(await advanced.isVisible(), true, 'short landscape tablet layout remains usable');
+    await page.waitForFunction(() => !matchMedia('(max-width: 600px), (max-height: 650px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
+    assert.equal(await advanced.isVisible(), true, 'explicitly expanded filters stay usable in short landscape');
     await page.evaluate(() => window.catalog.destroy());
   } finally {
     await browser.close();
@@ -100,6 +102,7 @@ test('no-results Clear filters restores search focus without scrolling when acti
     const page = await browser.newPage({viewport: {width: 390, height: 844}});
     await page.route('**/*', async route => {
       const url = route.request().url();
+      if (reviewedModules.has(new URL(url).pathname.slice(1))) return route.fulfill({contentType: 'text/javascript', body: reviewedModules.get(new URL(url).pathname.slice(1))});
       if (url === 'http://extra-tracks.test/review.mjs') await route.fulfill({contentType: 'text/javascript', body: reviewSource});
       else if (url === 'http://extra-tracks.test/catalog-ui.mjs') await route.fulfill({contentType: 'text/javascript', body: moduleSource});
       else if (url === 'http://extra-tracks.test/') await route.fulfill({contentType: 'text/html', body: '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><main id="root"></main>'});
@@ -137,6 +140,7 @@ test('Extra Tracks nested dialogs contain focus, close correctly, and restore th
     const requested = [];
     await page.route('**/*', async route => {
       const url = route.request().url();
+      if (reviewedModules.has(new URL(url).pathname.slice(1))) return route.fulfill({contentType: 'text/javascript', body: reviewedModules.get(new URL(url).pathname.slice(1))});
       requested.push(url);
       if (url === 'http://extra-tracks.test/review.mjs') {
         await route.fulfill({contentType: 'text/javascript', body: reviewSource});
@@ -226,6 +230,7 @@ test('track cards show full previews and keep feedback in an accessible three-do
     const page = await browser.newPage({viewport: {width: 960, height: 900}, hasTouch: true});
     await page.route('**/*', async route => {
       const url = route.request().url();
+      if (reviewedModules.has(new URL(url).pathname.slice(1))) return route.fulfill({contentType: 'text/javascript', body: reviewedModules.get(new URL(url).pathname.slice(1))});
       if (url === 'http://extra-tracks.test/review.mjs') await route.fulfill({contentType: 'text/javascript', body: reviewSource});
       else if (url === 'http://extra-tracks.test/catalog-ui.mjs') await route.fulfill({contentType: 'text/javascript', body: moduleSource});
       else if (url === 'http://extra-tracks.test/') await route.fulfill({contentType: 'text/html', body: '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><main id="root"></main>'});
@@ -414,7 +419,8 @@ test('Extra Tracks dialogs fit narrow portrait and short landscape viewports and
   try {
     const page = await browser.newPage({viewport: {width: 320, height: 568}});
     await page.route('**/*', async route => {
-      if (route.request().url() === 'http://extra-tracks.test/review.mjs') await route.fulfill({contentType: 'text/javascript', body: reviewSource});
+      if (reviewedModules.has(new URL(route.request().url()).pathname.slice(1))) await route.fulfill({contentType: 'text/javascript', body: reviewedModules.get(new URL(route.request().url()).pathname.slice(1))});
+      else if (route.request().url() === 'http://extra-tracks.test/review.mjs') await route.fulfill({contentType: 'text/javascript', body: reviewSource});
       else if (route.request().url() === 'http://extra-tracks.test/catalog-ui.mjs') await route.fulfill({contentType: 'text/javascript', body: moduleSource});
       else if (route.request().url() === 'http://extra-tracks.test/') await route.fulfill({contentType: 'text/html', body: '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><main id="root"></main>'});
       else await route.abort();
@@ -481,6 +487,7 @@ test('5,000-entry offline catalog interaction benchmark', {skip: browserSkip}, a
     const page = await browser.newPage();
     await page.route('**/*', async route => {
       const url = route.request().url();
+      if (reviewedModules.has(new URL(url).pathname.slice(1))) return route.fulfill({contentType: 'text/javascript', body: reviewedModules.get(new URL(url).pathname.slice(1))});
       if (url === 'http://extra-tracks.test/review.mjs') await route.fulfill({contentType: 'text/javascript', body: reviewSource});
       else if (url === 'http://extra-tracks.test/catalog-ui.mjs') await route.fulfill({contentType: 'text/javascript', body: moduleSource});
       else if (url === 'http://extra-tracks.test/') await route.fulfill({contentType: 'text/html', body: '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><main id="root"></main>'});
@@ -549,6 +556,7 @@ test('delayed dialog requests cannot mutate a newer close/reopen session', {skip
     const page = await browser.newPage();
     await page.route('**/*', async route => {
       const url = route.request().url();
+      if (reviewedModules.has(new URL(url).pathname.slice(1))) return route.fulfill({contentType: 'text/javascript', body: reviewedModules.get(new URL(url).pathname.slice(1))});
       if (url === 'http://extra-tracks.test/review.mjs') await route.fulfill({contentType: 'text/javascript', body: reviewSource});
       else if (url === 'http://extra-tracks.test/catalog-ui.mjs') await route.fulfill({contentType: 'text/javascript', body: moduleSource});
       else if (url === 'http://extra-tracks.test/') await route.fulfill({contentType: 'text/html', body: '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><main id="root"></main>'});
@@ -643,6 +651,7 @@ test('real catalog previews stay uncropped in desktop and portrait game layouts'
     const page = await browser.newPage({viewport: {width: 1365, height: 900}});
     await page.route('**/*', async route => {
       const url = new URL(route.request().url());
+      if (reviewedModules.has(url.pathname.slice(1))) return route.fulfill({contentType: 'text/javascript', body: reviewedModules.get(url.pathname.slice(1))});
       if (url.href === 'http://extra-tracks.test/review.mjs') {
         await route.fulfill({contentType: 'text/javascript', body: reviewSource});
       } else if (url.href === 'http://extra-tracks.test/catalog-ui.mjs') {

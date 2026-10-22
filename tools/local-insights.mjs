@@ -1,3 +1,4 @@
+import {normalizeControlUsage} from './control-usage.mjs';
 export const INSIGHTS_KEY='polytrack-local-insights-v1';
 const hash=value=>/^[a-f0-9]{64}$/.test(value||'');
 const count=value=>Number.isFinite(value)&&value>=0?Math.min(1e12,value):0;
@@ -5,9 +6,10 @@ const sources=new Set(['planner','profile','leaderboard','event','selection','un
 const LATENCY_CAP_MS=30000;
 export function createLocalInsights({storage,now=Date.now,revision=0}={}){
  const timestamp=value=>Number.isFinite(value)&&value>0?Math.min(now(),value):0;
- let data={version:1,startedAt:now(),revisions:[],tracks:{},transitions:{},metrics:{},actions:{}},dirty=false,lastSave=0,lastTrack='',intent=null,away=false;
+ let data={version:1,startedAt:now(),revisions:[],tracks:{},transitions:{},metrics:{},actions:{},controls:{}},dirty=false,lastSave=0,lastTrack='',intent=null,away=false;
  try{const saved=JSON.parse(storage?.getItem(INSIGHTS_KEY)||'null');if(saved?.version===1){
   data.startedAt=timestamp(saved.startedAt)||now();
+  data.controls=normalizeControlUsage(saved.controls);
   data.revisions=(saved.revisions||[]).slice(-32).filter(r=>Number.isSafeInteger(r.revision)&&r.revision>=0).map(r=>({revision:r.revision,firstAt:timestamp(r.firstAt),lastAt:timestamp(r.lastAt),visits:count(r.visits),visibleMs:count(r.visibleMs)}));
   for(const [id,row] of Object.entries(saved.tracks||{}).filter(([id])=>hash(id)).slice(-256))data.tracks[id]={plays:count(row.plays),lastAt:timestamp(row.lastAt),sources:Object.fromEntries([...sources].map(s=>[s,count(row.sources?.[s])]))};
   for(const [key,value] of Object.entries(saved.transitions||{}).filter(([key])=>/^[a-f0-9]{64}:[a-f0-9]{64}$/.test(key)).slice(-512))data.transitions[key]=count(value);
@@ -28,5 +30,12 @@ export function createLocalInsights({storage,now=Date.now,revision=0}={}){
  function measure(code,durationMs){if(!/^[A-Z0-9_-]{1,32}$/.test(code)||!Number.isFinite(durationMs)||durationMs<0||!Object.hasOwn(data.metrics,code)&&Object.keys(data.metrics).length>=32)return;const m=data.metrics[code]||(data.metrics[code]={count:0,totalMs:0,maxMs:0,over5s:0,over30s:0});const bounded=Math.min(durationMs,LATENCY_CAP_MS);m.count=count(m.count+1);m.totalMs=count(m.totalMs+bounded);m.maxMs=Math.max(m.maxMs,bounded);if(durationMs>5000)m.over5s=count(m.over5s+1);if(durationMs>LATENCY_CAP_MS)m.over30s=count(m.over30s+1);dirty=true;flush();}
  function predict(trackId){const rows=Object.entries(data.transitions).filter(([key])=>key.startsWith(trackId+':')).map(([key,n])=>({trackId:key.slice(65),count:n})).sort((a,b)=>b.count-a.count);const total=rows.reduce((n,r)=>n+r.count,0),best=rows[0];return best&&total>=5&&best.count>=4&&best.count/total>=.75?{trackId:best.trackId,confidence:best.count/total,observations:total}:null;}
  function report(){return JSON.parse(JSON.stringify({...data,latencyCapMs:LATENCY_CAP_MS,metrics:Object.fromEntries(Object.entries(data.metrics).map(([key,m])=>[key,{...m,averageMs:m.count?Math.round(m.totalMs/m.count):0,over5sPercent:m.count?Math.round(10000*m.over5s/m.count)/100:0,over30sPercent:m.count?Math.round(10000*m.over30s/m.count)/100:0}]))}));}
- return {action,navigate,play,measure,predict,report,flush,observeVisible(ms){const row=data.revisions.find(r=>r.revision===revision);if(row){row.visibleMs=count(row.visibleMs)+Math.min(120000,count(ms));row.lastAt=now();dirty=true;flush();}},leave(){away=true;intent=null;}};
+ function control(menu,name){
+  if(!/^[a-z-]{1,24}$/.test(menu)||!/^[a-z0-9-]{1,40}$/.test(name))return;
+  const normalized=normalizeControlUsage({[menu]:{[name]:1}});if(!normalized[menu])return;
+  const row=data.controls[menu]||{};
+  if(!Object.hasOwn(row,name)&&(Object.keys(row).length>=64||Object.values(data.controls).reduce((n,r)=>n+Object.keys(r).length,0)>=256))return;
+  row[name]=Math.min(1e9,(row[name]||0)+1);data.controls[menu]=row;dirty=true;flush();
+ }
+ return {action,control,navigate,play,measure,predict,report,flush,observeVisible(ms){const row=data.revisions.find(r=>r.revision===revision);if(row){row.visibleMs=count(row.visibleMs)+Math.min(120000,count(ms));row.lastAt=now();dirty=true;flush();}},leave(){away=true;intent=null;}};
 }

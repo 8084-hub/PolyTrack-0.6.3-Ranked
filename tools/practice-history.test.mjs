@@ -48,6 +48,7 @@ function nativeFixture(onLeave=()=>{}){
 test('native observer excludes ghosts, pauses and hidden time; repeated install is idempotent',()=>{
  const f=nativeFixture();try{const ghost=f.car('replay');ghost.state.frames=1000;f.tick();assert.equal(f.h.history.get(account,track),null);
  const car=f.car();car.state.frames=1000;f.tick();f.hide();car.state.frames=2000;f.tick();f.show();car.paused=true;car.state.frames=3000;f.tick();car.paused=false;car.state.frames=4000;f.tick();
+ // Positive native clock advancement after resume is counted.
  assert.equal(f.h.history.get(account,track).activeMs,2000);
  assert.equal(installPracticeObserver({require:f.require}),f.observer);
  }finally{f.observer.stop();}
@@ -164,4 +165,68 @@ test('new observation timestamps round-trip at real epoch scale without duration
  const h=createPracticeHistory({storage,now:()=>at});const a=h.begin(account,track);a.observe(1000,moving);a.finish(12000);h.flush(true);
  const row=createPracticeHistory({storage,now:()=>at}).get(account,track);
  assert.equal(row.observedStartedAt,at);assert.equal(row.lastObservedFinishAt,at);assert.equal(row.trackedBestMs,12000);assert.equal(row.observationVersion,1);
+});
+
+test('recent finish dates survive saving and reloading at real epoch scale',()=>{
+ let saved;const at=Date.UTC(2026,9,21),storage={getItem:()=>saved,setItem:(_k,v)=>saved=v};
+ const h=createPracticeHistory({storage,now:()=>at});h.begin(account,track).finish(12000);
+ const restored=createPracticeHistory({storage,now:()=>at+1000}).get(account,track);
+ assert.equal(restored.recentFinishes[0].at,at);assert.equal(restored.finishes,1);
+ assert.equal(restored.recentFinishes[0].timeMs,12000);
+});
+
+test('a non-PB finish is durable even if the finished car never ticks again',()=>{
+ const h=setup();h.history.begin(account,track,10000).finish(12000);
+ const restored=createPracticeHistory({storage:h.storage,now:()=>100000}).get(account,track);
+ assert.equal(restored.finishes,1);assert.equal(restored.pbs,0);assert.equal(restored.trackedBestMs,12000);
+ assert.equal(restored.recentFinishes.length,1);
+});
+
+test('leaving a short unfinished attempt flushes its last tick',()=>{
+ const h=setup(),a=h.history.begin(account,track);a.tick(100);a.tick(100);a.leave();
+ const restored=createPracticeHistory({storage:h.storage,now:()=>100000}).get(account,track);
+ assert.equal(restored.activeMs,200);assert.equal(restored.finishes,0);assert.equal(restored.attempts,1);
+});
+
+test('old active estimates are retained explicitly and migration is idempotent',()=>{
+ let saved=JSON.stringify({version:1,accounts:{[account]:{[track]:{attempts:2,activeMs:90000,trackingStartedAt:1000,legacyActiveMs:5000}}}});
+ const storage={getItem:()=>saved,setItem:(_k,v)=>saved=v};
+ let h=createPracticeHistory({storage,now:()=>100000});let a=h.begin(account,track);a.tick(1000);a.leave();
+ let row=h.get(account,track);assert.equal(row.activeMs,91000);assert.equal(row.legacyActiveMs,90000);assert.equal(row.activeTimeVersion,2);
+ h=createPracticeHistory({storage,now:()=>100000});row=h.get(account,track);
+ assert.equal(row.activeMs-row.legacyActiveMs,1000);assert.equal(row.legacyActiveMs,90000);
+ assert.equal(row.finishes,0);assert.equal(row.trackedBestMs,0);assert.deepEqual(row.recentFinishes,[]);
+});
+
+test('finish-only and active-only legacy records are not hidden by a missing attempt counter',()=>{
+ const legacy={version:1,accounts:{[account]:{[track]:{finishes:3},['c'.repeat(64)]:{activeMs:1000}}}};
+ const h=createPracticeHistory({storage:{getItem:()=>JSON.stringify(legacy)}});
+ assert.equal(h.list(account).length,2);assert.equal(h.list(account)[0].finishes,3);
+});
+
+test('partial progression separates idle focus from a newly started run',()=>{
+ const h=setup(),a=h.history.begin(account,track);a.observe(1000,{...moving,progressingMs:100});
+ const row=h.history.get(account,track);assert.equal(row.focusedMs,1000);assert.equal(row.progressingMs,100);
+ assert.equal(row.movingMs,100);assert.equal(row.idleMs,900);assert.equal(row.longestHuntMs,100);
+});
+
+test('invalid future finish dates remain unknown rather than being relabelled as today',()=>{
+ const value={version:1,accounts:{[account]:{[track]:{finishes:1,recentFinishes:[{at:200000,timeMs:1000}]}}}};
+ const h=createPracticeHistory({storage:{getItem:()=>JSON.stringify(value)},now:()=>100000});
+ assert.equal(h.get(account,track).recentFinishes[0].at,0);assert.equal(h.get(account,track).recentFinishes[0].timeMs,1000);
+});
+
+test('cleared attempts cannot mutate detached rows or resurrect cleared history',()=>{
+ const h=setup(),a=h.history.begin(account,track);a.tick(1000);h.history.clear(account);const revision=h.history.revision;
+ assert.equal(a.isCurrent(),false);a.observe(1000,moving);a.tick(1000);a.respawn(1000);a.restart(1000);a.finish(900);a.leave();
+ assert.equal(h.history.get(account,track),null);assert.equal(h.history.revision,revision);
+ const fresh=h.history.begin(account,track);fresh.tick(200);assert.equal(fresh.isCurrent(),true);
+ assert.equal(h.history.get(account,track).activeMs,200);assert.equal(h.history.get(account,track).attempts,1);
+});
+
+test('clock recovery reclassifies bounded prior idle without inventing movement',()=>{
+ const h=setup(),a=h.history.begin(account,track);a.observe(1000,{...moving,progressingMs:950});a.tick(950,1,950);
+ a.observe(1000,{...moving,moving:false,progressingMs:1000});a.tick(1050,1,1000,{catchUpMs:50,catchUpMovingMs:50});
+ const row=h.history.get(account,track);assert.equal(row.activeMs,2000);assert.equal(row.progressingMs,2000);
+ assert.equal(row.idleMs,0);assert.equal(row.movingMs,1000);assert.equal(row.stationaryMs,1000);
 });

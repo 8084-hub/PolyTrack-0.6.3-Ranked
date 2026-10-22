@@ -1,8 +1,16 @@
-const { effectiveReviewTags, hasTagEdits, hasLocalReview, reviewTagOptions, tagLabel, reviewExportRow, hasReviewExportData } =
+const { reviewedSummary, effectiveReviewTags, hasTagEdits, hasLocalReview, reviewTagOptions, tagLabel, reviewExportRow, hasReviewExportData } =
   await import(new URL(`review.mjs${new URL(import.meta.url).search}`, import.meta.url));
 
 const SUBMIT_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSel-vg-VwzQuA2dRTEPoKiLIUgDvJ4bCvjMI8u4hqB33gkvrQ/viewform';
 const PAGE_SIZE = 12;
+const REVIEW_SORT_DESCRIPTIONS = {
+  'review-quality-high': 'Reviewer quality scores, highest first',
+  'review-quality-low': 'Reviewer quality scores, lowest first',
+  'review-difficulty-high': 'Reviewer difficulty scores, hardest first',
+  'review-difficulty-low': 'Reviewer difficulty scores, easiest first',
+  'review-votes-high': 'Reviewer net votes, highest first',
+  'review-votes-low': 'Reviewer net votes, lowest first'
+};
 const SUBMISSION_PENDING_MESSAGE = 'A previous track submission is still processing.';
 const REPORT_PENDING_MESSAGE = 'A previous report is still processing.';
 const ACTION_PENDING_MESSAGE = 'Another request is still processing. Please wait before sending.';
@@ -88,9 +96,9 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   let expandedCardTrigger = null;
   let cardMenuNumber = 0;
   let cardMenuPositionFrame = null;
-  const phoneFiltersQuery = document.defaultView?.matchMedia?.('(max-width: 600px)') || null;
+  const compactFiltersQuery = document.defaultView?.matchMedia?.('(max-width: 600px), (max-height: 650px)') || null;
   let filtersExpanded = false;
-  const state = { search: '', source: '', tags: [], difficulty: '', curated: false, favorites: false, completion: 'all', review: 'all', sort: 'recommended' };
+  const state = { search: '', source: '', tags: [], difficulty: '', curated: false, favorites: false, completion: 'all', review: 'all', sort: 'recommended', reviewedQuality: '', reviewedDifficulty: '', reviewedVote: '' };
   const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
   const make = (tag, className, content) => {
     const node = document.createElement(tag);
@@ -178,6 +186,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   const selectField = (caption, choices) => {
     const label = make('label', 'sq-extra-field', caption);
     const select = make('select');
+    select.setAttribute('data-sq-control', caption.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
     for (const [value, name] of choices) {
       const option = make('option', '', name);
       option.value = value;
@@ -194,10 +203,10 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   const selectedTags = make('div', 'sq-extra-selected-tags');
   selectedTags.setAttribute('aria-label', 'Selected tags');
   tagField.label.append(selectedTags);
-  const difficultyField = selectField('Difficulty', [['', 'Any level'], ...DIFFICULTY_LABELS.slice(1).map((label, index) => [String(index + 1), label])]);
+  const difficultyField = selectField('Catalog level', [['', 'Any level'], ...DIFFICULTY_LABELS.slice(1).map((label, index) => [String(index + 1), label])]);
   const progressLabels = {all: 'All tracks', activity: 'Has my activity', untouched: 'No activity yet', completed: 'Completed', uncompleted: 'Not completed', loaded: 'Imported, not completed'};
   const completionField = selectField('Progress', Object.entries(progressLabels));
-  const reviewField = selectField('Review status', [['all', 'All tracks'], ['edited', 'Locally reviewed'], ['not-edited', 'Not reviewed']]);
+  const reviewField = selectField('Review status', [['all', 'All tracks'], ['edited', 'Reviewed by me'], ['not-edited', 'Not reviewed by me'], ['published', 'Has reviewer opinions'], ['no-published', 'No reviewer opinions']]);
   const baseSortChoices = [['recommended', 'Recommended'], ['name', 'Name A-Z'], ['author', 'Author A-Z']];
   const sortField = selectField('Sort', baseSortChoices);
   sortField.count.remove();
@@ -216,6 +225,14 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   const quickFilters = make('div', 'sq-extra-quick-filters');
   quickFilters.append(favoritesLabel, curatedLabel);
   advancedControls.append(sourceField.label, tagField.label, difficultyField.label, completionField.label, reviewField.label, sortControls, quickFilters);
+  const reviewedControls = make('div', 'sq-extra-reviewed-controls');
+  const reviewedCaption = make('span', 'sq-extra-reviewed-caption', 'Reviewer opinions');
+  const qualityField = selectField('Quality', [['', 'Any score'], ...Array.from({length: 10}, (_, i) => [String(i + 1), `At least ${i + 1}/10`])]);
+  const reviewedDifficultyField = selectField('Reviewed difficulty', [['', 'Any score'], ...DIFFICULTY_LABELS.slice(1).map((label, i) => [String(i + 1), `${i + 1}/10 - ${label}`])]);
+  reviewedDifficultyField.select.setAttribute('aria-description', 'Reviewed difficulty rounded to the nearest whole level.');
+  const voteField = selectField('Reviewer votes', [['', 'Any votes'], ['positive', 'Net positive'], ['negative', 'Net negative'], ['voted', 'Has votes'], ['unvoted', 'No votes']]);
+  reviewedControls.append(reviewedCaption, qualityField.label, reviewedDifficultyField.label, voteField.label);
+  advancedControls.append(reviewedControls);
   controls.append(searchLabel, advancedToggle, advancedControls);
   dialog.append(controls);
 
@@ -343,7 +360,11 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     if (all.some(entry => Number.isSafeInteger(entry.sourceCopies) && entry.sourceCopies >= 0 || Number.isSafeInteger(entry.sourcePlays) && entry.sourcePlays >= 0)) choices.push(['plays', 'Most plays']);
     if (all.some(entry => forumActivity(entry) !== null)) choices.push(['forum', 'Forum activity']);
     if (typeof getLocalRating === 'function') choices.push(['my-rating', 'My ratings']);
-    choices.push(['edited-first', 'Reviewed first'], ['unedited-first', 'Not reviewed first']);
+    choices.push(['edited-first', 'My reviews first'], ['unedited-first', 'Not reviewed by me first']);
+    if (all.some(entry => reviewedSummary(entry).count)) choices.push(
+      ['review-quality-high', 'Review quality: high'], ['review-quality-low', 'Review quality: low'],
+      ['review-difficulty-high', 'Review: hardest'], ['review-difficulty-low', 'Review: easiest'],
+      ['review-votes-high', 'Review votes: high'], ['review-votes-low', 'Review votes: low']);
     if (all.some(entry => Number.isFinite(Date.parse(entry.submittedAt || entry.codeModifiedAt)))) choices.push(['date-newest', 'Newest Track'], ['date-oldest', 'Oldest Track']);
 
     const capabilityKey = choices.map(([value]) => value).join('|');
@@ -354,6 +375,10 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     for (const [value, label] of choices) {
       const option = make('option', '', label);
       option.value = value;
+      if (REVIEW_SORT_DESCRIPTIONS[value]) {
+        option.title = REVIEW_SORT_DESCRIPTIONS[value];
+        option.setAttribute('aria-label', REVIEW_SORT_DESCRIPTIONS[value]);
+      }
       sortField.select.append(option);
     }
     sortField.select.value = selected;
@@ -519,6 +544,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     const titleRow = make('div', 'sq-extra-title-row');
     titleRow.append(make('h3', '', text(entry.name, 'Untitled track')));
     let feedback = {};
+    try { feedback = getFeedback?.(entry) || {}; } catch { /* Device feedback is optional. */ }
     if (typeof onFeedback === 'function') {
       try { feedback = getFeedback?.(entry) || {}; } catch { /* Device storage is optional. */ }
       const favorite = button('', 'sq-extra-favorite' + (feedback.favorite ? ' selected' : ''), () => {
@@ -560,8 +586,27 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       }
       body.append(tagList);
     }
+    const reviewed = reviewedSummary(entry);
+    if (reviewed.count) {
+      const opinions = make('div', 'sq-extra-reviewed');
+      const label = `${reviewed.count} reviewer${reviewed.count === 1 ? '' : 's'}${reviewed.count === 1 ? ' - one opinion' : ' - opinions, not consensus'}`;
+      opinions.setAttribute('aria-label', label);
+      opinions.title = label;
+      const number = value => Number.isInteger(value) ? String(value) : value.toFixed(1);
+      if (reviewed.quality !== null) opinions.append(make('span', 'sq-extra-reviewed-quality', `Quality ${number(reviewed.quality)}/10`));
+      if (reviewed.difficulty !== null) opinions.append(make('span', 'sq-extra-reviewed-difficulty', `Difficulty ${number(reviewed.difficulty)}/10`));
+      if (reviewed.votes) opinions.append(make('span', 'sq-extra-reviewed-votes', `Votes: ${reviewed.up} up · ${reviewed.down} down`));
+      opinions.append(make('span', 'sq-extra-reviewed-count', `${reviewed.count} reviewer${reviewed.count === 1 ? ' - one opinion' : 's'}`));
+      body.append(opinions);
+    }
+    const mine = make('p', 'sq-extra-my-review');
+    const mineValues = [];
+    if (Number.isInteger(feedback.rating) && feedback.rating >= 1 && feedback.rating <= 10) mineValues.push(`My quality ${feedback.rating}/10`);
+    if (Number.isInteger(feedback.difficultyRating) && feedback.difficultyRating >= 1 && feedback.difficultyRating <= 10) mineValues.push(`My difficulty ${feedback.difficultyRating}/10`);
+    if (feedback.vote === 1 || feedback.vote === -1) mineValues.push(feedback.vote === 1 ? 'My vote: helpful' : 'My vote: not for me');
+    if (mineValues.length) { mine.textContent = mineValues.join(' · '); body.append(mine); }
     const level = difficulty(entry);
-    if (level !== null) body.append(make('p', 'sq-extra-difficulty', `Difficulty ${level}/10 · ${DIFFICULTY_LABELS[level]}`));
+    if (!reviewed.difficultyCount && level !== null) body.append(make('p', 'sq-extra-difficulty', `Catalog level ${level}/10 · ${DIFFICULTY_LABELS[level]}`));
     if(entry.ranked===false)body.append(make('p','sq-extra-large-warning','Very large track. May run slowly on school devices. Finishes appear on an unranked leaderboard.'));
     const facts = make('p', 'sq-extra-facts');
     facts.append(make('span', best === null ? 'sq-extra-progress' : 'sq-extra-best', best === null ? loaded ? 'Imported, not completed' : 'Not completed' : `Best ${timeLabel(best)}`));
@@ -748,11 +793,10 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
               const removedTags = [...new Set(feedback.removedTags || [])];
               const currentlyPresent = effectiveReviewTags(entry, feedback).includes(tag);
               if (currentlyPresent) {
+                const addedIndex = addedTags.indexOf(tag);
+                if (addedIndex !== -1) addedTags.splice(addedIndex, 1);
                 if (catalogTags.includes(tag)) {
                   if (!removedTags.includes(tag)) removedTags.push(tag);
-                } else {
-                  const index = addedTags.indexOf(tag);
-                  if (index !== -1) addedTags.splice(index, 1);
                 }
               } else if (catalogTags.includes(tag)) {
                 const index = removedTags.indexOf(tag);
@@ -828,6 +872,9 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     if (destroyed) return;
     const all = currentEntries();
     syncSortChoices(all);
+    sortField.select.title = REVIEW_SORT_DESCRIPTIONS[state.sort] || '';
+    if (sortField.select.title) sortField.select.setAttribute('aria-description', sortField.select.title);
+    else sortField.select.removeAttribute('aria-description');
     const sourceCounts = new Map(), difficultyCounts = new Map();
     for (const entry of all) if (text(entry.source)) sourceCounts.set(entry.source, (sourceCounts.get(entry.source) || 0) + 1);
     for (const entry of all) { const level = difficulty(entry); if (level !== null) difficultyCounts.set(String(level), (difficultyCounts.get(String(level)) || 0) + 1); }
@@ -899,6 +946,16 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     if (!sortedRecordsCache || sortedRecordsCache.records !== cachedRecords || sortedRecordsCache.sort !== state.sort) {
       const ordered = [...cachedRecords];
       ordered.sort((a, b) => {
+        if (state.sort.startsWith('review-')) {
+          const kind = state.sort.split('-')[1], ascending = state.sort.endsWith('-low');
+          const metric = record => {
+            const review = reviewedSummary(record.entry);
+            return kind === 'quality' ? review.quality : kind === 'difficulty' ? review.difficulty : review.votes ? review.up - review.down : null;
+          };
+          const av = metric(a), bv = metric(b);
+          if (av === null || bv === null) return av === bv ? compare(a.entry.name, b.entry.name) : av === null ? 1 : -1;
+          return (ascending ? av - bv : bv - av) || compare(a.entry.name, b.entry.name);
+        }
         if (state.sort === 'plays') return (Number.isSafeInteger(b.entry.sourceCopies) ? b.entry.sourceCopies : Number.isSafeInteger(b.entry.sourcePlays) ? b.entry.sourcePlays : -1) -
           (Number.isSafeInteger(a.entry.sourceCopies) ? a.entry.sourceCopies : Number.isSafeInteger(a.entry.sourcePlays) ? a.entry.sourcePlays : -1) || compare(a.entry.name, b.entry.name);
         if (state.sort === 'forum') return (forumActivity(b.entry) ?? -1) - (forumActivity(a.entry) ?? -1) || compare(a.entry.name, b.entry.name);
@@ -935,23 +992,27 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     filterCount(completionField, progressCounts.get(state.completion) || 0);
     const selectedProgress = [...completionField.select.children].find(option => option.value === state.completion);
     if (selectedProgress) selectedProgress.textContent = progressLabels[state.completion];
-    const reviewCounts = new Map([['all', cachedRecords.length], ['edited', 0], ['not-edited', 0]]);
+    const reviewCounts = new Map([['all', cachedRecords.length], ['edited', 0], ['not-edited', 0], ['published', cachedRecords.filter(record => reviewedSummary(record.entry).count).length], ['no-published', cachedRecords.filter(record => !reviewedSummary(record.entry).count).length]]);
     for (const record of cachedRecords) reviewCounts.set(record.edited ? 'edited' : 'not-edited', reviewCounts.get(record.edited ? 'edited' : 'not-edited') + 1);
     for (const option of reviewField.select.children) {
-      const name = option.value === 'edited' ? 'Locally reviewed' : option.value === 'not-edited' ? 'Not reviewed' : 'All tracks';
+      const name = option.value === 'edited' ? 'Reviewed by me' : option.value === 'not-edited' ? 'Not reviewed by me' : option.value === 'published' ? 'Has reviewer opinions' : option.value === 'no-published' ? 'No reviewer opinions' : 'All tracks';
       option.textContent = `${name} (${reviewCounts.get(option.value) || 0})`;
     }
     filterCount(reviewField, reviewCounts.get(state.review) || 0);
     const selectedReview = [...reviewField.select.children].find(option => option.value === state.review);
-    if (selectedReview) selectedReview.textContent = state.review === 'edited' ? 'Locally reviewed' : state.review === 'not-edited' ? 'Not reviewed' : 'All tracks';
+    if (selectedReview) selectedReview.textContent = state.review === 'edited' ? 'Reviewed by me' : state.review === 'not-edited' ? 'Not reviewed by me' : state.review === 'published' ? 'Has reviewer opinions' : state.review === 'no-published' ? 'No reviewer opinions' : 'All tracks';
     let records = sortedRecordsCache.ordered.filter(({ entry, best, loaded, favorite, searchable, searchableWords, effectiveTags, edited, activity }) => {
+      const review = reviewedSummary(entry);
       const matchesSearch = !query || searchable.includes(query) || queryTokens.length > 0 && queryTokens.every(token => searchableWords.has(token));
       // A curator can mark a track by tier or by the curated tag.
       const isCurated = text(entry.tier).toLocaleLowerCase() === 'curated' ||
         (Array.isArray(entry.tags) && entry.tags.some(tag => text(tag).toLocaleLowerCase() === 'curated'));
       return matchesSearch && (!state.source || entry.source === state.source) && (!state.favorites || favorite) &&
         state.tags.every(tag => effectiveTags.includes(tag)) && (!state.curated || isCurated) &&
-        (state.review === 'all' || state.review === 'edited' && edited || state.review === 'not-edited' && !edited) &&
+        (state.review === 'all' || state.review === 'edited' && edited || state.review === 'not-edited' && !edited || state.review === 'published' && review.count > 0 || state.review === 'no-published' && !review.count) &&
+        (!state.reviewedQuality || review.quality !== null && review.quality >= Number(state.reviewedQuality)) &&
+        (!state.reviewedDifficulty || review.difficulty !== null && Math.round(review.difficulty) === Number(state.reviewedDifficulty)) &&
+        (!state.reviewedVote || state.reviewedVote === 'positive' && review.up > review.down || state.reviewedVote === 'negative' && review.down > review.up || state.reviewedVote === 'voted' && review.votes > 0 || state.reviewedVote === 'unvoted' && !review.votes) &&
         (!state.difficulty || difficulty(entry) === Number(state.difficulty)) &&
         (state.completion === 'all' || state.completion === 'activity' && activity || state.completion === 'untouched' && !activity || state.completion === 'completed' && best !== null ||
           state.completion === 'uncompleted' && best === null || state.completion === 'loaded' && loaded && best === null);
@@ -964,6 +1025,11 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     const pages = Math.max(1, Math.ceil(records.length / PAGE_SIZE));
     page = Math.min(page, pages);
     count.textContent = `${records.length} of ${all.length} tracks`;
+    for (const [field, value, predicate] of [
+      [qualityField, state.reviewedQuality, entry => { const r = reviewedSummary(entry); return r.quality !== null && r.quality >= Number(state.reviewedQuality); }],
+      [reviewedDifficultyField, state.reviewedDifficulty, entry => { const r = reviewedSummary(entry); return r.difficulty !== null && Math.round(r.difficulty) === Number(state.reviewedDifficulty); }],
+      [voteField, state.reviewedVote, entry => { const r = reviewedSummary(entry); return state.reviewedVote === 'positive' ? r.up > r.down : state.reviewedVote === 'negative' ? r.down > r.up : state.reviewedVote === 'voted' ? r.votes > 0 : !r.votes; }]
+    ]) filterCount(field, `${value ? all.filter(predicate).length : all.length} tracks`);
     list.replaceChildren();
     const visible = records.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
     if (!visible.length) {
@@ -1016,7 +1082,8 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   }
 
   function clearFilters() {
-    Object.assign(state, { search: '', source: '', tags: [], difficulty: '', curated: false, favorites: false, completion: 'all', review: 'all', sort: 'recommended' });
+    Object.assign(state, { search: '', source: '', tags: [], difficulty: '', curated: false, favorites: false, completion: 'all', review: 'all', sort: 'recommended', reviewedQuality: '', reviewedDifficulty: '', reviewedVote: '' });
+    qualityField.select.value = ''; reviewedDifficultyField.select.value = ''; voteField.select.value = '';
     search.value = ''; sourceField.select.value = ''; difficultyField.select.value = '';
     completionField.select.value = 'all'; reviewField.select.value = 'all'; sortField.select.value = 'recommended'; curated.checked = false; favorites.checked = false;
     page = 1; render();
@@ -1026,15 +1093,15 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   function activeAdvancedFilterGroups() {
     return Number(Boolean(state.source)) + Number(state.tags.length > 0) + Number(Boolean(state.difficulty)) +
       Number(state.curated) + Number(state.favorites) + Number(state.completion !== 'all') +
-      Number(state.review !== 'all') + Number(state.sort !== 'recommended');
+      Number(state.review !== 'all') + Number(state.sort !== 'recommended') + Number(Boolean(state.reviewedQuality)) + Number(Boolean(state.reviewedDifficulty)) + Number(Boolean(state.reviewedVote));
   }
 
   function syncAdvancedFilters() {
-    const isPhone = phoneFiltersQuery?.matches === true;
-    const expanded = !isPhone || filtersExpanded;
+    const isCompact = compactFiltersQuery?.matches === true;
+    const expanded = !isCompact || filtersExpanded;
     advancedControls.hidden = !expanded;
     advancedControls.inert = !expanded;
-    advancedToggle.hidden = !isPhone;
+    advancedToggle.hidden = !isCompact;
     advancedToggle.setAttribute('aria-expanded', String(expanded));
     const activeCount = activeAdvancedFilterGroups();
     advancedToggle.textContent = activeCount ? `Filters & sort (${activeCount})` : 'Filters & sort';
@@ -1257,13 +1324,16 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   completionField.select.addEventListener('change', () => { state.completion = completionField.select.value; page = 1; render(); });
   reviewField.select.addEventListener('change', () => { state.review = reviewField.select.value; page = 1; render(); });
   sortField.select.addEventListener('change', () => { state.sort = sortField.select.value; page = 1; render(); });
+  for (const [field, key] of [[qualityField, 'reviewedQuality'], [reviewedDifficultyField, 'reviewedDifficulty'], [voteField, 'reviewedVote']]) {
+    field.select.addEventListener('change', () => { state[key] = field.select.value; page = 1; render(); });
+  }
   curated.addEventListener('change', () => { state.curated = curated.checked; page = 1; render(); });
   favorites.addEventListener('change', () => { state.favorites = favorites.checked; page = 1; render(); });
   document.addEventListener('keydown', onKeydown, true);
   document.addEventListener('click', onCardMenuOutside, true);
   document.addEventListener('scroll', scheduleCardMenuPosition, true);
   document.defaultView?.addEventListener('resize', scheduleCardMenuPosition);
-  phoneFiltersQuery?.addEventListener?.('change', syncAdvancedFilters);
+  compactFiltersQuery?.addEventListener?.('change', syncAdvancedFilters);
   render();
   return {
     open, close, refresh() { cachedRecords = null; render(); },
@@ -1275,7 +1345,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       document.removeEventListener('click', onCardMenuOutside, true);
       document.removeEventListener('scroll', scheduleCardMenuPosition, true);
       document.defaultView?.removeEventListener('resize', scheduleCardMenuPosition);
-      phoneFiltersQuery?.removeEventListener?.('change', syncAdvancedFilters);
+      compactFiltersQuery?.removeEventListener?.('change', syncAdvancedFilters);
       overlay.remove();
     }
   };
