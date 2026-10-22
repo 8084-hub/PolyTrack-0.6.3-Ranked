@@ -3,14 +3,16 @@ export const TRACK_SEARCH_ALIASES = Object.freeze([
   Object.freeze(['B⛶XED IN', 'boxed in']),
   Object.freeze(['Nürburgring Nordschleife', 'nurburgring nordschleife', 'nuerburgring nordschleife']),
   Object.freeze(['AO9-race', 'a09 race']),
+  Object.freeze(['AO5', 'a05']),
   Object.freeze(['AO4-acrobatic', 'a04 acrobatic']),
   Object.freeze(['AO3 Race', 'a03 race']),
   Object.freeze(['AO2', 'a02']),
   Object.freeze(['AO1 Race', 'a01 race']),
   Object.freeze(['丂卄卂尺Ҝ', 'shark']),
-  Object.freeze(['VØłĐ', 'vold']),
+  Object.freeze(['VØłĐ', 'void', 'vold']),
   Object.freeze(['𐌀𐌕𐌋𐌀𐌍𐌕𐌉𐌔', 'atlantis']),
-  Object.freeze(['ѕєαѕση', 'season'])
+  Object.freeze(['ѕєαѕση', 'season']),
+  Object.freeze(['Wintertide', 'winterrtibe'])
 ]);
 export function normalizeSearchText(value) {
   return String(value??'').normalize('NFKD').replace(/\p{M}/gu,'')

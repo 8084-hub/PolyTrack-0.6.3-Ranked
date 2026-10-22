@@ -1,3 +1,4 @@
+import createClientSourceRunner from './client-source-harness.cjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -5,6 +6,7 @@ import vm from 'node:vm';
 
 // Set POLYTRACK_CLIENT_SOURCE to exercise a private patched copy before integration.
 const source = fs.readFileSync(process.env.POLYTRACK_CLIENT_SOURCE || new URL('../polytrack_062_patch.js', import.meta.url), 'utf8');
+const runClientSource=createClientSourceRunner(source);
 function section(start, end) {
   const from = source.indexOf(start);
   const to = source.indexOf(end, from);
@@ -54,7 +56,7 @@ function trackHarness(initial = {}, unranked = []) {
     snapshotOnlyForNewAccount: () => true, db: () => { throw Error('Unexpected database access'); },
     noteFirebaseQuota: () => {}, localRaceRowsForTrack: () => [], ageLabel: () => 'old', log: () => {}
   });
-  vm.runInContext(section('  const trackCloudRetryAt=new Map();', '  function computeOverallFromRaceRows('), context);
+  runClientSource(section('  const trackCloudRetryAt=new Map();', '  function computeOverallFromRaceRows('), context);
   context.scheduleNativeTrackSnapshotRefresh = id => repaints.push(id);
   return {
     context, cache, metadata, loads, extraLoads, repaints, timers, visibility,
@@ -129,7 +131,7 @@ test('same-track forced waiters share one replacement load and retain caller lim
     unrankedExtraTrackIds: new Set(), readTrackSnapshotCache: () => null, trackEntryRequests: new Map(),
     loadTrackEntries: (_id, _limit, force) => { const gate = deferred(); pending.push(gate); flags.push(force); return gate.promise; }
   });
-  vm.runInContext(extract('getTrackEntries'), context);
+  runClientSource(extract('getTrackEntries'), context);
   const prior = context.getTrackEntries('A', 1), first = context.getTrackEntries('A', 1, true), second = context.getTrackEntries('A', 2, true);
   pending[0].resolve([0]); await prior; await tick();
   assert.deepEqual(flags, [false, true]); pending[1].resolve([1, 2, 3]);
@@ -211,13 +213,13 @@ function profileMerges(primary, incoming, selfPresent = true, normalize = false)
     cachedProfileFinishes: () => incoming,
     rankedTrackWeightParts: () => ({finalWeight: 1}), snapshotCaptureTimestamp: value => Number(value) || 0
   });
-  vm.runInContext(extract('rankedPlacementCost') + '\n' + extract('knownFinishWeight'), context);
+  runClientSource(extract('rankedPlacementCost') + '\n' + extract('knownFinishWeight'), context);
   if (normalize) {
-    vm.runInContext(extract('normalizeFinishSummary'), context);
+    runClientSource(extract('normalizeFinishSummary'), context);
     context.normalizedFinishSamples = () => primary.map(context.normalizeFinishSummary);
   }
-  vm.runInContext(extract('mergePlannerFinishes', true) + '\n' + profile.slice(ownStart, ownEnd) + '\n' + profile.slice(rivalStart, rivalEnd), context);
-  return plain(vm.runInContext('({own:snapshotFinishes,rival:selfSnapshotFinishes})', context));
+  runClientSource(extract('mergePlannerFinishes', true) + '\n' + profile.slice(ownStart, ownEnd) + '\n' + profile.slice(rivalStart, rivalEnd), context);
+  return plain(runClientSource('({own:snapshotFinishes,rival:selfSnapshotFinishes})', context));
 }
 const finish = changes => ({trackId: 'track', timeMs: 20000, rank: 5, fieldSize: 10, cachedAt: 100, contribution: 50, ...changes});
 const runBinding = {accountId: 'a'.repeat(64), uploadId: 'run-1', replayHash: 'b'.repeat(64), raceTimeFrames: 2000};
@@ -257,7 +259,7 @@ function cachedPlannerFinish({rank = 5, fieldSize = 10, weight = 2, timeMs = 200
         accountId: i === rank - 1 ? 'self' : `rival-${i}`, rank: i + 1, timeMs, weight
       }))}})
   });
-  vm.runInContext(['profileBoardIsComplete', 'knownFinishWeight', 'cachedProfileFinishes'].map(name => extract(name)).join('\n'), context);
+  runClientSource(['profileBoardIsComplete', 'knownFinishWeight', 'cachedProfileFinishes'].map(name => extract(name)).join('\n'), context);
   const [result] = plain(context.cachedProfileFinishes('self', {}));
   assert.equal(Object.hasOwn(result, 'placementCost'), false);
   assert.equal(Object.hasOwn(result, 'contribution'), false);
@@ -377,7 +379,7 @@ test('normalization cannot erase the primary correction date', () => {
 
 test('raw metadata cannot attach a rejection to a different PB or fresher normalized observation', () => {
   const context = vm.createContext({});
-  vm.runInContext(extract('mergePlannerFinishes'), context);
+  runClientSource(extract('mergePlannerFinishes'), context);
   const raw = finish({validationState: 'rejected', cachedAt: 300});
   for (const primary of [finish({timeMs: 19000, cachedAt: 300}), finish({cachedAt: 400})]) {
     const actual = context.mergePlannerFinishes([primary], [], {resultSamples: [raw]});
@@ -480,7 +482,7 @@ function identityFor(racer, overall, directory = null) {
     rankedIdentityRows: () => overall ? [overall] : [],
     snapshotRacerDirectoryIdentity: (_id, _at, seen) => directory && directory.updatedAt > seen ? directory : null
   });
-  vm.runInContext(extract('rowIdentityFreshness') + '\n' + extract('rankedIdentityForRacer'), context);
+  runClientSource(extract('rowIdentityFreshness') + '\n' + extract('rankedIdentityForRacer'), context);
   return plain(context.rankedIdentityForRacer(racer));
 }
 const identity = (name, at, theme) => ({userId: 'self', name, nickname: name, identityUpdatedAt: at, profileCosmetics: {theme}});
@@ -562,7 +564,7 @@ function receiveTrackStatistics(h,tracks){
   const from=source.indexOf("        if(kind==='track-statistics'){");
   const to=source.indexOf("        }else if(kind==='cosmetic-directory'){",from);
   assert.ok(from>=0&&to>from);
-  const accept=vm.runInContext('(value)=>{const kind="track-statistics";'+source.slice(from,to)+'}}',h.context);
+  const accept=runClientSource('(value)=>{const kind="track-statistics";'+source.slice(from,to)+'}}',h.context);
   accept({tracks});
 }
 

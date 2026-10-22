@@ -1,0 +1,35 @@
+{
+  "rules": {
+    "file": "C:\\Users\\Static\\Documents\\Codexstorage\\PolyTrack\\Release-177\\public-read-compatibility.log",
+    "complete": true,
+    "passed": true,
+    "tests": 13,
+    "failures": 0,
+    "passedTests": 13,
+    "cancelled": 0,
+    "skipped": 0,
+    "encoding": "utf8"
+  },
+  "worker": {
+    "file": "C:\\Users\\Static\\Documents\\Codexstorage\\PolyTrack\\Release-177\\worker-hardening-final.log",
+    "complete": true,
+    "passed": true,
+    "tests": 27,
+    "failures": 0,
+    "passedTests": 27,
+    "cancelled": 0,
+    "skipped": 0,
+    "encoding": "utf8"
+  },
+  "combinedRegression": {
+    "file": "C:\\Users\\Static\\Documents\\Codexstorage\\PolyTrack\\Release-177\\worker-focused-final.log",
+    "complete": true,
+    "passed": false,
+    "tests": 118,
+    "failures": 1,
+    "passedTests": 117,
+    "cancelled": 0,
+    "skipped": 0,
+    "encoding": "utf8"
+  }
+}

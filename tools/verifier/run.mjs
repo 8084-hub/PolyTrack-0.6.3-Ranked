@@ -220,7 +220,13 @@ export async function runRound(db,{env,log,eventRun,prioritizeNormal,selectNorma
   if(borrowUnusedEvents)jobs=selectedJobs.slice(0,TOTAL_JOB_LIMIT-events.checked);
   // Flagged publications can make six requests on each of three conflict attempts.
   if(db.remainingRequests)jobs=jobs.slice(0,Math.floor(db.remainingRequests()/18));
+  // Published outcomes differ from native verdicts: unavailable can retry as waiting.
+  const eventResults = events.results || [];
+  const counts = field => Object.fromEntries([...new Set(eventResults.map(row => row?.[field] || 'unspecified'))]
+    .map(value => [value, eventResults.filter(row => (row?.[field] || 'unspecified') === value).length]));
   const eventSummary = {checked: events.checked, consumed: events.consumed,
+    statuses: counts('status'), reasons: counts('reason'), reported: eventResults.length,
+    countsComplete: eventResults.length === events.checked,
     rejected: events.rejected, archived: events.archived, budgetDeferred:events.budgetDeferred===true,
     conflictDeferred:events.conflictDeferred===true,
     reviewInboxAdded:Number(events.eventFindingsAdded||0),reviewInboxWriteFailed:Number(events.eventFindingWriteFailed||0)};

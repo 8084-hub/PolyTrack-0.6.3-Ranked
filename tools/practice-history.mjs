@@ -104,7 +104,7 @@ export function createPracticeHistory({storage,now=Date.now,onChange=()=>{}}={})
     const moving=Math.min(recovered,safe(correction.catchUpMovingMs));
     const stationary=Math.min(recovered-moving,safe(correction.catchUpStationaryMs));
     row.movingMs=bounded(row.movingMs+moving);row.stationaryMs=bounded(row.stationaryMs+stationary);
-    if(moving>0){if(!row.hunt)row.hunt={startedAt:now(),lastMovingAt:now(),movingMs:0};row.hunt.movingMs=bounded(row.hunt.movingMs+moving);row.longestHuntMs=Math.max(row.longestHuntMs,row.hunt.movingMs);}
+    if(moving>0){if(!row.hunt)row.hunt={startedAt:now(),lastMovingAt:now(),movingMs:0};row.hunt.lastMovingAt=now();row.hunt.movingMs=bounded(row.hunt.movingMs+moving);row.longestHuntMs=Math.max(row.longestHuntMs,row.hunt.movingMs);}
     changed();flush();
    },
    respawn(atMs){if(ended||!isCurrent()||atMs<=0)return;row.respawns=safe(row.respawns)+1;changed();},
@@ -145,11 +145,12 @@ export function createPracticeHistory({storage,now=Date.now,onChange=()=>{}}={})
 }
 export function practiceAdvice(row,at=Date.now(),{otherTracks=[]}={}){
  if(!row||row.attempts<3||row.activeMs<60000)return {factor:1,text:''};
- const age=Math.max(0,at-row.lastPlayedAt),days=Math.floor(age/86400000);
+ const dated=Number.isFinite(row.lastPlayedAt)&&row.lastPlayedAt>0&&row.lastPlayedAt<=at;
+ const age=dated?at-row.lastPlayedAt:0,days=Math.floor(age/86400000);
  const improvedElsewhere=otherTracks.filter(other=>other.trackId!==row.trackId&&other.improvedMs>0&&other.lastPbAt>row.lastPlayedAt).length;
  if(days>=3&&improvedElsewhere>=3)return {factor:1.1,text:`${improvedElsewhere} other tracks improved since your last visit; worth revisiting`};
  if(days>=7)return {factor:1.1,text:`Last practised ${days} days ago`};
- const recent=(row.recentFinishes||[]).filter(run=>run.timeMs>0&&run.at>at-7*86400000).slice(-8);
+ const recent=(row.recentFinishes||[]).filter(run=>run.timeMs>0&&run.at>0&&run.at<=at&&run.at>at-7*86400000).slice(-8);
  if(recent.length===8){const average=rows=>rows.reduce((sum,run)=>sum+run.timeMs,0)/rows.length;const first=average(recent.slice(0,4)),last=average(recent.slice(4));if(last<first*.99)return {factor:1.08,text:'Recent finishes are improving (8 local finishes)'};}
  if(row.sincePbMs>=900000&&row.restartsSincePb>=10)return {factor:.9,text:'15+ minutes since a PB; consider a different route'};
  if(row.pbs>=2&&row.activeMs>=180000)return {factor:1.05,text:`${row.pbs} PBs in ${Math.round(row.activeMs/60000)} minutes of practice`};

@@ -1,5 +1,5 @@
-const PROFILE_NAME_WORD_A = ['swift','neon','alpha','turbo','sonic','pixel','nova','lucky','sunny','frost','ember','quantum','crystal','midnight','solar','lunar','hyper','ultra','aero','rapid','vivid','thunder','cosmic','silver','golden','shadow','arc','vector','iron','onyx','starlit','cobalt','ripple','granite','jungle','desert','arctic','magenta','scarlet','violet','teal','sable','amber','jade','ivory','obsidian','cinder','stellar','orbital','zen','rogue','prime','apex','summit','embered','misty','horizon','aurora','glitch','byte','laser','prism','halo','north','south','east','west','tempo','axle','torque','nitro','clutch','summoner','phantom','eclipse','cyclone','monsoon','titan','pegasus','raven','falcon','lynx','otter','comfy','bouncy','cheery','zippy','daring','brisk','fuzzy','mellow','witty','snappy'];
-const PROFILE_NAME_WORD_B = ['racer','drift','pulse','track','echo','comet','storm','shift','vault','spark','dash','glide','runner','rocket','flare','nexus','voyage','blaze','orbit','flux','drive','streak','zenith','quartz','radar','pilot','charger','phantom','matrix','engine','jumper','hopper','sprinter','raider','seeker','keeper','walker','slider','cruiser','strider','booster','chaser','panther','falcon','otter','fox','rhino','yak','wizard','knight','samurai','sage','ranger','captain','doctor','baron','duke','rookie','veteran','legend','maverick','stomper','breaker','spirit','beacon','anchor','vector','module','kernel','vortex','quasar','galaxy','planet','meteor','asteroid','volcano','tsunami','whirl','tempest','charge','vertex','pixel','bit','byte','gear','piston','engineer','driver','rider','climber','surfer','skater','sniper','ace'];
+const PROFILE_NAME_WORD_A = Object.freeze(["swift","neon","alpha","turbo","sonic","pixel","nova","lucky","sunny","frost","ember","quantum","crystal","midnight","solar","lunar","hyper","ultra","aero","rapid","vivid","thunder","cosmic","silver","golden","shadow","arc","vector","iron","onyx","starlit","cobalt","ripple","granite","jungle","desert","arctic","magenta","scarlet","violet","teal","sable","amber","jade","ivory","obsidian","cinder","stellar","orbital","zen","rogue","prime","apex","summit","embered","misty","horizon","aurora","glitch","byte","laser","prism","halo","north","south","east","west","tempo","axle","torque","nitro","clutch","summoner","phantom","eclipse","cyclone","monsoon","titan","pegasus","raven","falcon","lynx","otter","comfy","bouncy","cheery","zippy","daring","brisk","fuzzy","mellow","witty","snappy","goofy","wobbly","noodle","waffle","jelly","marshmallow","bubble","pickled","crispy","crunchy","squishy","squeaky","sleepy","dizzy","giggly","jolly","jazzy","groovy","funky","disco","dapper","fluffy","feisty","fizzy","breezy","toasty","chilly","frosty","spicy","tangy","minty","peachy","plucky","perky","peppy","spry","sneaky","silly","quirky","wonky","wiggly","wobble","taffy","mochi","mango","banana","coconut","pineapple","popcorn","biscuit","donut","cupcake","pretzel","pancake","pudding","confetti","rainbow","sprinkles","stardust","moonlit","sunlit","twinkly","sparkly","electric","velvety","whimsical","rubbery"]);
+const PROFILE_NAME_WORD_B = Object.freeze(["racer","drift","pulse","track","echo","comet","storm","shift","vault","spark","dash","glide","runner","rocket","flare","nexus","voyage","blaze","orbit","flux","drive","streak","zenith","quartz","radar","pilot","charger","phantom","matrix","engine","jumper","hopper","sprinter","raider","seeker","keeper","walker","slider","cruiser","strider","booster","chaser","panther","falcon","otter","fox","rhino","yak","wizard","knight","samurai","sage","ranger","captain","doctor","baron","duke","rookie","veteran","legend","maverick","stomper","breaker","spirit","beacon","anchor","vector","module","kernel","vortex","quasar","galaxy","planet","meteor","asteroid","volcano","tsunami","whirl","tempest","charge","vertex","pixel","bit","byte","gear","piston","engineer","driver","rider","climber","surfer","skater","sniper","ace","waffle","noodle","dumpling","pancake","muffin","biscuit","donut","pretzel","taco","burrito","pickle","potato","pumpkin","coconut","pineapple","mango","mochi","marshmallow","popcorn","pudding","jellybean","cupcake","bagel","crumpet","croissant","raccoon","capybara","penguin","puffin","axolotl","gecko","koala","panda","wombat","platypus","duck","goose","flamingo","pelican","toucan","alpaca","llama","narwhal","dolphin","walrus","seal","badger","hedgehog","hamster","chinchilla","squirrel","ferret","dragon","griffin","yeti","goblin","gremlin","gnome","jester","astronaut","explorer","cartographer","tinkerer","tuba","kazoo","ukulele"]);
 const DEFAULT_NAME_BLOCKLIST = ["admin","moderator","owner","staff","support","system","dev","developer","verified","helper","official","security","abuse","abuser","anal","anus","arse","arsehole","ass","assbag","assclown","assface","assfuck","assfucker","asshat","asshole","assholes","asslicker","asswipe","ballsack","bastard","bastards","beaner","bestiality","bitch","bitches","bitchy","blowjob","blowjobs","bollock","bollocks","boner","boob","boobs","booty","brothel","bullshit","buttfuck","butthole","cameltoe","chink","clit","clitoris","cock","cocks","coon","crap","cum","cumming","cunt","cunts","dick","dicks","dildo","dildos","dipshit","doggystyle","douche","douchebag","dyke","fag","faggot","faggots","feck","fellatio","fingerbang","fuck","fucked","fucker","fuckers","fuckface","fucking","fuckoff","fuckwit","fuk","gangbang","gaylord","genitals","gook","handjob","hardcore","hentai","hitler","hoe","hoes","horny","incest","jailbait","jackass","jerkoff","jizz","kike","kkk","kunt","lesbo","loli","masturbate","masturbation","milf","motherfucker","motherfucking","muff","nazi","nazism","necrophilia","negro","nigga","niggah","nigger","niggers","niglet","nipple","nipples","nutjob","orgasm","orgy","pedo","pedophile","penis","piss","pissed","pisser","playboy","poon","poop","porn","porno","pornhub","prostitute","pussy","queef","raped","raper","rapist","rape","retard","rimjob","scrotum","sex","sexy","shit","shits","shitty","shota","sissy","skank","slut","sluts","smegma","spic","spunk","strapon","suck","sucks","testicle","threesome","tit","tits","titties","titty","tranny","twat","vag","vagina","vibrator","virgin","voyeur","wank","wanker","whore","whores","wtf","xxx","xrated","yaoi","zoophile","zoophilia","alqaeda","isis","terrorist","swastika","1488","molest","molester","underage","childporn","cp","suicide","killyourself","kys","racist","racism","whitepower","wetback","spick","gimp","cripple","idiot","moron","stupid","dumbass","shithead","cumdumpster","cumshot","cumslut","deepthroat","fisting","gangrape","gfy","goatse","groomer","hooker","hotsex","humping","jackoff","motherfucker","nutsack","pecker","peehole","peeing","pussylicking","rectum","scat","semen","sexcam","sexchat","sexworker","shemale","slapper","sodomize","sodomy","tard","teabagging","towelhead","tubgirl","unclefucker","upskirt","urethra","urine","vulva","wigger","willy","yid"];
 const MODERN_HIGH_RISK_TERMS = ['merde','mierda','scheisse','kurwa','pendejo','cabron','joder','chingada','cocaine','heroin','fentanyl','gooning','gooner','goonette','edging','edgeplay','gyatt','gyat','onlyfans','ofans','discordmod','heilhitler','gasjews','gas all jews','sieg heil','killall','kms','killyourself','kys','unaliveyourself','csam','cporn','childlover','minorlover','lolicon','shotacon'];
 const COMPACT_SEVERE_TERMS = ['nigger','niggre','nigre','nigga','niggah','niglet','faggot','chink','kike','spic','wetback','beaner','coon','gook','tranny','fuck','bitch','cunt','rape','rapist','pedophile','molester','childporn','csam','killyourself','whitepower','heilhitler','siegheil','gasalljews','bestiality','necrophilia','jailbait','cumdumpster','pornhub','onlyfans','gooning','masterbait','masterbaiting','masterofbaiting'];
@@ -21,7 +21,7 @@ export function normalizeNameForCheck(value) {
     // Small-cap and phonetic Latin letters commonly used as font-style swaps.
     'ß':'ss','ʃ':'f','ƒ':'f','ƈ':'c','ɦ':'h','ɢ':'g','ɡ':'g','ɪ':'i','ᴋ':'k','ᴍ':'m','ɴ':'n','ᴏ':'o','ᴘ':'p','ʀ':'r','ᴛ':'t','ᴜ':'u','ᴠ':'v','ᴡ':'w',
     // Additional high-confidence cross-script lookalikes used in Latin text.
-    'ԁ':'d','ԛ':'q','ժ':'h','ս':'u','ո':'n','օ':'o','ր':'r','ᴄ':'c','ᴅ':'d','ᴇ':'e','ғ':'f','н':'h','ᴊ':'j','ʟ':'l'
+    'ԁ':'d','ԛ':'q','ժ':'h','ս':'u','ո':'n','օ':'o','ր':'r','ᴄ':'c','ᴅ':'d','ᴇ':'e','ғ':'f','ᴊ':'j','ʟ':'l'
   };
   // Enclosed emoji letters do not all have compatibility decompositions.
   const visibleLetters=Array.from(String(value||''),char=>{
@@ -70,18 +70,18 @@ const EMBEDDED_UNSAFE_WORDS = Object.freeze([
   'fuck','bitch','cunt','pussy','pussi','penis','cock','dick','porn','retard','rapist','rapsist','raper','clitoris',
   'molester','pedophile','onlyfans','childporn','csam','nigger','nigga','niggah','niglet','shit','dumbass',
   'nude','faggot','cumshot','cumdumpster','cumslut','blowjob','handjob','nudes',
-  'epstein','hitler','biden','obama','putin','trump','nazi','swastika','hentai','jailbait','lolicon','shotacon','zoophile','zoophilia',
+  'diddy','epstein','hitler','biden','obama','putin','trump','nazi','swastika','hentai','jailbait','lolicon','shotacon','zoophile','zoophilia',
   'necrophilia','bestiality','dildo','masturbat','orgasm','gangbang','rimjob','fisting',
   'incest','jizz','scrotum','testicle','vagina','vulva','nipple','boobs','titties',
   'fuk','fuq','phuck','phuk','fvck','fck','b1tch','biatch','bytch','kunt','nixxer'
 ]);
 // Protect innocent lexical matches, not entire names: another unsafe part still blocks.
 const BENIGN_EMBEDDED_WORDS = Object.freeze({
-  cunt:['scunthorpe'], rape:['grape','drape','scrape'], rapist:['therapist'], raper:['rapper','draper','scraper'],
+  coon:['raccoon'], spic:['spicy'], csam:['samurai'], cunt:['scunthorpe'], rape:['grape','drape','scrape'], rapist:['therapist','piston'], raper:['rapper','draper','scraper'],
   dick:['dickinson','dickens','dickson','benedict','dickey','dickman','dickerson'],
   cock:['peacock','cockpit','cockatoo','cockburn','hancock','woodcock','shuttlecock','cockrell','cockermouth','cockerell','cockerspaniel','cockney'],
   penis:['peniston','peniscola'], pussi:['pussini','pussinboots'], shit:['shitake','shitzu','shittim'], fuk:['fukushima','fukuda','fukui','fukuoka','fukuyama','fukuzawa'],
-  killall:['skillall'], nazi:['nazim','nazir'], trump:['trumpet','trumpington']
+  diddy:['diddykong'], killall:['skillall'], nazi:['nazim','nazir'], trump:['trumpet','trumpington']
 });
 const BENIGN_EXACT_NAMES = new Set(['cockadoodledoo']);
 const PREPARED_EMBEDDED_RULES = Object.freeze([...new Set(EMBEDDED_UNSAFE_WORDS.concat(EXPLICIT_COMPOUNDS,CURATED_EXPLICIT_TERMS)
@@ -145,7 +145,7 @@ function contextualNameMatch(comparison) {
   return null;
 }
 
-const CLEAR_SLUR_ALIASES = /^(?:[xi]*)(?:nijjer|nigher|niigher|nighger|niggef|niggej|nigja|niqqer|nixxer)(?:[x0-9]*)$/;
+const CLEAR_SLUR_ALIASES = /^(?:[xi]*)(?:niga|nijjer|nigher|niigher|nighger|niggef|niggej|nigja|niqqer|nixxer)(?:[x0-9]*)$/;
 
 
 // Deliberately curated: ambiguous ordinary words (e.g. trump, bush, may) are not substring bans.
@@ -164,6 +164,7 @@ function promotionMatch(clean, normalized, compact) {
   const raw=String(clean).normalize('NFKD').toLowerCase().replace(/[\u0300-\u036f]/g,'');
   if (/(?:https?|ftp)\s*[:/]|www\s*[.\u3002\uff0e]|[a-z0-9]\s*(?:\.|\[dot\]|\(dot\)|\s+dot\s+)\s*(?:com|net|org|gg|io|xyz|app|dev|me|co|uk|us|edu|gov|tv|link|site|online|info|biz|club|shop|ru|de|fr|ca|au|jp|cn|in|it|nl|br|ly)\b/i.test(raw)) return 'website-link';
   if (/[a-z0-9-]+\.[a-z]{2,24}(?:\b|\/)/i.test(raw)) return 'website-link';
+  if (/(?:^|\s)(?:yt|ig|tt)\s*[:@]\s*@?[a-z0-9_]/i.test(raw)) return 'contact-promotion';
   if (/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(raw)) return 'contact-address';
   for (let i=0;i<CONTACT_BRANDS.length;i++) {
     const candidate=CONTACT_BRANDS[i]==='insta'?compact.replace(/(?:instant|instance|install|instability|winstanley)/g,' '):compact;
@@ -241,14 +242,30 @@ export function moderatePublicName(value) {
   }
   return decision(false);
 }
-function fallbackName(seed) {
-  const hash = Math.abs(Array.from(String(seed || 'racer')).reduce((acc, char) => ((acc * 33) ^ char.charCodeAt(0)) >>> 0, 5381));
-  const first = PROFILE_NAME_WORD_A[hash % PROFILE_NAME_WORD_A.length];
-  const second = PROFILE_NAME_WORD_B[Math.floor(hash / 13) % PROFILE_NAME_WORD_B.length];
-  return `${first}${second}`.slice(0, 24);
+// Mixed-radix indexing reaches every expanded pair without correlated selectors.
+export const generatedNameStats = Object.freeze({firstWords: PROFILE_NAME_WORD_A.length,
+  secondWords: PROFILE_NAME_WORD_B.length, combinations: PROFILE_NAME_WORD_A.length * PROFILE_NAME_WORD_B.length});
+
+export function generatedNameAt(index) {
+  if (!Number.isSafeInteger(index) || index < 0 || index >= generatedNameStats.combinations) {
+    throw new RangeError('Generated name index is out of range');
+  }
+  return PROFILE_NAME_WORD_A[Math.floor(index / PROFILE_NAME_WORD_B.length)] +
+    PROFILE_NAME_WORD_B[index % PROFILE_NAME_WORD_B.length];
+}
+
+export function generatePublicName(seed) {
+  const hash = Array.from(String(seed || 'racer')).reduce((acc, char) => ((acc * 33) ^ char.charCodeAt(0)) >>> 0, 5381);
+  return generatedNameAt(hash % generatedNameStats.combinations);
+}
+
+// Preserve legacy account-specific aliases. Expanded words are for NEW defaults only.
+export function generateFallbackName(seed) {
+  const hash = Array.from(String(seed || 'racer')).reduce((acc, char) => ((acc * 33) ^ char.charCodeAt(0)) >>> 0, 5381);
+  return PROFILE_NAME_WORD_A[hash % 93] + PROFILE_NAME_WORD_B[Math.floor(hash / 13) % 94];
 }
 
 export function safePublicName(value, accountId = '') {
   const decision = moderatePublicName(value);
-  return decision.blocked ? (fallbackName(accountId || decision.clean) || 'Guest') : decision.clean;
+  return decision.blocked ? (generateFallbackName(accountId || decision.clean) || 'Guest') : decision.clean;
 }

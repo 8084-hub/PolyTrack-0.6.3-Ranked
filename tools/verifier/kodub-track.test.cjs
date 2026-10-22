@@ -18,6 +18,21 @@ const laRivieraId = '5c891c15c754987ff7e1358000f265d26aa959716c443dec80f668762c3
 const laRivieraCode = fs.readFileSync(path.join(__dirname, '../../events/kodub/assets/aa5e949dbd8e18caab0fc3697f9ef10c72cf1d5acccfd0b9d618663f35131542.track'), 'utf8');
 const laRiviera = {trackId: laRivieraId, code: laRivieraCode, codeHash: sha256(laRivieraCode)};
 
+test('captured Spite fits existing inflate bounds but remains blocked by part and geometry caps',()=>{
+  const codeHash='a6ccd78cc443cd848a41da11d94904d2fffb7647d0ecafca64562eb53480ea2b';
+  const trackId='60e247f90d43ecaa8b56a4677307094ab0259f36151af23e09fdc824741d3e48';
+  const code=fs.readFileSync(path.join(__dirname,'../../events/kodub/assets',codeHash+'.track'),'utf8');
+  assert.equal(sha256(code),codeHash);assert.equal(Buffer.byteLength(code),125528);
+  const {decodePacked,TRACK_PREFLIGHT_LIMITS:bounds}=trackInternals;
+  const inner=zlib.inflateSync(decodePacked(code.slice(10),LIMITS.trackBytes,'cap'),{maxOutputLength:bounds.innerTextBytes});
+  const payload=zlib.inflateSync(decodePacked(inner.toString('ascii'),bounds.secondCompressedBytes,'cap'),{maxOutputLength:bounds.payloadBytes});
+  assert.equal(payload.length,228202);assert.equal(LIMITS.trackParts,20000);
+  assert.throws(()=>normalizeTrustedTracks([{trackId,code,codeHash,parts:28470}],new Set([trackId])),/trusted_track_part_limit/);
+  const {geometryDecision}=require('./geometry.cjs');
+  assert.equal(geometryDecision({id:trackId,name:`trusted/${trackId}.track`,hash:codeHash,
+    geometry:{parts:28470,spanX:0,spanZ:0}},reviewedGeometry.engineDigest).reason,'track_geometry_limit');
+});
+
 function packedValue(bytes, bit) {
   const byte = Math.floor(bit / 8);
   const offset = bit - byte * 8;

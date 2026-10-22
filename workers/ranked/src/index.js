@@ -1,3 +1,4 @@
+import {CANONICAL_CLIENT_URL, CLIENT_REVISION_HEADER, clientAccessPolicy, admitWriteBurst} from './client-access-policy.js';
 import {EVENT_COLLECTIONS} from './events.js';
 import {PUBLIC_MANIFEST_COLLECTION,publicationManifestId,decodePublicationPage,PUBLIC_PAGE_COLLECTION, publicationPageId, preparePublicationPages, loadPublicationEntries} from './paged-publication.js';
 import {prepareShardedVerification, migrateVerificationChunk, verificationShardId} from './verification-shards.js';
@@ -225,7 +226,7 @@ function responseHeaders(origin, env) {
   });
   if (allowedOrigins(env).has(origin)) {
     headers.set('Access-Control-Allow-Origin', origin);
-    headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Admin-Token');
+    headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Admin-Token, X-PolyTrack-Revision');
     headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     headers.set('Access-Control-Max-Age', '600');
     headers.set('Vary', 'Origin');
@@ -2372,13 +2373,27 @@ export async function handleRequest(request, env, context = {}) {
 
 async function handleRequestInternal(request, env, context = {}) {
   const origin = request.headers.get('Origin') || '';
-  if (!allowedOrigins(env).has(origin)) return json(origin, env, 403, { error: 'origin_not_allowed' });
+  if (!allowedOrigins(env).has(origin)) return json(origin, env, 403, { error: 'origin_not_allowed', canonicalUrl: CANONICAL_CLIENT_URL });
   const path = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
-  if (path.startsWith('/v1/events/')) return eventWorkerHandler(env, {
+  if (request.method !== 'OPTIONS' && !path.startsWith('/v1/admin/')) {
+    const denial = clientAccessPolicy(request, env);
+    if (denial) {
+      const {status, ...body} = denial;
+      return json(origin, env, status, body);
+    }
+  }
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: responseHeaders(origin, env) });
+  if (path.startsWith('/v1/events/')) {
+    const response = await eventWorkerHandler(env, {
     request: (path, init) => firestoreRequest(env, path, init),
     authenticate: request => verifyFirebaseUser(request, env), origins: allowedOrigins(env), context
-  })(request);
-  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: responseHeaders(origin, env) });
+    })(request);
+    const headers = new Headers(response.headers);
+    const allowed = headers.get('Access-Control-Allow-Headers') || 'Authorization, Content-Type';
+    headers.set('Access-Control-Allow-Headers', allowed + ', ' + CLIENT_REVISION_HEADER);
+    return new Response(response.body, {status: response.status, statusText: response.statusText, headers});
+  }
+
   if (path === '/v1/kodub-weekly' || path.startsWith('/v1/kodub-weekly/')) return kodubWeekly(request,responseHeaders(origin,env),context);
   if (request.method === 'GET' && path === '/v1/status') {
     return publicStatus(request, env, context, origin);
@@ -2433,11 +2448,19 @@ async function handleRequestInternal(request, env, context = {}) {
   }
   if (path !== '/v1/pb/notify' && path !== '/v1/profile/notify' && path !== '/v1/profile/cosmetics' && path !== '/v1/profile/group-code' && path !== '/v1/extra-tracks/submissions' && path !== '/v1/extra-tracks/reports' && path !== '/v1/extra-tracks/unranked') return json(origin, env, 404, { error: 'not_found' });
   if (String(env.RANKED_WRITES_ENABLED) === 'false') return json(origin, env, 503, { error: 'ranked_writes_disabled' });
+  const admission = await admitWriteBurst(request, env);
+  if (admission === 'limited') return rateLimited(origin, env);
+  if (admission === 'unavailable') {
+    const response = json(origin, env, 503, {error: 'write_limiter_unavailable', retryAfterSeconds: 60});
+    response.headers.set('Retry-After', '60');
+    return response;
+  }
+  let body;
+  try { body = await requestBody(request, path === '/v1/extra-tracks/submissions' ? 550000 : path === '/v1/extra-tracks/unranked' ? 70000 : 2048); if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('INVALID_BODY'); } catch { return json(origin, env, 400, { error: 'invalid_request' }); }
   let uid;
   try { uid = await verifyFirebaseUser(request, env); } catch { return json(origin, env, 401, { error: 'authentication_failed' }); }
   if (env.PB_NOTIFY_RATE_LIMITER && !(await env.PB_NOTIFY_RATE_LIMITER.limit({ key: uid })).success) return json(origin, env, 429, { error: 'rate_limited', retryAfterSeconds: 60 });
-  let body;
-  try { body = await requestBody(request, path === '/v1/extra-tracks/submissions' ? 550000 : path === '/v1/extra-tracks/unranked' ? 70000 : 2048); } catch { return json(origin, env, 400, { error: 'invalid_request' }); }
+
   if (path === '/v1/extra-tracks/reports') return submitExtraTrackReport(request, env, origin, uid, body);
   if (path === '/v1/extra-tracks/unranked') return unrankedExtraBoard(request, env, origin, uid, body);
   if (path === '/v1/extra-tracks/submissions') {

@@ -4,6 +4,29 @@ import {createPracticeHistory,practiceAdvice,PRACTICE_KEY,HUNT_IDLE_MS} from './
 import {installPracticeObserver} from './practice-native.mjs';
 const account='a'.repeat(64),track='b'.repeat(64);
 function setup(){let at=100000,saved=null,writes=0;const storage={getItem:()=>saved,setItem:(_key,value)=>{saved=value;writes++;}};const history=createPracticeHistory({storage,now:()=>at});return {history,storage,advance:ms=>at+=ms,writes:()=>writes,saved:()=>saved};}
+
+test('recovered observed movement refreshes the hunt clock without creating extra active time',()=>{
+ const h=setup(),a=h.history.begin(account,track);
+ a.observe(1000,{visible:true,progressing:true,moving:true});a.tick(1000);
+ h.advance(HUNT_IDLE_MS-1);
+ a.observe(1000,{visible:true,progressing:false,moving:true});
+ a.tick(100,0,0,{catchUpMs:100,catchUpMovingMs:100});
+ const before=h.history.get(account,track);
+ assert.equal(before.hunt.lastMovingAt,100000+HUNT_IDLE_MS-1);
+ assert.equal(before.activeMs,1100);assert.equal(before.idleMs,900);
+ h.advance(2);a.observe(1000,{visible:true,progressing:true,moving:true});
+ assert.equal(h.history.get(account,track).hunt.movingMs,2100);
+});
+
+test('practice advice does not invent visit dates or use future finishes as a trend',()=>{
+ const at=Date.UTC(2026,9,22),base={attempts:10,activeMs:60000,pbs:0,sincePbMs:0,restartsSincePb:0};
+ for(const lastPlayedAt of [0,undefined,NaN,at+1000]){
+  const advice=practiceAdvice({...base,lastPlayedAt},at);
+  assert.doesNotMatch(advice.text,/days ago|since your last visit/);assert.equal(advice.factor,1);
+ }
+ const recentFinishes=Array.from({length:8},(_,i)=>({timeMs:i<4?20000:10000,at:at+1000+i}));
+ assert.doesNotMatch(practiceAdvice({...base,lastPlayedAt:at,recentFinishes},at).text,/improving/);
+});
 test('practice accumulates active time and resets since-PB time only for an improvement',()=>{
  const h=setup();let attempt=h.history.begin(account,track,20000);attempt.tick(1000,2);attempt.finish(21000);
  assert.equal(h.history.get(account,track).sincePbMs,1000);assert.equal(h.history.get(account,track).pbs,0);
@@ -34,7 +57,7 @@ test('corrupt and excessive saved history is bounded and sanitized',()=>{
 });
 test('practice is only a bounded hint and sparse data never claims a track is impossible',()=>{
  assert.deepEqual(practiceAdvice(null),{factor:1,text:''});assert.equal(practiceAdvice({attempts:1,activeMs:900000}).factor,1);
- const away=practiceAdvice({attempts:10,activeMs:60000,lastPlayedAt:0},8*86400000);assert.equal(away.factor,1.1);
+ const away=practiceAdvice({attempts:10,activeMs:60000,lastPlayedAt:1},8*86400000+1);assert.equal(away.factor,1.1);
  const plateau=practiceAdvice({attempts:20,activeMs:1000000,sincePbMs:900000,restartsSincePb:12,restarts:12,lastPlayedAt:10000},10000);assert.equal(plateau.factor,.9);assert.doesNotMatch(plateau.text,/impossible|never|bad player/);
 });
 function nativeFixture(onLeave=()=>{}){

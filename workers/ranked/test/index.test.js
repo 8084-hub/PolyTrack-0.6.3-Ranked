@@ -275,7 +275,7 @@ test('profile notify preflight allows the configured school game origin and requ
   assert.equal(response.status, 204);
   assert.equal(response.headers.get('Access-Control-Allow-Origin'), origin);
   assert.equal(response.headers.get('Access-Control-Allow-Methods'), 'GET, POST, OPTIONS');
-  assert.equal(response.headers.get('Access-Control-Allow-Headers'), 'Authorization, Content-Type, X-Admin-Token');
+  assert.equal(response.headers.get('Access-Control-Allow-Headers'), 'Authorization, Content-Type, X-Admin-Token, X-PolyTrack-Revision');
   assert.equal(response.headers.get('Access-Control-Max-Age'), '600');
 });
 
@@ -2066,9 +2066,9 @@ test('high-entropy 200 by 78 planner compression benchmark publishes every resul
 
 test('public event catalog backup runs daily plus weekly reset and manual dispatch', () => {
   const workflow = readFileSync(new URL('../../../.github/workflows/sync-event-catalog.yml', import.meta.url), 'utf8');
-  assert.deepEqual([...workflow.matchAll(/^    - cron: '([^']+)'$/gm)].map(match => match[1]), ['30 10 * * *', '10 20 * * 0']);
+  assert.deepEqual([...workflow.matchAll(/^    - cron: '([^']+)'$/gm)].map(match => match[1]), ['20 0 * * *', '10 20 * * 0']);
   assert.match(workflow, /^  workflow_dispatch:$/m);
-  assert.match(workflow, /github\.event_name == 'workflow_dispatch' \|\| github\.event\.schedule == '30 10 \* \* \*'/);
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch' \|\| github\.event\.schedule == '20 0 \* \* \*'/);
 });
 
 test('two-minute background repair skips off-window or invalid ticks before Firestore access', () => {

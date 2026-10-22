@@ -9,6 +9,28 @@ const round=(overrides={})=>({processed:16,verified:16,canonicalAttempts:16,sele
   events:{checked:0,consumed:0},...overrides});
 const quiet=()=>{};
 
+test('drain retains event reasons and publication statuses separately from normal totals',async()=>{
+  let calls=0;
+  const result=await drainVerification({now:()=>0,requests:()=>0,log:quiet,runRound:async()=>{
+    calls++;return round({processed:0,verified:0,events:{checked:2,consumed:0,reported:2,countsComplete:true,
+      statuses:{waiting:1,verified:1},reasons:{trusted_track_part_limit:1,native_exact_finish:1}}});
+  }});
+  assert.equal(calls,4);assert.equal(result.eventChecked,8);assert.equal(result.eventReported,8);
+  assert.deepEqual(result.eventStatuses,{waiting:4,verified:4});
+  assert.deepEqual(result.eventReasons,{trusted_track_part_limit:4,native_exact_finish:4});
+  assert.equal(result.eventCountsComplete,true);assert.equal(result.verified,0);assert.deepEqual(result.reasons,{});
+});
+
+test('interrupted event rounds cannot claim complete event outcomes',async()=>{
+  let calls=0;
+  const result=await drainVerification({now:()=>0,requests:()=>0,log:quiet,runRound:async()=>{
+    if(calls++)throw new VerificationBudgetError();
+    return round({events:{checked:1,consumed:0,reported:1,countsComplete:true,statuses:{waiting:1},reasons:{scan_work_limit:1}}});
+  }});
+  assert.equal(result.eventChecked,1);assert.equal(result.eventReported,1);
+  assert.equal(result.eventCountsComplete,false);assert.deepEqual(result.eventReasons,{scan_work_limit:1});
+});
+
 test('fast backlog drains at most four rounds and sixty-four normal attempts',async()=>{
   let calls=0;
   const result=await drainVerification({now:()=>0,requests:()=>calls*70,log:quiet,

@@ -1,15 +1,17 @@
+const createClientSourceRunner=require('./client-source-harness.cjs');
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync(require('node:path').join(__dirname,'../polytrack_062_patch.js'),'utf8');
+const runClientSource=createClientSourceRunner(source);
 function fixture(status=429,retryAfter='60',snapshotOnly=false){
   let now=1000,calls=0,backups=0,failures=0;
   const context={Date:{now:()=>now},snapshotOnlyForNewAccount:()=>snapshotOnly,publicSnapshotRetryAt:0,rankedBrokerUrl:()=> 'https://ranked.example',rankedEdgeAvailable:()=>true,
     fetch:async()=>{calls++;return {status,ok:status===200,headers:{get:key=>key==='Retry-After'?retryAfter:'application/json'},json:async()=>({entries:[]})};},
     withTimeout:promise=>promise,readPublicSnapshotBackup:async()=>{backups++;return null;},clearRankedEdgeFailure:()=>{},markRankedEdgeUnavailable:()=>failures++};
   vm.createContext(context);
-  vm.runInContext(source.slice(source.indexOf('  async function fetchRankedSnapshot('),source.indexOf('  function rankedNotifyQueue()',source.indexOf('  async function fetchRankedSnapshot('))),context);
+  runClientSource(source.slice(source.indexOf('  async function fetchRankedSnapshot('),source.indexOf('  function rankedNotifyQueue()',source.indexOf('  async function fetchRankedSnapshot('))),context);
   return {context,calls:()=>calls,backups:()=>backups,failures:()=>failures,advance:ms=>now+=ms};
 }
 test('429 pauses snapshot requests without treating school connectivity as broken',async()=>{

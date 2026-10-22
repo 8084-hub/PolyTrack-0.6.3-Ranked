@@ -9,6 +9,7 @@ export function stampClientRelease(patch, index, revision) {
     .replace(/(tools\/(?:public-snapshot-client|record-placement|snapshot-metadata-recovery|ranked-live-snapshot|practice-history|practice-native|developer-diagnostics|practice-profile|local-diagnostics|local-insights|leaderboard-latency-hook|opponent-presets|control-usage|kodub-practice-track|overall-local-controller|overall-local-projection|native-track-search|search-text)\.mjs)(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`)
     .replace(/(kodub-weekly\.mjs|tools\/firebase-auth-app\.mjs)(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`)
     .replace(/(const extraCatalogRevision=)['"]\d+['"]/, `$1'${revision}'`);
+  patch = patch.replace(/headers\.set\('X-PolyTrack-Revision', String\(\d+\)\)/g, `headers.set('X-PolyTrack-Revision', String(${revision}))`);
   patch = patch.replace(/createLocalInsights\(\{storage,revision:\d+\}\)/g, `createLocalInsights({storage,revision:${revision}})`);
   index = index.replace(/polytrack_062_patch\.js\?v=\d+/, `polytrack_062_patch.js?v=${revision}`)
     .replace(/(main\.bundle\.js)(?:\?v=\d+)?(['"])/g, `$1?v=${revision}$2`)

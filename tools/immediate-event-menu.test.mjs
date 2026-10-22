@@ -44,8 +44,10 @@ function catalogFixture({ load, importWeekly } = {}) {
     setTimeout: (callback, delay) => { assert.equal(delay, 0, 'only one deferred enrichment refresh, no polling'); timers.push(callback); return timers.length; },
     db: () => assert.fail('catalog enrichment must not access Firestore'),
     ensureEventUi: () => assert.fail('enrichment must not recursively initialize Event UI'),
-    noteFirebaseQuota: () => assert.fail('local catalog must not enter live fallback'),
+    noteFirebaseQuota: error => assert.fail('local catalog must not enter live fallback: '+String(error?.stack||error)),
   });
+  context.Headers=Headers;
+  vm.runInContext(extract('rankedFetch')+extract('rankedWeeklyFetch')+extract('eventRequestSignal'),context);
   let body = section('  let localEventSchedulePromise=', '  async function eventCloudRead(');
   const weeklyImport = body.match(/import\(new URL\('\.\/kodub-weekly\.mjs\?v=\d+',eventsModuleUrl\)\.href\)/)?.[0];
   assert.ok(weeklyImport, 'production weekly adapter import');

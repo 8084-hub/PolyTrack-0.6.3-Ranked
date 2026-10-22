@@ -81,5 +81,5 @@ test('ranked status separates successful checks, saved sources, failure and refr
  assert.equal(ctx.rankedFreshnessText({source:'live',ageAt:1,status:'loading'}),'Checking live results...');
  assert.equal(ctx.rankedFreshnessText({source:'cache',status:'cache'}),'Cached results · last live check time unknown');
  const button={textContent:'Live results · check succeeded just now',setAttribute(){}};
- ctx.applyRankedRefreshCooldown(button);assert.equal(button.disabled,true);assert.match(button.textContent,/Next refresh in 1m/);assert.doesNotMatch(button.textContent,/retry/i);
+ ctx.applyRankedRefreshCooldown(button);assert.equal(button.disabled,true);assert.match(button.textContent,/Refresh available in 1m/);assert.doesNotMatch(button.textContent,/retry/i);
 });

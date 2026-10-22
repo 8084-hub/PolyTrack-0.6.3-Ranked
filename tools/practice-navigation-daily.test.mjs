@@ -1,3 +1,4 @@
+import createClientSourceRunner from './client-source-harness.cjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,6 +7,7 @@ import {webcrypto,createHash} from 'node:crypto';
 import {readKodubPracticeTrack} from './kodub-practice-track.mjs';
 import {eventVerificationLabel} from '../events/client.mjs';
 const patch=fs.readFileSync(new URL('../polytrack_062_patch.js',import.meta.url),'utf8');
+const runClientSource=createClientSourceRunner(patch);
 const id='60e247f90d43ecaa8b56a4677307094ab0259f36151af23e09fdc824741d3e48';
 const extract=name=>{const start=patch.search(new RegExp('  (?:async )?function '+name+'\\('));assert.ok(start>=0,name);return patch.slice(start,patch.indexOf('\n  }',start)+4);};
 const assets=new URL('../events/kodub/',import.meta.url);
@@ -31,7 +33,7 @@ function navigation(overrides={}){
  const navigationSource=extract('focusTrackFromRanked');
  const focus=navigationSource.replace(/await import\(new URL\('\.\.\/tools\/kodub-practice-track\.mjs\?v=\d+',eventsModuleUrl\)\.href\)/,'await loadTrackReader()');
  assert.notEqual(focus,navigationSource,'mock the reader module independently of the client release query');
- vm.createContext(context);vm.runInContext('let rankedTrackNavigationEpoch=0;'+focus,context);
+ vm.createContext(context);runClientSource('let rankedTrackNavigationEpoch=0;'+focus,context);
  return {context,notices,listeners,imports:()=>imports};
 }
 test('missing track navigation resolves false with a friendly error instead of rejecting',async()=>{
@@ -80,7 +82,7 @@ test('native import fills only the importer after cancellation checks',async()=>
  let clicks=0,opened=false,typed='';const field={set value(value){typed=value;},dispatchEvent(){}},confirm={querySelector:()=>true,click:()=>clicks++};
  const importer={querySelector:()=>true,click:()=>opened=true};const dialog={querySelector:()=>field,querySelectorAll:()=>[confirm]};
  const ctx=vm.createContext({Event,Promise,setTimeout:fn=>fn(),document:{querySelector:selector=>selector.includes('track-export-ui')?(opened?dialog:null):{classList:{contains:()=>true}},querySelectorAll:()=>[importer]}});
- vm.runInContext(extract('importRankedTrackCode'),ctx);assert.equal(await ctx.importRankedTrackCode(code.toString(),()=>true),true);assert.equal(clicks,1);assert.equal(typed,code.toString());
+ runClientSource(extract('importRankedTrackCode'),ctx);assert.equal(await ctx.importRankedTrackCode(code.toString(),()=>true),true);assert.equal(clicks,1);assert.equal(typed,code.toString());
  assert.equal(await ctx.importRankedTrackCode(code.toString(),()=>false),false);assert.equal(clicks,1);
 });
 function events({saved=null,payload,fetcher}={}){
@@ -88,7 +90,7 @@ function events({saved=null,payload,fetcher}={}){
  const period={id:'d_20261022',kind:'daily',trackId:'a'.repeat(64),startsAt:Date.UTC(2026,9,22),endsAt:Date.UTC(2026,9,23),maxRp:100};
  const ctx={Map,Date:class extends Date{static now(){return now;}},Number,Math,Error,Promise,URL,encodeURIComponent,eventCloudRequests:new Map(),eventCloudCache:new Map(),eventCloudRetryAt:new Map(),eventRequestSignal:()=>undefined,rankedBrokerUrl:()=> 'https://worker.test',snapshotOnlyForNewAccount:()=>true,localEventCatalog:async()=>({periods:[period],archives:[]}),readPublicSnapshotBackup:async()=>saved,noteFirebaseQuota(){},log(){},fetch:async()=>{calls++;if(fetcher)return fetcher();return {ok:true,status:200,headers:new Headers({'content-type':'application/json'}),json:async()=>payload||{period,updatedAt:now,entries:[]}};}};
  vm.createContext(ctx);
- const start=patch.indexOf('  function chooseEventReadValue('),end=patch.indexOf('  const archiveMonthReads=',start);vm.runInContext(patch.slice(start,end),ctx);
+ const start=patch.indexOf('  function chooseEventReadValue('),end=patch.indexOf('  const archiveMonthReads=',start);runClientSource(patch.slice(start,end),ctx);
  return {ctx,period,calls:()=>calls,advance:value=>now+=value,read:force=>ctx.eventCloudRead('/v1/events/'+period.id+'/snapshot','0.6.2_event_public',period.id,force)};
 }
 test('missing current daily snapshot uses one coalesced Worker read even for a new account',async()=>{
@@ -138,7 +140,7 @@ function eventNavigationContext(){
  const client=fs.readFileSync(new URL('../events/client.mjs',import.meta.url),'utf8'),start=client.indexOf('  function isTrackNavigationCurrent('),end=client.indexOf('\n  }',start)+4;
  assert.ok(start>=0&&end>start,'production navigation context facade exists');
  let session=null,account='account';const state=vm.createContext({sessions:{current:()=>session},archiveIntent:{trackId:id,accountId:account,archive:true},bridge:{accountId:()=>account}});
- vm.runInContext(client.slice(start,end),state);
+ runClientSource(client.slice(start,end),state);
  const ui={isEntered:trackId=>session?.trackId===trackId,isTrackNavigationCurrent:state.isTrackNavigationCurrent,leave(){session=null;state.archiveIntent=null;}};
  return {state,ui,setSession:value=>session=value,setAccount:value=>account=value};
 }

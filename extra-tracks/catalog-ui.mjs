@@ -97,7 +97,6 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   let expandedCardTrigger = null;
   let cardMenuNumber = 0;
   let cardMenuPositionFrame = null;
-  const compactFiltersQuery = document.defaultView?.matchMedia?.('(max-width: 600px), (max-height: 650px)') || null;
   let filtersExpanded = false;
   const state = { search: '', source: '', tags: [], difficulty: '', curated: false, favorites: false, completion: 'all', review: 'all', sort: 'recommended', reviewedQuality: '', reviewedDifficulty: '', reviewedVote: '' };
   const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
@@ -159,7 +158,6 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   header.append(closeButton);
   dialog.append(header);
   const invitation = make('p', 'sq-extra-invite', 'Share a track with the community. Direct submissions get priority review; featuring is not guaranteed.');
-  const inviteRow = make('div', 'sq-extra-invite-row');
   const submit = button('Submit a track', 'sq-extra-submit', () => {
     submissionReturnFocus = document.activeElement;
     submissionGeneration++;
@@ -169,8 +167,8 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     syncSendControls();
     submitName.focus();
   });
-  inviteRow.append(invitation, submit);
-  dialog.append(inviteRow);
+  closeButton.remove();
+  header.append(submit, closeButton);
   const gradingHelp = make('details', 'sq-extra-grading-help');
   gradingHelp.append(make('summary', '', 'About ratings & difficulty'));
   gradingHelp.append(make('p', '', 'Rating measures track quality; Difficulty measures challenge, both out of 10. Published grades stay separate from your ratings saved on this device. Thanks to Window Cleaner for help with track gradings.'));
@@ -183,7 +181,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   search.type = 'search';
   search.placeholder = 'Name, author, source, tag';
   searchLabel.append(search);
-  const advancedToggle = button('Filters & sort', 'sq-extra-advanced-toggle', toggleAdvancedFilters);
+  const advancedToggle = button('Filters', 'sq-extra-advanced-toggle', toggleAdvancedFilters);
   const advancedControls = make('div', 'sq-extra-advanced');
   advancedControls.id = `sq-extra-advanced-${mountNumber}`;
   advancedToggle.setAttribute('aria-controls', advancedControls.id);
@@ -226,10 +224,10 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   searchLabel.className += ' sq-extra-search-field';
   reviewField.label.className += ' sq-extra-review-field';
   const sortControls = make('div', 'sq-extra-sort-controls');
-  sortControls.append(sortField.label, button('Reset filters', 'sq-extra-clear', clearFilters));
+  sortControls.append(sortField.label);
   const quickFilters = make('div', 'sq-extra-quick-filters');
-  quickFilters.append(favoritesLabel, curatedLabel);
-  advancedControls.append(sourceField.label, tagField.label, difficultyField.label, completionField.label, reviewField.label, sortControls, quickFilters);
+  quickFilters.append(favoritesLabel, curatedLabel, button('Reset filters', 'sq-extra-clear', clearFilters));
+  advancedControls.append(sourceField.label, tagField.label, difficultyField.label, completionField.label, reviewField.label, quickFilters);
   const reviewedControls = make('div', 'sq-extra-reviewed-controls');
   const reviewedCaption = make('span', 'sq-extra-reviewed-caption', 'Published ratings');
   const qualityField = selectField('Rating', [['', 'Any score'], ...Array.from({length: 10}, (_, i) => [String(i + 1), `At least ${i + 1}/10`])]);
@@ -238,7 +236,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   const voteField = selectField('Votes', [['', 'Any votes'], ['positive', 'Net positive'], ['negative', 'Net negative'], ['voted', 'Has votes'], ['unvoted', 'No votes']]);
   reviewedControls.append(reviewedCaption, qualityField.label, reviewedDifficultyField.label, voteField.label);
   advancedControls.append(reviewedControls);
-  controls.append(searchLabel, advancedToggle, advancedControls);
+  controls.append(searchLabel, sortControls, advancedToggle, advancedControls);
   dialog.append(controls);
 
   const summary = make('div', 'sq-extra-summary');
@@ -265,7 +263,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     submission.append(label);
     return input;
   };
-  submission.append(submissionTitle, submissionClose);
+  submission.append(submissionTitle, submissionClose, invitation);
   const submitName = formField('Track name', 'input', 80);
   const submitAuthor = formField('Creator name', 'input', 80);
   const submitDescription = formField('What makes this track worth playing?', 'textarea', 1000);
@@ -339,7 +337,12 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   let cleanerImageCreated = false;
   cleanerReveal.hidden = true;
   cleanerReveal.append(make('figcaption', '', 'Window Cleaner - thanks for helping with track gradings!'));
-  dialog.append(cleanerReveal);
+  const staticReveal = make('figure', 'sq-extra-static');
+  staticReveal.hidden = true;
+  const sunshine = make('span', 'sq-extra-static-sun', ':)');
+  sunshine.setAttribute('aria-hidden', 'true');
+  staticReveal.append(sunshine, make('figcaption', '', 'Static - a little sunshine between finish lines. Thanks for bringing this community together!'));
+  dialog.append(cleanerReveal, staticReveal);
   const pagination = make('nav', 'sq-extra-pagination');
   pagination.setAttribute('aria-label', 'Track pages');
   dialog.append(pagination);
@@ -571,6 +574,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       titleRow.append(favorite);
     }
     body.append(titleRow);
+    const trackDetails = make('div', 'sq-extra-track-details');
     const creditedAuthor = text(entry.author);
     const shownAuthor = displayAuthor(entry);
     body.append(make('p', 'sq-extra-author', `By ${shownAuthor}`));
@@ -578,10 +582,10 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       body.append(make('p', 'sq-extra-source-credit', `Source credit: ${creditedAuthor}`));
     }
     if (entry.codeModifiedAt && Number.isFinite(Date.parse(entry.codeModifiedAt))) {
-      body.append(make('p', 'sq-extra-code-date', `Modified ${new Date(entry.codeModifiedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })}`));
+      trackDetails.append(make('p', 'sq-extra-code-date', `Modified ${new Date(entry.codeModifiedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })}`));
     }
     if (entry.submittedAt && Number.isFinite(Date.parse(entry.submittedAt))) {
-      body.append(make('p', 'sq-extra-code-date', `Submitted ${new Date(entry.submittedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })}`));
+      trackDetails.append(make('p', 'sq-extra-code-date', `Submitted ${new Date(entry.submittedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })}`));
     }
     const tags = effectiveReviewTags(entry, feedback);
     if (tags.length) {
@@ -605,7 +609,6 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       const number = value => Number.isInteger(value) ? String(value) : value.toFixed(1);
       if (reviewed.quality !== null) opinions.append(make('span', 'sq-extra-reviewed-quality', `Rating ${number(reviewed.quality)}/10`));
       if (reviewed.difficulty !== null) opinions.append(make('span', 'sq-extra-reviewed-difficulty', `Difficulty ${number(reviewed.difficulty)}/10`));
-      if (reviewed.votes) opinions.append(make('span', 'sq-extra-reviewed-votes', `Votes: ${reviewed.up} up · ${reviewed.down} down`));
       body.append(opinions);
     }
     const mine = make('p', 'sq-extra-my-review');
@@ -629,7 +632,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       if (Number.isSafeInteger(entry.sourceReplies) && entry.sourceReplies >= 0) metrics.push(`${entry.sourceReplies.toLocaleString()} ${entry.sourceReplies === 1 ? 'reply' : 'replies'}`);
       facts.append(make('span', 'sq-extra-plays', `itch.io: ${metrics.join(' · ')}`));
     }
-    if (Number.isSafeInteger(entry.sizeBytes) && entry.sizeBytes >= 0) facts.append(make('span', 'sq-extra-size', `${(entry.sizeBytes / 1000).toFixed(1)} KB code`));
+    if (Number.isSafeInteger(entry.sizeBytes) && entry.sizeBytes >= 0) trackDetails.append(make('span', 'sq-extra-size', `${(entry.sizeBytes / 1000).toFixed(1)} KB code`));
     body.append(facts);
     const actions = make('div', 'sq-extra-actions');
     actions.append(button('Import and play', 'sq-extra-play', () => runAction('play', onPlay, entry)));
@@ -855,6 +858,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       resetReview.title = 'Reset this track review to default. Imports and personal bests are kept.';
       moreMenu.append(resetReview);
     }
+    if (trackDetails.children.length) moreMenu.append(trackDetails);
     moreMenu.append(button('Report track', 'sq-extra-report-button', () => {
       const trigger = expandedCardTrigger || more;
       clearCardMenu();
@@ -1039,7 +1043,10 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       }
       filterCount(field, `${value ? all.filter(entry => predicate(reviewedSummary(entry), value)).length : all.length} tracks`);
     }
-    const showCleaner = ['window cleaner', 'windowcleaner'].includes(normalizeSearchText(query));
+    const showCredits = query === 'credits';
+    const showCleaner = showCredits || ['window cleaner', 'windowcleaner'].includes(query);
+    const showStatic = showCredits || query === 'static';
+    staticReveal.hidden = !showStatic;
     cleanerReveal.hidden = !showCleaner;
     if (showCleaner && !cleanerImageCreated) {
       const cat = make('img');
@@ -1052,7 +1059,7 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     }
     list.replaceChildren();
     const visible = records.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-    if (!visible.length && !showCleaner) {
+    if (!visible.length && !showCleaner && !showStatic) {
       const empty = make('div', 'sq-extra-empty');
       empty.setAttribute('role', 'status');
       empty.setAttribute('aria-live', 'polite');
@@ -1113,18 +1120,17 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   function activeAdvancedFilterGroups() {
     return Number(Boolean(state.source)) + Number(state.tags.length > 0) + Number(Boolean(state.difficulty)) +
       Number(state.curated) + Number(state.favorites) + Number(state.completion !== 'all') +
-      Number(state.review !== 'all') + Number(state.sort !== 'recommended') + Number(Boolean(state.reviewedQuality)) + Number(Boolean(state.reviewedDifficulty)) + Number(Boolean(state.reviewedVote));
+      Number(state.review !== 'all') + Number(Boolean(state.reviewedQuality)) + Number(Boolean(state.reviewedDifficulty)) + Number(Boolean(state.reviewedVote));
   }
 
   function syncAdvancedFilters() {
-    const isCompact = compactFiltersQuery?.matches === true;
-    const expanded = !isCompact || filtersExpanded;
+    const expanded = filtersExpanded;
     advancedControls.hidden = !expanded;
     advancedControls.inert = !expanded;
-    advancedToggle.hidden = !isCompact;
+    advancedToggle.hidden = false;
     advancedToggle.setAttribute('aria-expanded', String(expanded));
     const activeCount = activeAdvancedFilterGroups();
-    advancedToggle.textContent = activeCount ? `Filters & sort (${activeCount})` : 'Filters & sort';
+    advancedToggle.textContent = activeCount ? `Filters (${activeCount})` : 'Filters';
     if (!expanded && advancedControls.contains(document.activeElement)) advancedToggle.focus({preventScroll: true});
   }
 
@@ -1353,7 +1359,6 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   document.addEventListener('click', onCardMenuOutside, true);
   document.addEventListener('scroll', scheduleCardMenuPosition, true);
   document.defaultView?.addEventListener('resize', scheduleCardMenuPosition);
-  compactFiltersQuery?.addEventListener?.('change', syncAdvancedFilters);
   render();
   return {
     open, close, refresh() { cachedRecords = null; render(); },
@@ -1365,7 +1370,6 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
       document.removeEventListener('click', onCardMenuOutside, true);
       document.removeEventListener('scroll', scheduleCardMenuPosition, true);
       document.defaultView?.removeEventListener('resize', scheduleCardMenuPosition);
-      compactFiltersQuery?.removeEventListener?.('change', syncAdvancedFilters);
       overlay.remove();
     }
   };

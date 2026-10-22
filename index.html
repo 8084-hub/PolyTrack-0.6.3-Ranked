@@ -32,15 +32,14 @@
     <link rel="preload" href="./forced_square.woff2" as="font" type="font/woff2" crossorigin="anonymous">
     <link rel="preload" href="./images/logo.svg" as="image" type="image/svg+xml">
     <link rel="preload" href="./images/discord.svg" as="image" type="image/svg+xml">
-    <link rel="stylesheet" href="./events/events.css?v=176" data-event-css>
-    <link rel="stylesheet" href="./home-ui.css?v=176" data-home-ui-css>
-    <link rel="stylesheet" href="./responsive-ui.css?v=176" data-responsive-ui-css>
-    <link rel="stylesheet" href="./practice-responsive.css?v=176" data-practice-ui-css>
-    <script type="module" src="./tools/responsive-ui.mjs?v=176"></script>
-    <link rel="modulepreload" href="./events/client.mjs?v=176">
+    <link rel="stylesheet" href="./events/events.css?v=177" data-event-css>
+    <link rel="stylesheet" href="./home-ui.css?v=177" data-home-ui-css>
+    <link rel="stylesheet" href="./responsive-ui.css?v=177" data-responsive-ui-css>
+    <link rel="stylesheet" href="./practice-responsive.css?v=177" data-practice-ui-css>
+    <script type="module" src="./tools/responsive-ui.mjs?v=177"></script>
+    <link rel="modulepreload" href="./events/client.mjs?v=177">
     <link rel="modulepreload" href="./events/kodub-weekly.mjs">
     <link rel="manifest" href="./manifest.json">
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-QXB7CHLEDT"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
@@ -55,12 +54,20 @@
       };
       const analyticsPageLocation = analyticsSafeUrl(location.href) || location.origin + location.pathname;
       const analyticsPageReferrer = analyticsSafeUrl(document.referrer);
+      const analyticsAllowed = location.origin === 'https://staticquasar931.github.io'
+        && /^\/PolyTrack-0\.6\.3-Ranked(?:\/|$)/.test(location.pathname);
+      if (analyticsAllowed) {
+      const analyticsScript = document.createElement('script');
+      analyticsScript.async = true;
+      analyticsScript.src = 'https://www.googletagmanager.com/gtag/js?id=G-QXB7CHLEDT';
+      document.head.appendChild(analyticsScript);
       gtag('js', new Date());
       gtag('config', 'G-QXB7CHLEDT', {
         cookie_domain: location.hostname,
         page_location: analyticsPageLocation,
         page_referrer: analyticsPageReferrer
       });
+      }
     </script>
     <script type="application/ld+json">
       {"@context":"https://schema.org","@type":"VideoGame","name":"PolyTrack Ranked","url":"https://staticquasar931.github.io/PolyTrack-0.6.3-Ranked/","description":"PolyTrack 0.6.3 Static Ranked with personal bests, Extra Tracks, timed events, and customizable leaderboards.","genre":["Racing","Time trial"],"gamePlatform":"Web browser","creator":{"@type":"Organization","name":"Kodub"},"contributor":{"@type":"Person","name":"StaticQuasar931"},"isAccessibleForFree":true}
@@ -113,9 +120,9 @@
       window.POLYTRACK_RANKED_BROKER_URL='https://polytrack-ranked-worker.staticquasar931.workers.dev';
     </script>
     <script defer="defer" src="./error_screen.bundle.js"></script>
-    <script defer="defer" src="./public-name-policy.js?v=176"></script>
-    <script defer="defer" src="./polytrack_062_patch.js?v=176"></script>
-    <script defer="defer" src="./main.bundle.js?v=176"></script>
+    <script defer="defer" src="./public-name-policy.js?v=177"></script>
+    <script defer="defer" src="./polytrack_062_patch.js?v=177"></script>
+    <script defer="defer" src="./main.bundle.js?v=177"></script>
   </head>
 
   <body>

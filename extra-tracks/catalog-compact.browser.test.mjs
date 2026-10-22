@@ -37,7 +37,7 @@ test('shared normalized search, selected counts and grading credit work in the b
    await search.fill(query);assert.equal(await page.locator('.sq-extra-card').count(),1);
    assert.equal(await page.locator('.sq-extra-card h3').textContent(),'B\u26f6XED IN');
   }
-  await search.fill('');await page.getByRole('button',{name:'Filters & sort',exact:true}).click();
+  await search.fill('');await page.getByRole('button',{name:'Filters',exact:true}).click();
   await page.getByLabel('Rating',{exact:true}).selectOption('6');
   assert.equal(await page.getByLabel('Rating',{exact:true}).locator('option:checked').textContent(),'At least 6/10 (2)');
   assert.equal(await page.locator('.sq-extra-card').count(),2);
@@ -77,19 +77,19 @@ test('toolbar groups stay adjacent with expanded filters at requested sizes and 
   });
   for(const [width,height] of [[1366,600],[820,1180],[390,844],[844,320]]){
    await page.setViewportSize({width,height});
-   await page.waitForFunction(()=>document.querySelector('.sq-extra-advanced-toggle').hidden===!matchMedia('(max-width:600px), (max-height:650px)').matches);
-   if(width<=600||height<=650){
+   await page.waitForFunction(()=>document.querySelector('.sq-extra-advanced-toggle').hidden===false);
+   {
     const toggle=page.locator('.sq-extra-advanced-toggle');
     if(await toggle.getAttribute('aria-expanded')==='false')await toggle.click();
    }
    const layout=await page.locator('.sq-extra-controls').evaluate(el=>{
     const box=node=>{const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height};};
     const advanced=el.querySelector('.sq-extra-advanced'),search=el.querySelector('.sq-extra-search-field');
-    return {sort:box(el.querySelector('.sq-extra-sort-controls select')),reset:box(el.querySelector('.sq-extra-sort-controls button')),checks:[...el.querySelectorAll('.sq-extra-check')].map(box),filterToggle:box(el.querySelector('.sq-extra-advanced-toggle')),firstFilter:box(advanced.querySelector('.sq-extra-field')),overflow:el.scrollWidth>el.clientWidth+1,labels:[...el.querySelectorAll('.sq-extra-check')].map(n=>n.textContent),toolbarBackground:getComputedStyle(el).backgroundColor,searchBackground:getComputedStyle(search).backgroundColor,advancedBackground:getComputedStyle(advanced).backgroundColor,advancedBorder:getComputedStyle(advanced).borderWidth};
+    return {sort:box(el.querySelector('.sq-extra-sort-controls select')),reset:box(el.querySelector('.sq-extra-quick-filters .sq-extra-clear')),checks:[...el.querySelectorAll('.sq-extra-check')].map(box),filterToggle:box(el.querySelector('.sq-extra-advanced-toggle')),firstFilter:box(advanced.querySelector('.sq-extra-field')),overflow:el.scrollWidth>el.clientWidth+1,labels:[...el.querySelectorAll('.sq-extra-check')].map(n=>n.textContent),toolbarBackground:getComputedStyle(el).backgroundColor,searchBackground:getComputedStyle(search).backgroundColor,advancedBackground:getComputedStyle(advanced).backgroundColor,advancedBorder:getComputedStyle(advanced).borderWidth};
    });
    assert.equal(layout.overflow,false,'toolbar fits '+width+'x'+height);
-   assert.ok(Math.abs(layout.sort.bottom-layout.reset.bottom)<1,'Reset shares Sort row at '+width+'x'+height);
-   assert.ok(layout.reset.left>=layout.sort.right,'Reset sits to the right of Sort');
+   assert.ok(layout.reset.top>=layout.firstFilter.top,'Reset stays with the expanded filters');
+
    assert.ok(layout.sort.width>=130,'Sort remains readable at '+width+'x'+height+': '+JSON.stringify(layout));
    assert.deepEqual(layout.labels,['My favorites','Curated only']);
    assert.equal(layout.searchBackground,'rgba(0, 0, 0, 0)','search shares the toolbar surface');
@@ -101,7 +101,7 @@ test('toolbar groups stay adjacent with expanded filters at requested sizes and 
    if([1366,390,844].includes(width)&&process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR){await page.evaluate(()=>document.querySelector('.sq-extra-menu').scrollTop=0);await page.screenshot({path:process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR+`/catalog-toolbar-${width}x${height}.png`});}
    await page.getByRole('searchbox').fill('no matching track');
    assert.equal(await page.locator('.sq-extra-empty h3').textContent(),'No matching tracks');
-   await page.locator('.sq-extra-sort-controls button').click();
+   await page.locator('.sq-extra-quick-filters .sq-extra-clear').click();
    assert.equal(await page.locator('.sq-extra-card').count(),1);
    await page.evaluate(()=>{catalog.refresh();catalog.close();catalog.open();});
   }
@@ -183,7 +183,7 @@ test('local review filter and ordering include ratings and update after a review
    window.catalog=mountExtraTracks({document,root:document.querySelector('#root'),entries,getFeedback:e=>reviews[e.id],getLocalRating:e=>reviews[e.id].rating});catalog.open();
   });
   const filters=page.locator('.sq-extra-advanced');
-  const disclosure=page.getByRole('button',{name:'Filters & sort',exact:true});
+  const disclosure=page.getByRole('button',{name:'Filters',exact:true});
   assert.equal(await filters.isHidden(),true,'short-height catalog starts with filters collapsed');
   assert.equal(await disclosure.getAttribute('aria-expanded'),'false');
   await disclosure.click();
@@ -200,5 +200,105 @@ test('local review filter and ordering include ratings and update after a review
   await page.evaluate(()=>{reviews[0]={rating:0};catalog.refresh();});assert.equal((await names())[0],'Beta');
   await page.locator('.sq-extra-sort-controls button').click();assert.equal(await page.locator('.sq-extra-review-field select').inputValue(),'all');
   assert.deepEqual(await names(),['Alpha','Beta','Gamma']);assert.deepEqual(unexpected,[]);
+ }finally{await browser.close();}
+});
+
+test('desktop and compact discovery keep filters accessible and Static credits local',{skip:!chromium},async()=>{
+ const browser=await chromium.launch({headless:true});
+ try{
+  const page=await browser.newPage();
+  const unexpected=[];
+  await page.route('**/*',route=>{
+   const url=route.request().url(),pathname=new URL(url).pathname.slice(1);
+   if(reviewedModules.has(pathname))return route.fulfill({contentType:'text/javascript',body:reviewedModules.get(pathname)});
+   if(pathname==='catalog-ui.mjs')return route.fulfill({contentType:'text/javascript',body:moduleSource});
+   if(pathname==='review.mjs')return route.fulfill({contentType:'text/javascript',body:reviewSource});
+   if(pathname==='native-track-search.mjs')return route.fulfill({contentType:'text/javascript',body:fs.readFileSync(new URL('../tools/native-track-search.mjs',import.meta.url),'utf8').replace("'./search-text.mjs'","'./tools/search-text.mjs'")});
+   if(url==='http://discovery.test/')return route.fulfill({contentType:'text/html',body:'<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style><main id="root"></main>'});
+   unexpected.push(url);return route.abort();
+  });
+  await page.goto('http://discovery.test/');await page.addStyleTag({content:fontCss+css});await page.evaluate(()=>document.fonts.ready);
+  const entries=JSON.parse(fs.readFileSync(new URL('./catalog.json',import.meta.url),'utf8')).slice(0,12).map(({thumbnailUrl,...entry})=>entry);
+  await page.evaluate(async entries=>{
+   const {mountExtraTracks}=await import('/catalog-ui.mjs');
+   window.catalog=mountExtraTracks({document,root:document.querySelector('#root'),entries,onExportFeedback:async()=>{},getFeedback:()=>({}),onFeedback:()=>{}});catalog.open();
+  },entries);
+  const shot=async name=>{
+   if(process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR)await page.screenshot({animations:'disabled',path:process.env.POLYTRACK_AUDIT_SCREENSHOT_DIR+'/'+name+'.png'});
+  };
+  const search=page.getByRole('searchbox',{name:'Search tracks'}),toggle=page.locator('.sq-extra-advanced-toggle');
+  for(const [width,height] of [[1366,900],[390,844],[844,320]]){
+   await page.setViewportSize({width,height});
+   if(await toggle.getAttribute('aria-expanded')==='true')await toggle.click();
+   await search.fill('');await page.evaluate(()=>document.querySelector('.sq-extra-menu').scrollTop=0);
+   assert.equal(await toggle.isVisible(),true,'disclosure is discoverable at '+width);
+   assert.equal(await page.locator('.sq-extra-advanced').isHidden(),true);
+   assert.equal(await page.getByLabel('Sort',{exact:true}).isVisible(),true,'common Sort never needs the filters disclosure');
+   assert.equal(await page.locator('.sq-extra-menu>.sq-extra-invite-row').count(),0);
+   await page.getByLabel('Sort',{exact:true}).selectOption('name');
+   assert.equal(await page.locator('.sq-extra-advanced').isHidden(),true,'sorting does not open filters');
+   assert.equal(await toggle.textContent(),'Filters','Sort is not counted as a hidden filter');
+   const rect=await toggle.boundingBox();assert.ok(rect&&rect.y>=0&&rect.y+rect.height<=height&&rect.height>=44);
+   await shot('catalog-collapsed-'+width);
+   await search.focus();await page.keyboard.press('Tab');await page.keyboard.press('Tab');assert.equal(await toggle.evaluate(node=>node===document.activeElement),true);
+   await page.keyboard.press('Enter');
+   for(const label of ['Source','Tag','Catalog level','Progress','Review status','Sort','Rating','Difficulty','Votes'])assert.equal(await page.getByLabel(label,{exact:true}).isVisible(),true,label+' is exposed');
+   await page.getByLabel('Rating',{exact:true}).selectOption('6');
+   assert.match(await page.getByLabel('Rating',{exact:true}).locator('option:checked').textContent(),/At least 6\/10 \(\d+\)/);
+   assert.equal(await toggle.textContent(),'Filters (1)');
+   await page.getByRole('button',{name:'Reset filters',exact:true}).click();
+   await page.evaluate(()=>document.querySelector('.sq-extra-menu').scrollTop=0);
+   await shot('catalog-expanded-'+width);
+   const overflow=await page.locator('.sq-extra-menu').evaluate(menu=>menu.scrollWidth>menu.clientWidth+1);assert.equal(overflow,false);
+   await toggle.click();await search.fill('Static');
+   assert.equal(await page.locator('.sq-extra-static').isVisible(),true);
+   assert.equal(await page.locator('.sq-extra-cleaner').isHidden(),true);
+   assert.equal(await page.locator('.sq-extra-empty').count(),0);
+   await shot('static-'+width);
+  }
+  // Exercise every close/confirmation action in the short landscape viewport.
+  await search.fill('');
+  const more=page.locator('.sq-extra-more').first();await more.click();
+  const menu=page.locator('.sq-extra-more-menu:not([hidden])');
+  const reachable=async control=>{
+   await control.scrollIntoViewIfNeeded();const b=await control.boundingBox();
+   assert.ok(b&&b.x>=0&&b.y>=0&&b.x+b.width<=844&&b.y+b.height<=320,'action fits 844x320');
+  };
+  const reset=menu.getByRole('button',{name:'Reset review',exact:true});await reachable(reset);await reset.click();
+  const confirm=menu.getByRole('button',{name:'Confirm reset review',exact:true});await reachable(confirm);
+  await shot('review-confirm-844x320');await confirm.click();
+  const done=menu.getByRole('button',{name:'Done',exact:true});await reachable(done);await shot('review-close-844x320');await done.click();
+  assert.equal(await more.evaluate(node=>node===document.activeElement),true);
+  await page.locator('.sq-extra-submit').click();
+  await reachable(page.locator('.sq-extra-send'));await shot('submission-send-844x320');
+  await reachable(page.locator('.sq-extra-submission-modal .sq-extra-submission-close'));await shot('submission-close-844x320');await page.locator('.sq-extra-submission-modal .sq-extra-submission-close').click();
+  await reachable(page.locator('.sq-extra-close'));await shot('catalog-close-844x320');await page.locator('.sq-extra-close').click();
+  assert.equal(await page.locator('.sq-extra-overlay').isHidden(),true);
+  await page.evaluate(()=>catalog.open());await page.setViewportSize({width:390,height:844});
+  assert.deepEqual(unexpected,[],'Static, filters and catalog discovery need no external assets');
+  await page.route('**/Window_Cleaner_Cat.jpg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="72"><text x="12" y="36" fill="white">Window Cleaner cat (offline fixture)</text></svg>'}));
+  await search.fill('credits');
+  assert.equal(await page.locator('.sq-extra-static').isVisible(),true);
+  assert.equal(await page.locator('.sq-extra-cleaner').isVisible(),true);
+  await shot('credits-390');
+  await page.evaluate(()=>catalog.destroy());
+  const metadata=JSON.parse(fs.readFileSync(new URL('../tracks/search-metadata.json',import.meta.url),'utf8'));
+  const results=await page.evaluate(async metadata=>{
+   const {enhanceNativeTrackSearch}=await import('/native-track-search.mjs');
+   const menu=document.createElement('section');menu.className='track-selection-ui';
+   menu.innerHTML='<div class="search-bar-container"><input></div><div class="tracks-container open"></div>';
+   document.body.append(menu);
+   const container=menu.querySelector('.tracks-container');
+   for(const row of metadata){const tile=document.createElement('div');tile.className='track';const title=document.createElement('p');title.className='track-title';title.textContent=row.name;tile.append(title);container.append(tile);}
+   const enhancer=enhanceNativeTrackSearch({document,metadata});
+   const input=menu.querySelector('input'),results={};
+   for(const query of ['Wintertide','winterrtibe','atlantis','steinwallburg','paradise palace','evanescent bliss','levitation','cogware']){
+    input.value=query;for(const tile of container.children)tile.style.display='none';enhancer.apply(input);
+    results[query]=[...container.children].filter(tile=>tile.style.display!=='none').map(tile=>tile.textContent);
+   }
+   enhancer.dispose();return results;
+  },metadata);
+  for(const [query,names] of Object.entries(results))assert.equal(names.length,1,'native plain search: '+query);
+  assert.deepEqual(results.Wintertide,results.winterrtibe);
  }finally{await browser.close();}
 });

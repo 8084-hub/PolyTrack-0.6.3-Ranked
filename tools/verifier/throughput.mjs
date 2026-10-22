@@ -76,6 +76,13 @@ export async function drainVerification({runRound,requests,now=()=>performance.n
     if(!normalProgress&&!eventProgress&&!pruned) {stop='no_progress';break;}
   }
   const reasons={};
+  const eventReasons=new Map(),eventStatuses=new Map();
+  for (const round of rounds) {
+    for (const [reason,count] of Object.entries(round.events.reasons || {}))
+      eventReasons.set(reason,(eventReasons.get(reason)||0)+count);
+    for (const [status,count] of Object.entries(round.events.statuses || {}))
+      eventStatuses.set(status,(eventStatuses.get(status)||0)+count);
+  }
   const verifiedByTrack={};
   for (const round of rounds) for (const [reason,count] of Object.entries(round.reasons || {})) {
     reasons[reason]=(reasons[reason] || 0)+Number(count || 0);
@@ -85,6 +92,9 @@ export async function drainVerification({runRound,requests,now=()=>performance.n
   }
   const summary={rounds:rounds.length,processed:rounds.reduce((n,r)=>n+r.processed,0),
     eventChecked:rounds.reduce((n,r)=>n+r.events.checked,0),
+    eventReported:rounds.reduce((n,r)=>n+(r.events.reported||0),0),
+    eventCountsComplete:!interruptedRound&&rounds.every(r=>r.events.checked===0||r.events.countsComplete===true),
+    eventReasons:Object.fromEntries(eventReasons),eventStatuses:Object.fromEntries(eventStatuses),
     verified:rounds.reduce((n,r)=>n+(r.verified||0),0),
     unavailable:rounds.reduce((n,r)=>n+(r.unavailable||0),0),
     mismatch:rounds.reduce((n,r)=>n+(r.mismatch||0),0),

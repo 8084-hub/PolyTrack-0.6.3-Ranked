@@ -15,6 +15,30 @@ const options = {env: {}, log: noop, eventRun, prioritizeNormal: async (_db, doc
   selectNormal: async (_db, docs, _now, limits) => ({jobs: [], canonicalAttempts: 0, selectionConflicts: 0, limits}),
   verifyNormal: async () => [], publishNormal: async () => ({verified: 0}), borrowUnusedEvents: true};
 
+test('event-only rounds retain every published status and native reason without replay data', async () => {
+  const logs=[];
+  const results=[
+    {status:'verified',reason:'native_exact_finish'},
+    {status:'mismatch',reason:'native_finish_mismatch'},
+    {status:'waiting',reason:'trusted_track_part_limit'},
+    {status:'unavailable_final',reason:'scan_work_limit'},
+  ].map(row=>({...row,replay:'private replay',accountId:'private identity'}));
+  const result=await runRound({remainingRequests:()=>0,call:()=>assert.fail('no reads')},
+    {...options,log:line=>logs.push(line),eventRun:async()=>({checked:4,consumed:0,results})});
+  assert.deepEqual(result.events.statuses,{verified:1,mismatch:1,waiting:1,unavailable_final:1});
+  assert.deepEqual(result.events.reasons,{native_exact_finish:1,native_finish_mismatch:1,trusted_track_part_limit:1,scan_work_limit:1});
+  assert.equal(result.events.reported,4);assert.equal(result.events.countsComplete,true);
+  assert.equal(result.verified,undefined,'normal counts must not silently include event outcomes');
+  assert.doesNotMatch(logs.join('\n'),/private replay|private identity/);
+});
+
+test('missing event outcomes are explicitly incomplete rather than zero verified', async () => {
+  const result=await runRound({remainingRequests:()=>0},
+    {...options,eventRun:async()=>({checked:2,consumed:0})});
+  assert.equal(result.events.reported,0);assert.equal(result.events.countsComplete,false);
+  assert.deepEqual(result.events.reasons,{});
+});
+
 test('small remaining publication reserve lowers each due-lane query bound', async () => {
   const queries = [];
   const db = {remainingRequests: () => 30, call: async (_path, body) => {

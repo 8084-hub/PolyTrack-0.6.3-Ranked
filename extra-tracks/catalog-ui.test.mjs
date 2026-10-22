@@ -33,6 +33,8 @@ class FakeNode {
   querySelectorAll() { return walk(this).filter(node => ['BUTTON', 'INPUT', 'SELECT', 'A'].includes(node.tagName) && !node.disabled); }
 }
 
+function field(root, caption) { return cls(root, 'sq-extra-field').find(node => node._text === caption); }
+
 function walk(node) { return node.children.flatMap(child => [child, ...walk(child)]); }
 
 test('plain text search finds normalized track names, authors and shared aliases without changing display data', async () => {
@@ -299,7 +301,7 @@ test('activity progress filter includes every review type plus imports and finis
     getPersonalBest: track => track.id === tracks[7].id ? 12345 : null
   });
   api.open();
-  const progress = tag(cls(root, 'sq-extra-field')[4], 'select')[0];
+  const progress = tag(field(root, 'Progress'), 'select')[0];
   progress.value = 'activity'; await progress.dispatch('change');
   assert.equal(cls(root, 'sq-extra-card').length, 8);
   progress.value = 'untouched'; await progress.dispatch('change');
@@ -340,7 +342,7 @@ test('review status and sorting count ratings and tag edits, not just favorites'
   assert.deepEqual(names(), ['Track 01', 'Track 02']);
   review.value = 'not-edited'; await review.dispatch('change');
   assert.deepEqual(names(), ['Track 03']);
-  const sort = tag(cls(root, 'sq-extra-advanced')[0].children[5], 'select')[0];
+  const sort = tag(field(root, 'Sort'), 'select')[0];
   review.value = 'all'; await review.dispatch('change');
   sort.value = 'edited-first'; await sort.dispatch('change');
   assert.equal(names()[0], 'Track 01');
@@ -404,10 +406,10 @@ test('search, source, tag, curated and completion filters combine and refresh re
   const { root, api } = fixture(entries, { getPersonalBest: item => best.get(item.id) });
   api.open();
   const fields = cls(root, 'sq-extra-field');
-  const search = tag(fields[0], 'input')[0];
-  const source = tag(fields[1], 'select')[0];
-  const tagSelect = tag(fields[2], 'select')[0];
-  const completion = tag(fields[4], 'select')[0];
+  const search = tag(field(root, 'Search tracks'), 'input')[0];
+  const source = tag(field(root, 'Source'), 'select')[0];
+  const tagSelect = tag(field(root, 'Tag'), 'select')[0];
+  const completion = tag(field(root, 'Progress'), 'select')[0];
   source.value = 'Kacky'; source.dispatch('change');
   tagSelect.value = 'technical'; tagSelect.dispatch('change');
   completion.value = 'completed'; completion.dispatch('change');
@@ -440,8 +442,8 @@ test('search ranks exact titles, prefixes, token matches and generic substrings 
   const { root, api } = fixture(entries);
   api.open();
   const fields = cls(root, 'sq-extra-field');
-  const search = tag(fields[0], 'input')[0];
-  const sort = tag(fields[6], 'select')[0];
+  const search = tag(field(root, 'Search tracks'), 'input')[0];
+  const sort = tag(field(root, 'Sort'), 'select')[0];
   sort.value = 'author'; sort.dispatch('change');
   search.value = 'TURN'; search.dispatch('input');
   const names = () => cls(root, 'sq-extra-card').map(card => tag(card, 'h3')[0].textContent);
@@ -458,15 +460,15 @@ test('difficulty and imported-only progress filter independently of tags', () =>
   const { root, api } = fixture(entries, { isLoaded: item => item.id === 'track-2' });
   api.open();
   const fields = cls(root, 'sq-extra-field');
-  const difficulty = tag(fields[3], 'select')[0];
-  const progress = tag(fields[4], 'select')[0];
+  const difficulty = tag(field(root, 'Catalog level'), 'select')[0];
+  const progress = tag(field(root, 'Progress'), 'select')[0];
   difficulty.value = '7'; difficulty.dispatch('change');
   progress.value = 'loaded'; progress.dispatch('change');
   assert.equal(cls(root, 'sq-extra-count')[0].textContent, '1 of 3 tracks');
   assert.match(cls(root, 'sq-extra-card')[0].textContent, /Track 02/);
   assert.match(cls(root, 'sq-extra-card')[0].textContent, /Catalog level 7\/10 · Expert/);
-  assert.equal(cls(fields[3], 'sq-extra-filter-count')[0].textContent, '2');
-  assert.equal(cls(fields[4], 'sq-extra-filter-count')[0].textContent, '1');
+  assert.equal(cls(field(root, 'Catalog level'), 'sq-extra-filter-count')[0].textContent, '2');
+  assert.equal(cls(field(root, 'Progress'), 'sq-extra-filter-count')[0].textContent, '1');
   assert.match(cls(root, 'sq-extra-card')[0].textContent, /Imported, not completed/);
 });
 
@@ -489,7 +491,7 @@ test('sort, callbacks and attribution use the original entry and safe links', as
   const played = [];
   const { root, api } = fixture([dangerous, popular], { onPlay: async item => { played.push(item); } });
   api.open();
-  const sort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  const sort = tag(field(root, 'Sort'), 'select')[0];
   assert.match(sort.textContent, /Most plays/);
   assert.doesNotMatch(sort.textContent, /Most chosen/);
   sort.value = 'plays'; sort.dispatch('change');
@@ -511,7 +513,7 @@ test('sort, callbacks and attribution use the original entry and safe links', as
   assert.equal(cls(root, 'sq-extra-overlay')[0].hidden, true);
 });
 
-test('code metadata, credits and actual byte sizes are visible and searchable', () => {
+test('More retains administrative metadata while cards keep author credit searchable', async () => {
   const { root, api } = fixture([entry(1, {
     author: 'Site account', codeName: 'Code title', codeAuthor: 'Track maker',
     codeModifiedAt: '2026-09-17T10:25:36.000Z', sizeBytes: 16680
@@ -520,9 +522,12 @@ test('code metadata, credits and actual byte sizes are visible and searchable', 
   const card = cls(root, 'sq-extra-card')[0];
   assert.match(card.textContent, /By Track maker/);
   assert.match(card.textContent, /Source credit: Site account/);
-  assert.match(card.textContent, /Modified .*2026/);
-  assert.match(card.textContent, /16\.7 KB code/);
-  const search = tag(cls(root, 'sq-extra-field')[0], 'input')[0];
+  assert.doesNotMatch(card.textContent, /Modified|KB code/);
+  await click(cls(root, 'sq-extra-more')[0]);
+  const details = cls(root, 'sq-extra-track-details')[0];
+  assert.match(details.textContent, /Modified .*2026/);
+  assert.match(details.textContent, /16\.7 KB code/);
+  const search = tag(field(root, 'Search tracks'), 'input')[0];
   search.value = 'Track maker'; search.dispatch('input');
   assert.equal(cls(root, 'sq-extra-card').length, 1);
   api.destroy();
@@ -548,7 +553,7 @@ test('size sorting uses actual catalog byte sizes and keeps missing sizes last',
   ];
   const { root, api } = fixture(entries);
   api.open();
-  const sort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  const sort = tag(field(root, 'Sort'), 'select')[0];
   assert.match(sort.textContent, /Largest track/);
   assert.match(sort.textContent, /Smallest track/);
   const names = () => cls(root, 'sq-extra-card').map(card => tag(card, 'h3')[0].textContent);
@@ -561,7 +566,7 @@ test('size sorting uses actual catalog byte sizes and keeps missing sizes last',
 
 test('size sorting is omitted when code byte sizes are unavailable', () => {
   const { root, api } = fixture([entry(1), entry(2, { sizeBytes: '12' }), entry(3, { sizeBytes: -1 })]);
-  const sort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  const sort = tag(field(root, 'Sort'), 'select')[0];
   assert.doesNotMatch(sort.textContent, /Largest code|Smallest code/);
   api.destroy();
 });
@@ -573,7 +578,7 @@ test('refresh updates data-dependent sort choices and falls back when selected d
   ];
   const { root, api } = fixture(entries);
   api.open();
-  const sort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  const sort = tag(field(root, 'Sort'), 'select')[0];
   assert.doesNotMatch(sort.textContent, /Largest track|Most plays|Forum activity|Newest Track/);
 
   entries[0].sizeBytes = 30;
@@ -605,7 +610,7 @@ test('forum activity stays distinct from plays and missing signals sort last', (
   ];
   const { root, api } = fixture(entries);
   api.open();
-  const sort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  const sort = tag(field(root, 'Sort'), 'select')[0];
   assert.match(sort.textContent, /Forum activity/);
   sort.value = 'forum'; sort.dispatch('change');
   assert.deepEqual(cls(root, 'sq-extra-card').map(card => tag(card, 'h3')[0].textContent), ['Liked', 'Discussed', 'Unrated']);
@@ -915,19 +920,22 @@ test('advanced filter count tracks active groups and excludes search', async () 
   api.open();
   const toggle = cls(root, 'sq-extra-advanced-toggle')[0];
   const fields = cls(root, 'sq-extra-field');
-  assert.equal(toggle.textContent, 'Filters & sort');
-  assert.equal(toggle.getAttribute('aria-expanded'), 'true', 'desktop keeps advanced controls expanded');
-  const search = tag(fields[0], 'input')[0];
+  assert.equal(toggle.textContent, 'Filters');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false', 'desktop starts uncluttered');
+  assert.equal(toggle.hidden, false, 'desktop disclosure stays discoverable');
+  await click(toggle);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  const search = tag(field(root, 'Search tracks'), 'input')[0];
   search.value = 'track'; await search.dispatch('input');
-  assert.equal(toggle.textContent, 'Filters & sort', 'search is not counted as an advanced group');
-  const source = tag(fields[1], 'select')[0];
+  assert.equal(toggle.textContent, 'Filters', 'search is not counted as an advanced group');
+  const source = tag(field(root, 'Source'), 'select')[0];
   source.value = 'Kacky'; await source.dispatch('change');
-  assert.equal(toggle.textContent, 'Filters & sort (1)');
-  const sort = tag(fields[6], 'select')[0];
+  assert.equal(toggle.textContent, 'Filters (1)');
+  const sort = tag(field(root, 'Sort'), 'select')[0];
   sort.value = 'name'; await sort.dispatch('change');
-  assert.equal(toggle.textContent, 'Filters & sort (2)', 'sort and source count as distinct groups');
+  assert.equal(toggle.textContent, 'Filters (1)', 'the always-visible sort is not counted as a hidden filter');
   await click(cls(root, 'sq-extra-clear')[0]);
-  assert.equal(toggle.textContent, 'Filters & sort', 'reset clears the active-group count');
+  assert.equal(toggle.textContent, 'Filters', 'reset clears the active-group count');
   api.destroy();
 });
 
@@ -938,12 +946,12 @@ test('multiple tags combine, and empty results offer a reset', async () => {
     entry(3, { tags: ['speed'] })
   ]);
   api.open();
-  const tagFilter = tag(cls(root, 'sq-extra-field')[2], 'select')[0];
+  const tagFilter = tag(field(root, 'Tag'), 'select')[0];
   tagFilter.value = 'technical'; await tagFilter.dispatch('change');
   tagFilter.value = 'speed'; await tagFilter.dispatch('change');
   assert.deepEqual(cls(root, 'sq-extra-card').map(card => tag(card, 'h3')[0].textContent), ['Track 01']);
   assert.equal(cls(root, 'sq-extra-selected-tag').length, 2);
-  const search = tag(cls(root, 'sq-extra-field')[0], 'input')[0];
+  const search = tag(field(root, 'Search tracks'), 'input')[0];
   search.value = 'not here'; await search.dispatch('input');
   assert.equal(cls(root, 'sq-extra-card').length, 0);
   await click(cls(root, 'sq-extra-clear')[0]);
@@ -962,7 +970,7 @@ test('track date sorting uses submission dates and puts undated tracks last', as
     entry(4, { codeModifiedAt: null })
   ]);
   api.open();
-  const sort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  const sort = tag(field(root, 'Sort'), 'select')[0];
   const names = () => cls(root, 'sq-extra-card').map(card => tag(card, 'h3')[0].textContent);
   sort.value = 'date-newest'; await sort.dispatch('change');
   assert.deepEqual(names(), ['Track 02', 'Track 03', 'Track 01', 'Track 04']);
@@ -1046,7 +1054,7 @@ test('all local review signals filter and sort consistently after changes and re
  const feedback=[{}, {rating:8}, {difficultyRating:6}, {vote:-1}, {addedTags:['mini']}, {removedTags:['speed']}, {favorite:true}, {}];
  const {root,api}=fixture(items,{getFeedback:e=>feedback[items.indexOf(e)],getLocalRating:e=>feedback[items.indexOf(e)].rating,
   getPersonalBest:e=>e===items[7]?1234:null,isLoaded:e=>e===items[7]});api.open();
- const fields=cls(root,'sq-extra-field'),review=tag(fields[5],'select')[0],sort=tag(fields[6],'select')[0];
+ const fields=cls(root,'sq-extra-field'),review=tag(field(root, 'Review status'),'select')[0],sort=tag(field(root, 'Sort'),'select')[0];
  const names=()=>cls(root,'sq-extra-card').map(c=>tag(c,'h3')[0].textContent);
  review.value='edited';await review.dispatch('change');assert.deepEqual(names(),['Track 02','Track 03','Track 04','Track 05','Track 06']);
  assert.equal(cls(root,'sq-extra-review-field')[0].children.at(-1).textContent,'5');
@@ -1055,7 +1063,7 @@ test('all local review signals filter and sort consistently after changes and re
  sort.value='my-rating';await sort.dispatch('change');assert.equal(names()[0],'Track 02');
  feedback[0]={rating:10};api.refresh();assert.equal(names()[0],'Track 01');
  feedback[0]={rating:0};api.refresh();assert.equal(names()[0],'Track 02');
- review.value='edited';await review.dispatch('change');const source=tag(fields[1],'select')[0];source.value='Community';await source.dispatch('change');
+ review.value='edited';await review.dispatch('change');const source=tag(field(root, 'Source'),'select')[0];source.value='Community';await source.dispatch('change');
  assert.deepEqual(names(),['Track 02','Track 04','Track 06']);
  await click(tag(root,'button').find(b=>b.textContent==='Reset filters'));assert.equal(names().length,8);assert.equal(review.value,'all');api.destroy();
 });
@@ -1067,7 +1075,7 @@ test('published reviews are independent of local activity and combine reviewed f
   const local = {rating: 1, difficultyRating: 2};
   const {root, api} = fixture(entries, {getFeedback: e => e === entries[0] ? local : {}, onFeedback: () => {writes++;}});
   api.open();
-  const firstSort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  const firstSort = tag(field(root, 'Sort'), 'select')[0];
   firstSort.value = 'review-quality-high'; await firstSort.dispatch('change');
   assert.match(cls(root, 'sq-extra-reviewed')[0].textContent, /Rating 9\/10Difficulty 7\/10/);
   assert.match(cls(root, 'sq-extra-my-review')[0].textContent, /My rating 1\/10 · My difficulty 2\/10/);
@@ -1100,12 +1108,12 @@ test('reviewed missing scores remain last in either direction and unknown identi
   const known = JSON.parse(fs.readFileSync(new URL('./catalog.json', import.meta.url), 'utf8')).slice(0, 2);
   const missing = entry(99, {trackId: 'f'.repeat(64)});
   const {root, api} = fixture([...known, missing]); api.open();
-  const sort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  const sort = tag(field(root, 'Sort'), 'select')[0];
   for (const value of ['review-quality-high', 'review-quality-low', 'review-difficulty-high', 'review-difficulty-low', 'review-votes-high', 'review-votes-low']) {
     sort.value = value; await sort.dispatch('change');
     assert.equal(tag(cls(root, 'sq-extra-card').at(-1), 'h3')[0].textContent, missing.name);
   }
-  const review = tag(cls(root, 'sq-extra-field')[5], 'select')[0];
+  const review = tag(field(root, 'Review status'), 'select')[0];
   review.value = 'no-published'; await review.dispatch('change');
   assert.equal(cls(root, 'sq-extra-reviewed').length, 0);
   assert.equal(cls(root, 'sq-extra-card').length, 1);
@@ -1116,7 +1124,7 @@ test('reviewed missing scores remain last in either direction and unknown identi
 test('review sort labels stay short while the selected control exposes the full meaning', async () => {
   const entries = JSON.parse(fs.readFileSync(new URL('./catalog.json', import.meta.url), 'utf8')).slice(0, 3);
   const {root, api} = fixture(entries); api.open();
-  const sort = tag(cls(root, 'sq-extra-field')[6], 'select')[0];
+  const sort = tag(field(root, 'Sort'), 'select')[0];
   for (const [value, label, description] of [
     ['review-quality-high','Rating: 10 to 1','Published ratings, highest first (10 to 1)'],
     ['review-quality-low','Rating: 1 to 10','Published ratings, lowest first (1 to 10)'],
@@ -1136,12 +1144,12 @@ test('review sort labels stay short while the selected control exposes the full 
 });
 
 
-test('short and narrow game windows default collapsed at the actual media boundaries',()=>{
+test('all game windows default collapsed with an accessible disclosure',()=>{
   for (const [width,height,compact] of [[1366,600,true],[1366,650,true],[1366,651,false],[600,900,true],[601,900,false],[844,320,true],[1920,1080,false]]) {
     const {root,api,document}=fixture([entry(1)],{}, {width,height});api.open();
     const advanced=cls(root,'sq-extra-advanced')[0],toggle=cls(root,'sq-extra-advanced-toggle')[0];
-    assert.equal(advanced.hidden,compact,width+'x'+height);assert.equal(advanced.inert,compact);
-    assert.equal(toggle.hidden,!compact);assert.equal(toggle.getAttribute('aria-expanded'),String(!compact));
+    assert.equal(advanced.hidden,true,width+'x'+height);assert.equal(advanced.inert,true);
+    assert.equal(toggle.hidden,false);assert.equal(toggle.getAttribute('aria-expanded'),'false');
     assert.equal(toggle.getAttribute('aria-controls'),advanced.id);
     api.destroy();assert.equal(document.mediaListeners.size,0);
   }
@@ -1151,26 +1159,48 @@ test('short-window disclosure exposes all filters, preserves chosen counts, focu
   const {root,api,document}=fixture([entry(1),entry(2)],{}, {width:1366,height:600});api.open();
   const advanced=cls(root,'sq-extra-advanced')[0],toggle=cls(root,'sq-extra-advanced-toggle')[0];
   await click(toggle);assert.equal(advanced.hidden,false);assert.equal(advanced.inert,false);
-  const source=tag(cls(root,'sq-extra-field')[1],'select')[0];source.value='Kacky';await source.dispatch('change');
+  const source=tag(field(root, 'Source'),'select')[0];source.value='Kacky';await source.dispatch('change');
   source.focus();await click(toggle);
-  assert.equal(advanced.hidden,true);assert.equal(toggle.textContent,'Filters & sort (1)');
+  assert.equal(advanced.hidden,true);assert.equal(toggle.textContent,'Filters (1)');
   assert.equal(document.activeElement,toggle,'collapsing cannot strand focus in hidden controls');
-  api.refresh();api.close();api.open();assert.equal(advanced.hidden,true);assert.equal(toggle.textContent,'Filters & sort (1)');
-  document.resizeTo(1366,900);assert.equal(advanced.hidden,false);assert.equal(toggle.hidden,true);
+  api.refresh();api.close();api.open();assert.equal(advanced.hidden,true);assert.equal(toggle.textContent,'Filters (1)');
+  document.resizeTo(1366,900);assert.equal(advanced.hidden,true);assert.equal(toggle.hidden,false);
   document.resizeTo(1366,650);assert.equal(advanced.hidden,true);assert.equal(toggle.hidden,false);
   await click(toggle);document.resizeTo(1920,1080);document.resizeTo(844,320);
   assert.equal(advanced.hidden,false,'an explicitly expanded compact layout survives a resize');
-  assert.equal(source.value,'Kacky');assert.equal(toggle.textContent,'Filters & sort (1)');api.destroy();
+  assert.equal(source.value,'Kacky');assert.equal(toggle.textContent,'Filters (1)');api.destroy();
 });
 
-test('short-wide CSS reserves disclosure and expanded filter rows without changing narrow rows',()=>{
+test('filter CSS uses a compact natural grid with no obsolete explicit row assignments',()=>{
   const css=fs.readFileSync(new URL('./catalog.css',import.meta.url),'utf8');
-  assert.ok(css.includes('@media(max-width:600px),(max-height:650px){.sq-extra-advanced-toggle'));
-  const short=css.slice(css.indexOf('/* Short game windows'));
-  assert.ok(short.includes('@media(min-width:601px) and (max-height:650px)'));
-  assert.match(short,/\.sq-extra-controls>\.sq-extra-advanced-toggle\{grid-column:1\/-1;grid-row:2\}/);
-  assert.match(short,/nth-child\(-n\+3\)\{grid-row:3\}/);
-  assert.match(short,/sq-extra-reviewed-controls\{grid-row:5\}/);
-  assert.ok(short.includes('@media(min-width:601px) and (max-width:1100px) and (max-height:650px)'));
-  assert.match(short,/sq-extra-reviewed-controls\{grid-row:6\}/);
+  assert.match(css,/sq-extra-controls>\.sq-extra-advanced\[hidden\]\{display:none\}/);
+  assert.ok(css.includes('grid-template-columns:repeat(4,minmax(0,1fr))'));
+  assert.ok(css.includes('.sq-extra-advanced>.sq-extra-field{grid-column:auto;grid-row:auto;min-width:0}'));
+});
+
+test('Static and credits reveals are cheerful, query-scoped and need no new image',async()=>{
+ const {root,api}=fixture([entry(1)]);api.open();
+ const search=tag(cls(root,'sq-extra-search-field')[0],'input')[0];
+ const sunshine=cls(root,'sq-extra-static')[0],cleaner=cls(root,'sq-extra-cleaner')[0];
+ assert.equal(sunshine.hidden,true);
+ for(const query of ['Static','STATIC','credits']){
+  search.value=query;await search.dispatch('input');
+  assert.equal(sunshine.hidden,false);assert.match(sunshine.textContent,/sunshine.*community/);
+  assert.equal(tag(sunshine,'img').length,0);assert.equal(cls(root,'sq-extra-empty').length,0);
+  assert.equal(cleaner.hidden,query!=='credits');
+ }
+ search.value='static noise';await search.dispatch('input');assert.equal(sunshine.hidden,true);
+ assert.equal(cls(root,'sq-extra-empty').length,1);
+ search.value='window cleaner';await search.dispatch('input');assert.equal(sunshine.hidden,true);assert.equal(cleaner.hidden,false);
+ api.destroy();
+});
+
+test('published cards retain grades without the redundant vote tally',()=>{
+ const rows=JSON.parse(fs.readFileSync(new URL('./catalog.json',import.meta.url),'utf8')).slice(0,3);
+ const {root,api}=fixture(rows);api.open();
+ assert.ok(cls(root,'sq-extra-reviewed-quality').length);
+ assert.ok(cls(root,'sq-extra-reviewed-difficulty').length);
+ assert.equal(cls(root,'sq-extra-reviewed-votes').length,0);
+ assert.doesNotMatch(cls(root,'sq-extra-grid')[0].textContent,/Votes:.*up.*down/);
+ api.destroy();
 });

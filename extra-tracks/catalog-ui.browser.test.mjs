@@ -42,10 +42,10 @@ test('phone filter disclosure stays accessible and preserves state across rerend
     }, catalog);
 
     const search = page.getByRole('searchbox', {name: 'Search tracks'});
-    const toggle = page.getByRole('button', {name: 'Filters & sort'});
+    const toggle = page.locator('.sq-extra-advanced-toggle');
     const advanced = page.locator('.sq-extra-advanced');
-    assert.equal(await advanced.isVisible(), true, 'desktop starts expanded');
-    assert.equal(await toggle.isHidden(), true, 'desktop hides the disclosure');
+    assert.equal(await advanced.isHidden(), true, 'desktop starts uncluttered');
+    assert.equal(await toggle.isVisible(), true, 'desktop exposes the disclosure beside search');
     await page.setViewportSize({width: 390, height: 844});
     await page.waitForFunction(() => matchMedia('(max-width: 600px), (max-height: 650px)').matches && document.querySelector('.sq-extra-advanced')?.hidden);
     assert.equal(await search.isVisible(), true, 'search remains visible on a phone');
@@ -55,7 +55,7 @@ test('phone filter disclosure stays accessible and preserves state across rerend
     const collapsedChevron = await toggle.evaluate(el => getComputedStyle(el, '::after').transform);
     assert.notEqual(await toggle.evaluate(el => getComputedStyle(el, '::after').content), 'none', 'disclosure has a visible chevron');
     assert.equal(await toggle.evaluate(el => getComputedStyle(el, '::after').width), '8px', 'chevron stays compact within the 44px control');
-    await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab');await page.keyboard.press('Tab');
     assert.equal(await toggle.evaluate(el => el === document.activeElement), true, 'keyboard reaches the disclosure directly after search');
     await page.keyboard.press('Enter');
     assert.equal(await advanced.isVisible(), true);
@@ -70,7 +70,7 @@ test('phone filter disclosure stays accessible and preserves state across rerend
     await source.focus();
     await source.selectOption(sourceValue);
     assert.equal(await source.evaluate(el => el === document.activeElement), true, 'filter change keeps focus on its surviving control');
-    assert.equal(await toggle.textContent(), 'Filters & sort (1)', 'active advanced group is counted while search is excluded');
+    assert.equal(await toggle.textContent(), 'Filters (1)', 'active advanced group is counted while search is excluded');
 
     await page.setViewportSize({width: 844, height: 390});
     await page.waitForFunction(() => matchMedia('(max-width: 600px), (max-height: 650px)').matches && !document.querySelector('.sq-extra-advanced')?.hidden);
@@ -85,7 +85,7 @@ test('phone filter disclosure stays accessible and preserves state across rerend
     assert.equal(await advanced.isHidden(), true, 'collapsed state survives close and reopen on the same instance');
     await toggle.click();
     await page.getByRole('button', {name: 'Reset filters'}).click();
-    assert.equal(await toggle.textContent(), 'Filters & sort', 'reset updates the active-group count');
+    assert.equal(await toggle.textContent(), 'Filters', 'reset updates the active-group count');
     assert.equal(await search.evaluate(el => el === document.activeElement), true, 'reset returns focus to the always-visible search field');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'phone layout has no horizontal overflow');
     await page.setViewportSize({width: 844, height: 390});

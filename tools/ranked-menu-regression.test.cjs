@@ -181,7 +181,9 @@ test('ranked footer uses content-sized event tiles and keeps scope controls in f
  assert.match(css,/overall-freshness[^}]*width:min\(100%,360px\)!important/);
  assert.match(css,/overall-help-card[^}]*height:auto!important/);
  assert.match(css,/@media\(max-width:620px\)[\s\S]*overflow-y:auto!important/);
- assert.match(source,/rankedPolish\.textContent \+= overallFooterLayoutCss\(\);\s*document\.head\.appendChild\(rankedPolish\)/);
+ const footerStyleStart=source.indexOf('rankedPolish.textContent += overallFooterLayoutCss();');
+ assert.ok(footerStyleStart>=0);
+ assert.ok(source.indexOf('document.head.appendChild(rankedPolish)',footerStyleStart)>footerStyleStart,'footer CSS is installed alongside subsequent scoped styles');
  for(const id of ['overallFirstPage','overallLastPage','overallPageJump'])assert.match(source,new RegExp('id="'+id+'"'));
 });
 
