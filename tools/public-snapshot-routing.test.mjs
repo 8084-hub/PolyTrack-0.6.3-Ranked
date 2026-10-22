@@ -244,7 +244,7 @@ test('native replay loading resolves packaged recordings without opening Firesto
   assert.equal(rows.length,10);assert.equal(cloud,0);assert.ok(peak<=4);
 });
 
-test('ordinary ranked reads use snapshots while explicit refresh reads live data',async()=>{
+test('Overall refresh stays static while explicit track refresh may read live data',async()=>{
   let cloud=0;const snapshot={entries:[],_publicBackup:true},live={entries:[]};
   const context=vm.createContext({readPublicSnapshotBackup:async()=>snapshot,publicSnapshotRetryAt:0,Date,
     snapshotOnlyForNewAccount:()=>false,
@@ -255,7 +255,8 @@ test('ordinary ranked reads use snapshots while explicit refresh reads live data
   // Include only this function so the test exercises the production routing.
   vm.runInContext(source.slice(start,end),context);
   assert.equal(await context.fetchRankedSnapshot('overall'),snapshot);assert.equal(cloud,0);
-  assert.equal(await context.fetchRankedSnapshot('overall','',{refresh:true}),live);assert.equal(cloud,1);
+  assert.equal(await context.fetchRankedSnapshot('overall','',{refresh:true}),snapshot);assert.equal(cloud,0);
+  assert.equal(await context.fetchRankedSnapshot('track','track',{refresh:true}),live);assert.equal(cloud,1);
 });
 
 test('actual event bridge serves finalized static archives without a Worker or Firestore read',async()=>{
@@ -311,15 +312,32 @@ test('background replacement schedules the visible native rows to refresh exactl
  await new Promise(r=>setImmediate(r));assert.deepEqual(refreshes,['track']);
 });
 
-test('cache repaint preserves filter mode and cannot repaint a different selected track',()=>{
- let timer,clicks=0,profile=0;const policy={disabled:false,click:()=>clicks++};
- const context=vm.createContext({Map,setTimeout:fn=>{timer=fn;return 1;},currentTrackLoadState:{trackId:'track'},
- document:{getElementById:()=>null,querySelector:()=>({querySelector:()=>policy})},isElementVisible:()=>true,openRankedProfile:()=>profile++});
+function repaintFixture(){
+ const timers=new Map();let next=0,clicks=0,verified=true,account='one';
+ const policy={disabled:false,click(){clicks++;verified=!verified;}};
+ const originalHost={visible:true,querySelector:()=>policy};let host=originalHost;
+ const context=vm.createContext({getTrackEntries:{selection:{id:'track'}},activeRankedAccountId:()=>account,
+   setTimeout:fn=>{timers.set(++next,fn);return next;},clearTimeout:id=>timers.delete(id),
+   currentTrackLoadState:{trackId:'track'},isElementVisible:node=>Boolean(node?.visible),
+   document:{getElementById:()=>null,querySelector:()=>host}});
  vm.runInContext(section('  const nativeTrackSnapshotRefreshes=', '  function trackSnapshotMetadataIsNewer('),context);
- context.scheduleNativeTrackSnapshotRefresh('track');context.scheduleNativeTrackSnapshotRefresh('track');timer();assert.equal(clicks,2);
- context.scheduleNativeTrackSnapshotRefresh('track');context.currentTrackLoadState={trackId:'other'};timer();assert.equal(clicks,2);assert.equal(profile,0);
+ return {context,originalHost,timers,schedule:()=>context.scheduleNativeTrackSnapshotRefresh('track'),
+   flush(){for(const [id,fn] of [...timers]){timers.delete(id);fn();}},
+   setAccount:value=>{account=value;},setHost:value=>{host=value;},clicks:()=>clicks,verified:()=>verified};
+}
+test('cache repaint coalesces and preserves the native verification policy',()=>{
+ const f=repaintFixture();f.schedule();f.schedule();assert.equal(f.timers.size,1);f.flush();
+ assert.equal(f.clicks(),2);assert.equal(f.verified(),true);
 });
-
+for(const stale of ['track','selection','account','host','exit'])test('cache repaint ignores stale '+stale+' ownership',()=>{
+ const f=repaintFixture();f.schedule();
+ if(stale==='track')f.context.currentTrackLoadState.trackId='other';
+ if(stale==='selection')f.context.getTrackEntries.selection={id:'track'};
+ if(stale==='account')f.setAccount('two');
+ if(stale==='host')f.setHost({...f.originalHost});
+ if(stale==='exit')f.originalHost.visible=false;
+ f.flush();assert.equal(f.clicks(),0);assert.equal(f.verified(),true);
+});
 
 test('package revision detects a newer board even with a tied timestamp, without replacing a newer live revision',()=>{
  const context=vm.createContext({snapshotTrackStatistics:{track:{updatedAt:500,revision:3}}});

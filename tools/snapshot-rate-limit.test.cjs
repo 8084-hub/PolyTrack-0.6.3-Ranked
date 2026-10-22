@@ -13,27 +13,28 @@ function fixture(status=429,retryAfter='60',snapshotOnly=false){
   return {context,calls:()=>calls,backups:()=>backups,failures:()=>failures,advance:ms=>now+=ms};
 }
 test('429 pauses snapshot requests without treating school connectivity as broken',async()=>{
-  const f=fixture();await f.context.fetchRankedSnapshot('overall','',{refresh:true});await f.context.fetchRankedSnapshot('track','a',{refresh:true});
+  const f=fixture();await f.context.fetchRankedSnapshot('track','a',{refresh:true});await f.context.fetchRankedSnapshot('track','a',{refresh:true});
   assert.equal(f.calls(),1);assert.equal(f.backups(),2);assert.equal(f.failures(),0);
-  f.advance(60001);await f.context.fetchRankedSnapshot('overall','',{refresh:true});assert.equal(f.calls(),2);
+  f.advance(60001);await f.context.fetchRankedSnapshot('track','a',{refresh:true});assert.equal(f.calls(),2);
 });
 test('cooldown bounds malformed or excessively long retry headers',async()=>{
   for(const [header,delay] of [['bad',60000],['0',60000],['999999',900000]]){
-    const f=fixture(429,header);await f.context.fetchRankedSnapshot('overall','',{refresh:true});assert.equal(f.context.publicSnapshotRetryAt,1000+delay);
+    const f=fixture(429,header);await f.context.fetchRankedSnapshot('track','a',{refresh:true});assert.equal(f.context.publicSnapshotRetryAt,1000+delay);
   }
 });
 test('unavailable Worker still permits existing connectivity recovery',async()=>{
-  const f=fixture(503);await f.context.fetchRankedSnapshot('overall','',{refresh:true});assert.equal(f.failures(),1);assert.equal(f.context.publicSnapshotRetryAt,0);
+  const f=fixture(503);await f.context.fetchRankedSnapshot('track','a',{refresh:true});assert.equal(f.failures(),1);assert.equal(f.context.publicSnapshotRetryAt,0);
 });
 
 test('protected new accounts never call Worker even when refresh is requested',async()=>{
   const f=fixture(200,'60',true);
-  await f.context.fetchRankedSnapshot('overall','',{refresh:true});
+  await f.context.fetchRankedSnapshot('track','a',{refresh:true});
   assert.equal(f.calls(),0);assert.equal(f.backups(),1);
 });
-test('track and overall fallback plus optional planner honor the snapshot cooldown',()=>{
-  assert.equal((source.match(/if\(Date\.now\(\)<publicSnapshotRetryAt\)throw Error\('Public snapshot requests paused/g)||[]).length,2);
-  assert.match(source,/const sidecar=backup\?null:data\._publicBackup\|\|Date\.now\(\)<publicSnapshotRetryAt\?null:/);
+test('track fallback honors cooldown and Overall cannot use direct Firestore',()=>{
+  assert.equal((source.match(/if\(Date\.now\(\)<publicSnapshotRetryAt\)throw Error\('Public snapshot requests paused/g)||[]).length,1);
+  const overall=source.slice(source.indexOf('  async function loadOverallEntries('),source.indexOf('  function movementMarkup('));
+  assert.doesNotMatch(overall,/readDirectPublicSnapshot|api\/overall-leaderboard|hydrateOverallProfiles/);
 });
 
 test('live refresh consults the snapshot baseline before its network response',async()=>{

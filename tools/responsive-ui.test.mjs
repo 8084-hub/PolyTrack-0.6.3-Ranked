@@ -36,8 +36,8 @@ test('shared responsiveness does not write canvas size, native scale or the page
   assert.doesNotMatch(module,/screen\.(width|height)|window\.parent|devicePixelRatio|canvas\.width|\.transform\s*=/);
   const css=fs.readFileSync(new URL('../responsive-ui.css',import.meta.url),'utf8');assert.doesNotMatch(css,/\.pages\s*\{|#ui\s*\{/);
 });
-test('public optional Overall results use the same gated reader as other public fallback data',()=>{
+test('optional Overall results use the static reader without a Firestore fallback',()=>{
   const patch=fs.readFileSync(new URL('../polytrack_062_patch.js',import.meta.url),'utf8');
   const branch=patch.slice(patch.indexOf("if(data.resultBundleLocation==='main_results'"),patch.indexOf('direct = normalizeEntries',patch.indexOf("if(data.resultBundleLocation==='main_results'")));
-  assert.match(branch,/readDirectPublicSnapshot\(COLLECTIONS.leaderboardsOverall,'main_results'\)/);assert.doesNotMatch(branch,/\.collection\(/);
+  assert.match(branch,/readPublicSnapshotBackup\('overall-results'\)/);assert.doesNotMatch(branch,/readDirectPublicSnapshot|\.collection\(/);
 });

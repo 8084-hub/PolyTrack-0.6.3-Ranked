@@ -9,11 +9,14 @@ import {packPlannerResults, plannerDocumentBytes, PLANNER_BUNDLE_VERSION, PLANNE
 export {packPlannerResults} from './planner-results.js';
 import {compactOverallEntries, compactOverallSnapshot, unpackOverallDetails, OVERALL_DETAILS_VERSION} from './overall-details.js';
 import { VERIFICATION_BOOTSTRAP_ID, VERIFICATION_BOOTSTRAP_BATCH, bootstrapSlots, VERIFICATION_COLLECTION, EXTRA_VERIFICATION_COLLECTION, verificationCollectionForTrack, verificationSchedule, verificationKey, hasAcceptedVerifiedProof, verifiedVerdict, verifiedTargetMs, pendingSlot } from './verification.js';
-import { aggregateServerAchievements, BEAT_OWNER_STAGES, OWNER_PUBLIC_ID, SERVER_ACHIEVEMENT_VERSION, SPECIAL_ROLLING_HILLS_TRACK_ID } from './server-achievements.js';
+import { aggregateServerAchievements, BEAT_OWNER_STAGES, OWNER_PUBLIC_ID, SERVER_ACHIEVEMENT_VERSION, SERVER_ACHIEVEMENT_CATALOG, SPECIAL_ROLLING_HILLS_TRACK_ID } from './server-achievements.js';
 import { EXTRA_TRACK_IDS } from './extra-track-ids.js';
 import { recordFirestoreReads } from './firestore-read-cost.js';
 import {loadOverallSources, sourceCatalogAfterTrackWrite, sourceCatalogNeedsScan, sourceCatalogIsReady, SOURCE_CATALOG_RESCAN_MS} from './overall-source-cache.js';
 import {SOURCE_PUBLICATION_COLLECTION, sourcePublicationIds, prepareSourcePublication, decodeSourcePublication} from './overall-source-publication.js';
+import {ENTITLEMENT_COLLECTION, ENTITLEMENT_CACHE_COLLECTION, entitlementPolicyKey, entitlementEpoch,
+  invalidateEntitlements, entitlementAuditDue, entitlementChanged, loadOverallEntitlements,
+  prepareEntitlementPublication, fenceEntitlementWrites, captureEntitlementCommitTimes} from './overall-entitlement-cache.js';
 const FIREBASE_JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
 const FIREBASE_JWKS_REFRESH_COOLDOWN_MS = 30000;
 const FIREBASE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -787,7 +790,11 @@ async function ensureProfileBetaEntitlement(env, accountId, accountCreatedAt) {
     badge: include('badge', 'betaTester'), title: include('title', 'betaRacer'),
     serverIssued: {...baseline.serverIssued, ...(prior.serverIssued || {}), beta}
   };
-  await commitDocuments(env, [{collection: '0.6.2_s1_cosmetic_entitlements', id: accountId, data, prior: document}]);
+  const metaDoc = await readDocument(env, COLLECTIONS.meta, 'current');
+  await commitDocuments(env, [
+    {collection: ENTITLEMENT_COLLECTION, id: accountId, data, prior: document},
+    {collection: COLLECTIONS.meta, id: 'current', prior: metaDoc, data: invalidateEntitlements(metaDoc?.data || {}, [accountId])}
+  ]);
   return beta;
 }
 
@@ -1502,6 +1509,14 @@ async function loadOverallRebuild(env, force = false) {
   const metaDoc = await readDocument(env, COLLECTIONS.meta, 'current');
   const meta = metaDoc?.data || {};
   const now = Date.now();
+  const policyKey = await entitlementPolicyKey({cosmetics: COSMETIC_ENTITLEMENT_VERSION,
+    achievements: SERVER_ACHIEVEMENT_VERSION, catalog: SERVER_ACHIEVEMENT_CATALOG,
+    eligibleTrackIds: [...OFFICIAL_IDS, ...COMMUNITY_IDS, ...LEGACY_COMMUNITY_IDS],
+    beatOwnerTrackIds: [...OFFICIAL_IDS, SPECIAL_ROLLING_HILLS_TRACK_ID], owner: OWNER_PUBLIC_ID,
+    openBeta: openBetaEnabled(env), cutoffAt: betaCutoff(env)});
+  const entitlementsChanged = entitlementChanged(meta, policyKey);
+  const entitlementScanDue = entitlementAuditDue(meta, now, force);
+  const entitlementAuditExpired = Number.isSafeInteger(meta.entitlementAuditedAt) && entitlementScanDue;
   const retryAt = Number(meta.overallRebuildRetryAt || 0);
   if (!force && Number.isSafeInteger(retryAt) && retryAt > now) {
     return {rebuilt: false, reason: 'failure_cooldown', retryAt,
@@ -1516,14 +1531,16 @@ async function loadOverallRebuild(env, force = false) {
     lastBuild > 0 && age >= 0 && age < SOURCE_CATALOG_RESCAN_MS;
   // A missing/incomplete source catalog is not permission to rescan every cron.
   // Real source changes set dirty; forced admin repair still bypasses this gate.
-  if (!force && !metricsOutdated && (coolingDown || incompleteCoolingDown || !catalogScanDue && !meta.dirty))
+  if (!force && !metricsOutdated && !entitlementsChanged &&
+      ((coolingDown || incompleteCoolingDown) && !entitlementAuditExpired || !catalogScanDue && !meta.dirty && !entitlementScanDue))
     return {rebuilt:false, reason:!catalogScanDue && !meta.dirty ? 'clean' : incompleteCoolingDown ? 'incomplete_cooldown' : coolingDown ? 'cooldown' : 'clean', revision:Number(meta.builtRevision || 0)};
   try {
-    return await buildOverallSnapshot(env, metaDoc, meta, now, force, !meta.dirty && !metricsOutdated);
+    return await buildOverallSnapshot(env, metaDoc, meta, now, force,
+      !meta.dirty && !metricsOutdated && !entitlementsChanged && !entitlementScanDue, policyKey);
   } catch (error) {
     // Recovery could not prove this build still owns the metadata generation.
     // Do not reread or write backoff onto potentially newer state.
-    if (error?.sourceRecoveryGuardFailed !== true) await recordOverallRebuildFailure(env, meta, error);
+    if (error?.sourceRecoveryGuardFailed !== true && error?.entitlementFenceFailed !== true) await recordOverallRebuildFailure(env, meta, error);
     throw error;
   }
 }
@@ -1555,7 +1572,7 @@ async function recordOverallRebuildFailure(env, initialMeta, sourceError) {
   }
 }
 
-async function buildOverallSnapshot(env, metaDoc, meta, now, force = false, allowUnchangedAudit = false) {
+async function buildOverallSnapshot(env, metaDoc, meta, now, force = false, allowUnchangedAudit = false, policyKey) {
   const sourceCache = env.__TEST_OVERALL_SOURCE_CACHE ?? globalThis.caches?.default;
   const cache = sourceCache ? {
     match: key => { takeOverallRequest(env); return sourceCache.match(key); },
@@ -1599,11 +1616,25 @@ async function buildOverallSnapshot(env, metaDoc, meta, now, force = false, allo
   const betaTesterIds = new Set([...(migration.awardedBadgeIds || []),...(migration.pendingBadges || [])].map((value) => safeText(value, 128)).filter(Boolean));
   const computedBase = computeOverall(boards, prior.entries || [], betaTesterIds, {includePlannerResults: true});
   const accountIds = computedBase.map(row => row.userId);
-  const keyedRequests = [['0.6.2_s1_cosmetic_entitlements', accountIds]];
-  if (accountIds.length) keyedRequests.push([COLLECTIONS.groupTags, ['current']]);
-  const keyedDocuments = await readDocumentsForCollections(env, keyedRequests);
-  const priorEntitlements = keyedDocuments.get('0.6.2_s1_cosmetic_entitlements');
-  const groupTagDirectory = keyedDocuments.get(COLLECTIONS.groupTags)?.get('current') || null;
+  let groupTagDirectory;
+  const entitlementScope = documentBase(env) + '/' + ENTITLEMENT_COLLECTION;
+  const readEntitlementInputs = async (collection, ids) => {
+    const requests = [[collection, ids]];
+    if (accountIds.length && groupTagDirectory === undefined) requests.push([COLLECTIONS.groupTags, ['current']]);
+    const documents = await readDocumentsForCollections(env, requests);
+    if (groupTagDirectory === undefined) groupTagDirectory = documents.get(COLLECTIONS.groupTags)?.get('current') || null;
+    return documents.get(collection);
+  };
+  const entitlements = await loadOverallEntitlements({meta, accountIds, scope: entitlementScope, policyKey, now, force,
+    readPublished: ids => readEntitlementInputs(ENTITLEMENT_CACHE_COLLECTION, ids),
+    readCanonical: ids => readEntitlementInputs(ENTITLEMENT_COLLECTION, ids),
+    beforeRecovery: async () => {
+      try {
+        const latest = await readDocument(env, COLLECTIONS.meta, 'current');
+        if (!metaDoc?.updateTime || latest?.updateTime !== metaDoc.updateTime) throw Error('OVERALL_ENTITLEMENT_SUPERSEDED');
+      } catch (error) { error.entitlementFenceFailed = true; throw error; }
+    }});
+  const priorEntitlements = entitlements.documents;
   const groupTagDirectoryEntries = groupTagDirectory?.data?.accounts && typeof groupTagDirectory.data.accounts === 'object' && !Array.isArray(groupTagDirectory.data.accounts)
     ? groupTagDirectory.data.accounts : {};
   const priorById = new Map((prior.entries || []).map(row => [row.userId, row]));
@@ -1656,11 +1687,44 @@ async function buildOverallSnapshot(env, metaDoc, meta, now, force = false, allo
       }
     };
   }).filter((summary) => summary.trackId).sort((a, b) => b.weight - a.weight || b.fieldSize - a.fieldSize || a.trackId.localeCompare(b.trackId));
-  const entitlementWrites=[];
+  let entitlementWrites=[];
+  const nextEntitlements = new Map();
   for(const row of entries){
     const allowance=cosmeticEntitlement(row,row.badges?.betaTester===true);
     const old=priorEntitlements.get(row.userId)?.data;
-    if(Number(meta.cosmeticEntitlementVersion||0)<COSMETIC_ENTITLEMENT_VERSION||!old||stableJson(allowance)!==stableJson(old))entitlementWrites.push({collection:'0.6.2_s1_cosmetic_entitlements',id:row.userId,data:allowance,unconditional:true});
+    const changed = Number(meta.cosmeticEntitlementVersion||0)<COSMETIC_ENTITLEMENT_VERSION||!old||stableJson(allowance)!==stableJson(old);
+    if(changed)entitlementWrites.push({collection:ENTITLEMENT_COLLECTION,id:row.userId,data:allowance});
+    // New allowances already contain normalized beta evidence. Do not invent a server updateTime.
+    nextEntitlements.set(row.userId, changed ? {id: row.userId, data: allowance, updateTime: ''} : priorEntitlements.get(row.userId));
+  }
+  const rejectEntitlementConflict = async (ids, error) => {
+    error.entitlementFenceFailed = true;
+    try {
+      // A conflict can invalidate this calculation, never authorize it with fresh CAS.
+      await commitDocuments(env, [{collection: COLLECTIONS.meta, id: 'current', prior: metaDoc,
+        data: invalidateEntitlements(meta, ids)}]);
+    } catch { /* A newer metadata generation owns recovery; do not replace it. */ }
+    throw error;
+  };
+  const commitEntitlementChanges = async (documents, changed) => {
+    try {
+      const result = await commitDocuments(env, documents);
+      if (result == null && changed.length) throw Error('FIRESTORE_404');
+      return result;
+    } catch (error) {
+      if (changed.length && /^FIRESTORE_(400|404|409|412)$/.test(error?.message || ''))
+        return rejectEntitlementConflict(changed.map(document => document.id), error);
+      throw error;
+    }
+  };
+  try {
+    const fenced = await fenceEntitlementWrites(entitlementWrites, priorEntitlements,
+      ids => readEntitlementInputs(ENTITLEMENT_COLLECTION, ids));
+    entitlementWrites = fenced.writes;
+    entitlements.canonicalReads += fenced.canonicalReads;
+  } catch (error) {
+    if (error.entitlementConflictIds) return rejectEntitlementConflict(error.entitlementConflictIds, error);
+    throw error;
   }
   const totalEntries = Number(computedBase.totalEntries || entries.length);
   const sourceTracksComplete = !boardLimitReached && boards.every(board => board?.sourceComplete === true || board?.complete === true);
@@ -1705,27 +1769,80 @@ async function buildOverallSnapshot(env, metaDoc, meta, now, force = false, allo
   const successMeta = {...sourceMeta};
   delete successMeta.overallRebuildFailureAttempts;
   delete successMeta.overallRebuildRetryAt;
-  while(entitlementWrites.length>450){
-    const batch=entitlementWrites.splice(0,450);
-    const committed=await commitDocuments(env,[...batch,{collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data:meta}]);
+  const writeBytes = documents => documents.reduce((size,doc)=>size+1024+new TextEncoder().encode(JSON.stringify(encodeFields(doc.data))).length,0);
+  // Journal each intermediate chunk atomically, even if the build later dies.
+  // Never adopt a freshly read metadata precondition for this old calculation.
+  while(entitlementWrites.length>400 || writeBytes(entitlementWrites)>4*1024*1024){
+    const batch = [];
+    let batchBytes = 0;
+    while (entitlementWrites.length && batch.length < 400) {
+      const size = writeBytes([entitlementWrites[0]]);
+      if (batchBytes + size > 4*1024*1024) break;
+      batchBytes += size;
+      batch.push(entitlementWrites.shift());
+    }
+    if (!batch.length) throw Error('OVERALL_ENTITLEMENT_WRITE_CAP');
+    const chunkMeta = invalidateEntitlements(meta, batch.map(document => document.id));
+    const committed=await commitEntitlementChanges([...batch,{collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data:chunkMeta}], batch);
     const updateTime=committed?.writeResults?.at(-1)?.updateTime;
-    metaDoc=updateTime?{data:meta,updateTime}:await readDocument(env,COLLECTIONS.meta,'current');
-    if(JSON.stringify(metaDoc?.data)!==JSON.stringify(meta))throw Error('OVERALL_SOURCE_CHANGED');
+    if (!updateTime || committed.writeResults.length !== batch.length + 1) {
+      const error = Error('OVERALL_ENTITLEMENT_COMMIT_FENCE_MISSING'); error.entitlementFenceFailed = true; throw error;
+    }
+    captureEntitlementCommitTimes(nextEntitlements, batch, committed, batch.length + 1);
+    meta = chunkMeta;
+    metaDoc={data:meta,updateTime};
   }
+  const finalEpoch = entitlementEpoch(meta) + (entitlementWrites.length ? 1 : 0);
+  const entitlementPublication = await prepareEntitlementPublication(nextEntitlements,
+    {scope: entitlementScope, policyKey, epoch: finalEpoch, auditedAt: entitlements.auditedAt});
+  const entitlementCacheWrites = entitlementPublication?.documents || [];
+  Object.assign(successMeta, {entitlementEpoch: finalEpoch, entitlementBuiltEpoch: finalEpoch,
+    entitlementPolicyKey: policyKey, entitlementAuditedAt: entitlements.auditedAt, entitlementInvalidations: null,
+    entitlementBundle: entitlementPublication?.marker || {version:1,ready:false}});
   // The optional source projection must never push a previously valid score commit
   // over Firestore's request-size ceiling. Leave headroom for write envelopes.
-  const commitData=[...sourceWrites,...entitlementWrites,...resultWrites,{data:snapshot},{data:successMeta}];
-  if(sourceWrites.length && commitData.reduce((size,doc)=>size+1024+new TextEncoder().encode(JSON.stringify(encodeFields(doc.data))).length,0)>8*1024*1024){
+  const finalData = () => [...sourceWrites,...entitlementCacheWrites,...entitlementWrites,...resultWrites,{data:snapshot},{data:successMeta}];
+  if(sourceWrites.length && writeBytes(finalData())>8*1024*1024){
     sourceWrites.length=0;successMeta.sourceBundle={version:1,ready:false};
   }
-  await commitDocuments(env,[...entitlementWrites,...resultWrites,...sourceWrites,{collection:COLLECTIONS.overall,id:'main',prior:priorDoc,data: snapshot},{collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data: { ...successMeta, plannerPublicationVersion:PLANNER_PUBLICATION_VERSION, plannerBundleVersion:PLANNER_BUNDLE_VERSION, cosmeticEntitlementVersion:COSMETIC_ENTITLEMENT_VERSION, serverAchievementVersion:SERVER_ACHIEVEMENT_VERSION,
+  if (writeBytes(finalData())>8*1024*1024) {
+    entitlementCacheWrites.length=0;successMeta.entitlementBundle={version:1,ready:false};
+  }
+  if (writeBytes(finalData())>8*1024*1024 || finalData().length>450) throw Error('OVERALL_COMMIT_CAP');
+  const publishedMeta = { ...successMeta, plannerPublicationVersion:PLANNER_PUBLICATION_VERSION, plannerBundleVersion:PLANNER_BUNDLE_VERSION, cosmeticEntitlementVersion:COSMETIC_ENTITLEMENT_VERSION, serverAchievementVersion:SERVER_ACHIEVEMENT_VERSION,
     dirty: incompleteRetryPending, overallComplete: snapshot.complete, overallSourceComplete: sourceTracksComplete,
     overallIncompleteReason, overallIncompleteRevision: sourceIncomplete ? revision : 0,
     overallIncompleteObservations: incompleteObservations, overallRetryPending: incompleteRetryPending,
     overallRetryExhausted: sourceIncomplete && !incompleteRetryPending,
-    revision, builtRevision: revision, lastOverallBuildAt: now, updatedAt: now, algorithmVersion: ALGORITHM_VERSION, schemaVersion: TRACK_SCHEMA_VERSION, averagePlacementVersion: AVERAGE_PLACEMENT_VERSION, derivedMetricsVersion: DERIVED_METRICS_VERSION, rankedWritesEnabled: String(env.RANKED_WRITES_ENABLED) !== 'false', multiplayerEnabled: String(env.MULTIPLAYER_ENABLED) !== 'false' }}]);
+    revision, builtRevision: revision, lastOverallBuildAt: now, updatedAt: now, algorithmVersion: ALGORITHM_VERSION, schemaVersion: TRACK_SCHEMA_VERSION, averagePlacementVersion: AVERAGE_PLACEMENT_VERSION, derivedMetricsVersion: DERIVED_METRICS_VERSION, rankedWritesEnabled: String(env.RANKED_WRITES_ENABLED) !== 'false', multiplayerEnabled: String(env.MULTIPLAYER_ENABLED) !== 'false' };
+  const publicationWrites = [...entitlementWrites,...resultWrites,...sourceWrites,...entitlementCacheWrites,
+    {collection:COLLECTIONS.overall,id:'main',prior:priorDoc,data:snapshot},
+    {collection:COLLECTIONS.meta,id:'current',prior:metaDoc,data:publishedMeta}];
+  const committed = await commitEntitlementChanges(publicationWrites, entitlementWrites);
+  let entitlementTimestampsRefined = false;
+  // The authoritative publication already succeeded. Refinement is optional and may
+  // only use its returned metadata CAS, never a fresh read or a retry of stale output.
+  try {
+    const budget = env.__OVERALL_REQUEST_BUDGET;
+    if (entitlementCacheWrites.length && entitlementWrites.length && (!budget || budget.used < budget.limit)) {
+      const updateTime = captureEntitlementCommitTimes(nextEntitlements, entitlementWrites, committed, publicationWrites.length);
+      if (updateTime) {
+        const refined = await prepareEntitlementPublication(nextEntitlements,
+          {scope: entitlementScope, policyKey, epoch: finalEpoch, auditedAt: entitlements.auditedAt});
+        if (refined) {
+          const writes = [...refined.documents, {collection:COLLECTIONS.meta,id:'current',prior:{updateTime},
+            data:{...publishedMeta,entitlementBundle:refined.marker}}];
+          if (writeBytes(writes) <= 8*1024*1024) {
+            await commitDocuments(env, writes);
+            entitlementTimestampsRefined = true;
+          }
+        }
+      }
+    }
+  } catch { /* Keep the correct publication and its safe unknown-timestamp fallback. */ }
   console.log('Ranked overall source reads', JSON.stringify({revision,sourceBoards:boards.length,
-    entitlementDocuments:accountIds.length,usedSourceCatalog:sources.usedSourceCatalog,
+    entitlementDocuments:entitlements.canonicalReads,entitlementCompanionReused:entitlements.reused,
+    entitlementTimestampsRefined,usedSourceCatalog:sources.usedSourceCatalog,
     recoveredCorruptBundle:sources.recoveredCorruptBundle,
     sourceRequests:sources.requests,invocationCountedRequests:env.__OVERALL_REQUEST_BUDGET.used}));
   return { rebuilt: true, revision, racers: entries.length, tracks: trackSummaries.length };

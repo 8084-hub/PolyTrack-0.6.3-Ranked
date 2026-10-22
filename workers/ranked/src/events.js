@@ -1,4 +1,4 @@
-import {publicEventPage} from './event-public-projection.js';
+import {publicEventPage,publicEventTotal} from './event-public-projection.js';
 import {eventCapacityStorage,prepareEventRetention,eventRetentionPaths,EVENT_RETENTION_COLLECTION,EVENT_REVIEWED_MAX_ENTRANTS,EVENT_REVIEWED_MAX_SUBMISSIONS} from './event-capacity.js';
 import {PUBLIC_MANIFEST_COLLECTION,publicationManifestId,decodePublicationPage,PUBLIC_PAGE_COLLECTION,publicationPageId} from './paged-publication.js';
 import { compatibleEventEngine } from './event-engine-compatibility.js';
@@ -660,6 +660,9 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
             rp: (priorTotal?.rp || 0) + eventRp(p, run.timeMs) - (eventPb?.rp || 0),
             events: (priorTotal?.events || 0) + (eventPb ? 0 : 1) };
           demand(int(total.rp) && int(total.events), 'event_total_overflow', 503);
+          // Nameless legacy totals hydrate profiles, so they must refresh once.
+          const totalChanged = !priorTotal?.name || !overall ||
+            JSON.stringify(publicEventTotal(priorTotal)) !== JSON.stringify(publicEventTotal(total));
           const ranked = [...(overall?.entries || []).filter(row => row.accountId !== run.accountId), total]
             .sort((a, b) => b.rp - a.rp || a.accountId.localeCompare(b.accountId)).slice(0, 200);
           let rank = 0;
@@ -667,8 +670,13 @@ export function createEventService({ store, now = Date.now, hash = sha256, rando
             if (!i || row.rp !== ranked[i - 1].rp) rank = i + 1;
             return { accountId: row.accountId, name: row.name, rp: row.rp, events: row.events, rank };
           });
-          await tx.set(totalPath, total);
-          await tx.set(overallPath, { entries: totals, updatedAt: at, complete:totals.length<200&&overall?.complete!==false,totalEntries:Math.max(overall?.totalEntries||0,overall?.entries?.length||0)+(priorTotal?0:1),revision:(overall?.revision||0)+1,publicationPending:true,pendingPeriodIds:[...new Set([...(Array.isArray(overall?.pendingPeriodIds)?overall.pendingPeriodIds:[]).filter(value=>value!==periodId),...(periodPublicationPending?[periodId]:[])])] });
+          const totalUnchanged = priorTotal && Object.keys(priorTotal).length === Object.keys(total).length &&
+            Object.keys(total).every(key => Object.hasOwn(priorTotal, key) && priorTotal[key] === total[key]);
+          if (!totalUnchanged) await tx.set(totalPath, total);
+          const pendingPeriodIds=[...new Set([...(Array.isArray(overall?.pendingPeriodIds)?overall.pendingPeriodIds:[]).filter(value=>value!==periodId),...(periodPublicationPending?[periodId]:[])])];
+          if (totalChanged) await tx.set(overallPath, { ...overall, entries: totals, updatedAt: at, complete:totals.length<200&&overall?.complete!==false,totalEntries:Math.max(overall?.totalEntries||0,overall?.entries?.length||0)+(priorTotal?0:1),revision:(overall?.revision||0)+1,publicationPending:true,pendingPeriodIds });
+          else if (JSON.stringify(pendingPeriodIds)!==JSON.stringify(overall.pendingPeriodIds||[]))
+            await tx.patch(overallPath,{pendingPeriodIds});
           await tx.set(eventPath, { periodId, accountId: run.accountId, ownerUid: run.ownerUid,
             trackId: run.trackId, timeMs: run.timeMs, runId: run.runId, replayHash: run.replayHash,
             submittedAt: run.receivedAt, rp: eventRp(p, run.timeMs),name:run.name,carStyle:run.carStyle });

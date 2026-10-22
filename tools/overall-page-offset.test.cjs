@@ -7,13 +7,14 @@ const source=fs.readFileSync(path.join(__dirname,'..','polytrack_062_patch.js'),
 const start=source.indexOf('  let overallPageOffset=0;');
 const end=source.indexOf('  function handleArchivePageShortcut(',start);
 function fixture(){
- let now=1000;const jumps=[];const favorites=[];const panel={querySelector:()=>null,querySelectorAll:()=>Array.from({length:4},(_,i)=>({click:()=>favorites.push(i+1)}))};
- const context=vm.createContext({Date:{now:()=>now},HTMLInputElement:class{},HTMLTextAreaElement:class{},HTMLSelectElement:class{},document:{getElementById:()=>panel},isElementVisible:value=>Boolean(value),overallPage:4,currentLeaderboardCount:()=>400,OVERALL_PAGE_SIZE:10,
- shortcutDigit:event=>/^Digit[0-9]$/.test(event.code)?Number(event.code.at(-1))||10:null,
+ let now=1000;const jumps=[],favorites=[],dialogs=[];
+ const buttons=Array.from({length:4},(_,i)=>({visible:true,disabled:false,getAttribute:name=>name==='aria-keyshortcuts'?String(i+1):null,click:()=>favorites.push(i+1)}));
+ const panel={querySelector:()=>null,querySelectorAll:()=>buttons};
+ const context=vm.createContext({Date:{now:()=>now},HTMLInputElement:class{},HTMLTextAreaElement:class{},HTMLSelectElement:class{},document:{getElementById:()=>panel,querySelectorAll:()=>dialogs},isElementVisible:value=>Boolean(value)&&value.visible!==false,overallPage:4,currentLeaderboardCount:()=>400,OVERALL_PAGE_SIZE:10,
  jumpOverallPage:page=>{if(page<1||page>40)return false;jumps.push(page);context.overallPage=page-1;return true;},changeOverallPage:delta=>context.overallPage+=delta});
- vm.runInContext(source.slice(start,end),context);
+ vm.runInContext(source.slice(source.indexOf('  function shortcutDigit('),start)+source.slice(start,end),context);
  const key=(code,other={})=>context.handleOverallLeaderboardShortcut({code,key:'',target:null,shiftKey:true,preventDefault(){},stopPropagation(){},...other});
- return {context,jumps,favorites,key,advance:()=>now+=4000};
+ return {context,jumps,favorites,buttons,dialogs,key,advance:()=>now+=4000};
 }
 test('relative page shortcuts add and subtract without changing direct Shift digits',()=>{
  const f=fixture();f.key('Equal');f.key('Digit5');assert.deepEqual(f.jumps,[10]);
@@ -81,4 +82,30 @@ test('new racers get four distinct useful ranking suggestions',()=>{
  const html=context.leaderboardArcadeMarkup();
  assert.deepEqual([...html.matchAll(/data-leaderboard-shortcut="([^"]+)"/g)].map(m=>m[1]),['overall','events','topTracks','tracks']);
  assert.equal((html.match(/aria-keyshortcuts=/g)||[]).length,4);
+});
+
+test('main digits and numpad activate the displayed labels, not DOM index',()=>{
+ const f=fixture();f.buttons.reverse();
+ for(const prefix of ['Digit','Numpad'])for(let i=1;i<=4;i++)assert.equal(f.key(prefix+i,{shiftKey:false}),true);
+ assert.deepEqual(f.favorites,[1,2,3,4,1,2,3,4]);
+});
+test('hidden duplicates and disabled shortcuts never redirect a displayed number',()=>{
+ const f=fixture();const first=f.buttons[0];
+ f.buttons.unshift({...first,visible:false,click(){throw Error('hidden duplicate clicked');}});
+ assert.equal(f.key('Digit1',{shiftKey:false}),true);
+ first.disabled=true;assert.equal(f.key('Digit1',{shiftKey:false}),false);
+ assert.deepEqual(f.favorites,[1]);
+});
+test('modal dialogs, editing, repeat and modified digits cannot activate favorites',()=>{
+ const f=fixture();
+ f.dialogs.push({visible:true});assert.equal(f.key('Numpad2',{shiftKey:false}),false);
+ f.dialogs[0].visible=false;assert.equal(f.key('Numpad2',{shiftKey:false}),true);
+ for(const flag of ['repeat','ctrlKey','altKey','metaKey','defaultPrevented'])assert.equal(f.key('Digit1',{shiftKey:false,[flag]:true}),false);
+ for(const target of [new f.context.HTMLInputElement(),new f.context.HTMLTextAreaElement(),new f.context.HTMLSelectElement(),{isContentEditable:true},{closest:()=>({})}])assert.equal(f.key('Digit3',{shiftKey:false,target}),false);
+ assert.deepEqual(f.favorites,[2]);
+});
+test('A/D navigation and Shift-numpad page selection retain their behavior',()=>{
+ const f=fixture();f.key('KeyA',{key:'a',shiftKey:false});assert.equal(f.context.overallPage,3);
+ f.key('KeyD',{key:'d',shiftKey:false});assert.equal(f.context.overallPage,4);
+ f.key('Numpad3',{key:'3',shiftKey:true});assert.deepEqual(f.jumps,[3]);assert.deepEqual(f.favorites,[]);
 });

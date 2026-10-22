@@ -31,7 +31,8 @@ const cached = (id, fetchedAt = 1000000) => ({entries: [row(id)], fetchedAt, ser
 const board = (id, revision = 2) => ({entries: [row(id)], updatedAt: 200, revision, algorithmVersion: 'model', schemaVersion: 6, complete: true, totalEntries: 1});
 
 function trackHarness(initial = {}, unranked = []) {
-  const cache = new Map(Object.entries(initial)), metadata = [], loads = [], extraLoads = [], timers = [], repaints = [], classes = new Set();
+  const cache = new Map(Object.entries(initial)), metadata = [], loads = [], extraLoads = [], timers = [], repaints = [], classes = new Set(), visibility = [];
+  let account='one', host={visible:true};
   const context = vm.createContext({
     Date: {now: () => 1000000}, trackLoadGeneration: 0, currentTrackLoadState: {},
     TRACK_REFRESH_MS: 600000, TRACK_CACHE_SCHEMA: 6, RANK_MODEL: 'model', snapshotTrackStatistics: {},
@@ -44,7 +45,8 @@ function trackHarness(initial = {}, unranked = []) {
     fetchRankedSnapshot: (_kind, id, options) => { const pending = deferred(); loads.push({id, options, ...pending}); return pending.promise; },
     fetch: url => { const pending = deferred(); extraLoads.push({id: new URL(url).searchParams.get('trackId'), ...pending}); return pending.promise; },
     rankedBrokerUrl: () => 'https://example.test', AbortSignal: {timeout: () => undefined},
-    document: {documentElement: {classList: {add: name => classes.add(name), remove: name => classes.delete(name)}}},
+    document: {querySelector:()=>host,documentElement: {classList: {add: name => {visibility.push('hide');classes.add(name);}, remove: name => {visibility.push('show');classes.delete(name);}}}},
+    activeRankedAccountId:()=>account,isElementVisible:node=>Boolean(node?.visible),
     setTimeout: (callback, delay) => { timers.push({callback, delay}); return timers.length; }, updateTrackFreshnessBanner: () => {},
     applyCanonicalTrackWeight: (_id, rows) => rows, canonicalRaceTimeMs: entry => entry.timeMs,
     computeTrackTopEntries: rows => rows, enrichLegacyLeaderboardEntries: rows => rows,
@@ -55,7 +57,8 @@ function trackHarness(initial = {}, unranked = []) {
   vm.runInContext(section('  const trackCloudRetryAt=new Map();', '  function computeOverallFromRaceRows('), context);
   context.scheduleNativeTrackSnapshotRefresh = id => repaints.push(id);
   return {
-    context, cache, metadata, loads, extraLoads, repaints,
+    context, cache, metadata, loads, extraLoads, repaints, timers, visibility,
+    setAccount:value=>{account=value;},setHost:value=>{host=value;},
     get: (...args) => context.getTrackEntries(...args),
     state: () => plain(context.currentTrackLoadState),
     loading: () => classes.has('sq-track-leaderboard-loading'),
@@ -110,7 +113,7 @@ test('cached background A refresh is adopted before the latest A metadata resolv
   assert.equal(h.state().trackId, 'A'); assert.equal(h.state().status, 'cloud');
   gate.resolve({}); assert.equal((await a)[0].name, 'A-new');
   assert.equal(h.context.trackLoadGeneration, generation); assert.equal(h.loads.length, 1);
-  assert.deepEqual(h.repaints, ['A']); assert.equal(h.loading(), false);
+  assert.deepEqual(h.repaints, [], 'the foreground adopter renders the accepted data itself'); assert.equal(h.loading(), false);
 });
 
 test('a forced A waiter superseded by B does not restart A', async () => {
@@ -514,4 +517,84 @@ test('event-only cosmetic unlock context comes from the directory, not Event RP 
  const racer={userId:'self',rank:1};const directory={updatedAt:300,cosmeticContext:{rank:501,raceCount:12}};
  assert.deepEqual(identityFor(racer,null,directory).cosmeticContext,{rank:501,raceCount:12});
  assert.equal(identityFor(racer,{userId:'self',rank:7},directory).cosmeticContext,null);
+});
+
+test('twenty unchanged warm selections never hide rows or reload the board', async () => {
+  const h=trackHarness({A:cached('A')});
+  for(let i=0;i<20;i++)assert.equal((await h.get('A'))[0].name,'A');
+  assert.equal(h.loads.length,0);assert.deepEqual(h.repaints,[]);
+  assert.ok(!h.visibility.includes('hide'));assert.equal(h.loading(),false);
+});
+
+for(const changed of [false,true])test(`background refresh keeps cached rows visible (changed=${changed})`,async()=>{
+  const h=trackHarness({A:cached('A',1)});
+  assert.equal((await h.get('A'))[0].name,'A');
+  assert.equal(h.loads.length,1);assert.equal(h.loading(),false);
+  h.loads[0].resolve(board(changed?'A-new':'A'));await tick();
+  assert.ok(!h.visibility.includes('hide'));assert.equal(h.loading(),false);
+  assert.deepEqual(h.repaints,changed?['A']:[]);
+  assert.ok(h.timers.every(timer=>timer.delay!==120));
+});
+
+test('empty cached boards remain usable and do not enter a repeated load loop',async()=>{
+  const h=trackHarness({A:{...cached('A'),entries:[],complete:true,totalEntries:0}});
+  for(let i=0;i<3;i++)assert.deepEqual(plain(await h.get('A')),[]);
+  assert.equal(h.loads.length,0);assert.ok(!h.visibility.includes('hide'));
+});
+
+test('forced refresh retains cached visibility and cold load clears loading without a timer',async()=>{
+  const h=trackHarness({A:cached('A')});
+  const refresh=h.get('A',10,true);assert.equal(h.loading(),false);
+  h.loads[0].resolve(board('A-new'));assert.equal((await refresh)[0].name,'A-new');
+  const cold=h.get('B');assert.equal(h.loading(),true);
+  h.loads[1].resolve(board('B'));await cold;
+  assert.equal(h.loading(),false);assert.ok(h.timers.every(timer=>timer.delay!==120));
+});
+
+test('failed background refresh retains the exact saved board without repaint',async()=>{
+  const h=trackHarness({A:cached('A',1)});await h.get('A');
+  h.loads[0].reject(Error('offline'));await tick();
+  assert.equal(h.cache.get('A').entries[0].name,'A');assert.equal(h.state().status,'stale');
+  assert.equal(h.loading(),false);assert.ok(!h.visibility.includes('hide'));assert.deepEqual(h.repaints,[]);
+});
+
+function receiveTrackStatistics(h,tracks){
+  const from=source.indexOf("        if(kind==='track-statistics'){");
+  const to=source.indexOf("        }else if(kind==='cosmetic-directory'){",from);
+  assert.ok(from>=0&&to>from);
+  const accept=vm.runInContext('(value)=>{const kind="track-statistics";'+source.slice(from,to)+'}}',h.context);
+  accept({tracks});
+}
+
+test('metadata received during a foreground selection does not steal it or schedule a second render',async()=>{
+  const h=trackHarness({A:cached('A')}),gate=deferred();h.metadata.push(gate);
+  const request=h.get('A'),selection=h.context.getTrackEntries.selection;
+  receiveTrackStatistics(h,{A:{revision:2,updatedAt:200}});
+  assert.equal(h.context.getTrackEntries.selection,selection);assert.equal(h.loads.length,0);
+  gate.resolve({});await tick();assert.equal(h.loads.length,1);
+  h.loads[0].resolve(board('A-new'));assert.equal((await request)[0].name,'A-new');
+  assert.deepEqual(h.repaints,[]);assert.equal(h.loading(),false);
+});
+
+for(const changed of [false,true])test(`idle metadata refresh repaints only changed accepted rows (changed=${changed})`,async()=>{
+  const h=trackHarness({A:cached('A')});await h.get('A');
+  receiveTrackStatistics(h,{A:{revision:2,updatedAt:200}});await tick();
+  assert.equal(h.loads.length,1);assert.equal(h.loading(),false);
+  h.loads[0].resolve(board(changed?'A-new':'A'));await tick();
+  assert.deepEqual(h.repaints,changed?['A']:[]);
+});
+
+for(const transition of ['account','exit','selection'])test(`metadata completion cannot repaint after ${transition} changes`,async()=>{
+  const h=trackHarness({A:cached('A'),B:cached('B')});await h.get('A');
+  receiveTrackStatistics(h,{A:{revision:2,updatedAt:200}});await tick();
+  if(transition==='account')h.setAccount('two');
+  if(transition==='exit')h.setHost(null);
+  if(transition==='selection')await h.get('B');
+  h.loads[0].resolve(board('A-new'));await tick();assert.deepEqual(h.repaints,[]);
+});
+
+test('metadata does not fetch a board after its native view has closed',async()=>{
+  const h=trackHarness({A:cached('A')});await h.get('A');h.setHost(null);
+  receiveTrackStatistics(h,{A:{revision:2,updatedAt:200}});await tick();
+  assert.equal(h.loads.length,0);assert.deepEqual(h.repaints,[]);
 });

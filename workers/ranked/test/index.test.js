@@ -401,7 +401,7 @@ test('cosmetic saves update the public overall snapshot before background propag
   const restored=await restoredOverall(overallFields);
   assert.deepEqual(restored.entries[0].cosmeticUnlocks,['emblem:target']);
   assert.equal(restored.entries[0].profileCosmetics.emblem,'target');
-  assert.deepEqual(guardedPaths,[undefined,'2026-09-05T00:00:00Z','2026-09-05T00:00:00Z']);
+  assert.deepEqual(guardedPaths,[undefined,undefined,'2026-09-05T00:00:00Z','2026-09-05T00:00:00Z']);
 });
 
 test('accepts an owned hash mismatch as pending without granting integrity verification', async () => {
@@ -902,6 +902,7 @@ test('scheduled idle recovery scans canonical results every fifteen minutes with
       if(path.includes('/canonical_reconcile_v2'))return {fields:wire({backfillComplete:true,
         cursorIngestedAt:'2026-09-09T00:00:00.000000123Z',pendingTrackIds:[]}).mapValue.fields,updateTime:'job-v1'};
       if(path.includes('/0.6.2_s1_release_meta/current'))return {fields:wire({dirty:false,
+        entitlementAuditedAt:Date.now(),
         sourceCatalog:{version:1,complete:true,scannedAt:Date.now(),count:0,tracks:{}},
         plannerPublicationVersion:Number.MAX_SAFE_INTEGER,plannerBundleVersion:Number.MAX_SAFE_INTEGER,
         cosmeticEntitlementVersion:Number.MAX_SAFE_INTEGER,averagePlacementVersion:Number.MAX_SAFE_INTEGER,
@@ -1265,8 +1266,8 @@ test('200-racer entitlement initialization uses one atomic batch within the Free
   if(path.includes('s1_release_meta'))return {fields:wire({dirty:true,revision:10}).mapValue.fields,updateTime:'2026-09-09T00:00:00Z'};
   return null;
  }},true);
-   assert.equal(result.racers,200);assert.equal(commit.writes.length,203);assert.equal(requests,6);
- assert.ok(commit.writes.slice(0,200).every(w=>w.update.name.includes('cosmetic_entitlements')&&!w.currentDocument));
+   assert.equal(result.racers,200);assert.equal(commit.writes.length,204);assert.equal(requests,6);
+ assert.ok(commit.writes.slice(0,200).every(w=>w.update.name.includes('cosmetic_entitlements')&&w.currentDocument.exists===false));
  assert.equal(commit.writes.at(-1).currentDocument.updateTime,'2026-09-09T00:00:00Z');
  assert.ok(JSON.stringify(commit).length<10*1024*1024);
 });

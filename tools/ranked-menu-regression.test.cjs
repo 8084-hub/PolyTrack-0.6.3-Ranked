@@ -281,7 +281,7 @@ test('completion scope offers All, Extra only and Without Extra while hiding out
  context.overallCompletionScope='all';context.syncOverallTrackScope(panel,'tracks');assert.equal(scope.hidden,false);assert.deepEqual(buttons.map(button=>button.pressed),['true','false','false']);
  assert.match(extract('setOverallCategory'),/syncOverallTrackScope\(panel,selected\)/);
  assert.match(extract('handleRankedFilterChange'),/syncOverallTrackScope\(document\.getElementById\('overallLeaderboardPanel'\),category\)/);
- assert.match(source,/if\(leaderboardShortcut\)[\s\S]*?syncOverallTrackScope\(panel,overallCategory\)/);
+ assert.match(source,/if\(leaderboardShortcut\)\{setOverallCategory\(leaderboardShortcut\.dataset\.leaderboardShortcut\);return;\}/);
 });
 
 test('completion scopes exclude Extra exactly once and retain missing-count uncertainty',()=>{
@@ -355,15 +355,15 @@ test('manual refresh is bounded while requests are in flight and during failure 
  const ctx=vm.createContext({Date:{now:()=>now},lastRankedManualRefreshAt:0,RANKED_MANUAL_REFRESH_COOLDOWN_MS:120000,rankedManualRefreshFailed:false,rankedRefreshCooldownTimer:0,overallCategory:'overall',overallLoadState:{status:'cache'},snapshotOnlyForNewAccount:()=>false,updateRankedFreshness(){},clearTimeout(){},setTimeout:(fn)=>{timers.push(fn);return timers.length;},writeJsonStorage(){},OVERALL_REBUILD_BACKOFF_KEY:'key',openRankedPanel:()=>{calls++;ctx.overallLoadState.status='loading';return new Promise(resolve=>finish=resolve);}});
  vm.runInContext(extract('requestRankedRefresh'),ctx);
  ctx.requestRankedRefresh();ctx.requestRankedRefresh();assert.equal(calls,1);
- ctx.overallLoadState.status='snapshot';finish();await new Promise(resolve=>setImmediate(resolve));assert.equal(ctx.rankedManualRefreshFailed,true);
+ ctx.overallLoadState.status='stale';finish();await new Promise(resolve=>setImmediate(resolve));assert.equal(ctx.rankedManualRefreshFailed,true);
  now+=119999;ctx.requestRankedRefresh();assert.equal(calls,1);
  now+=1;ctx.requestRankedRefresh();assert.equal(calls,2);
 });
-test('button state preserves snapshot age and identifies a failed live check',()=>{
+test('button state preserves snapshot age and identifies a failed static check',()=>{
  const button={dataset:{},setAttribute(){},style:{}};
  const ctx=vm.createContext({document:{getElementById:id=>id==='overallFreshness'?button:null},overallCategory:'overall',overallLoadState:{status:'stale',serverUpdatedAt:1000,checkedAt:2000},rankedManualRefreshFailed:true,Date:{now:()=>10000},lastRankedManualRefreshAt:0,readOverallSnapshotCache:()=>({source:'public-backup'}),publicSnapshotCapturedAt:3000,ageLabel:()=> '3h ago',durationLabel:()=> '2m',snapshotOnlyForNewAccount:()=>false,snapshotCaptureLabel:()=> 'Snapshot captured 3h ago',syncSnapshotRefreshControl(){},applyRankedRefreshCooldown(){}});
- vm.runInContext(extract('rankedFreshnessText')+'\n'+extract('updateRankedFreshness'),ctx);ctx.updateRankedFreshness();assert.equal(button.dataset.source,'snapshot');assert.equal(button.textContent,'Snapshot data · 3h old · Live check failed');
- ctx.overallLoadState.status='cloud';ctx.rankedManualRefreshFailed=false;ctx.updateRankedFreshness();assert.equal(button.dataset.source,'live');assert.equal(button.textContent,'Live results · check succeeded 3h ago');
+ vm.runInContext(extract('rankedFreshnessText')+'\n'+extract('updateRankedFreshness'),ctx);ctx.updateRankedFreshness();assert.equal(button.dataset.source,'snapshot');assert.equal(button.textContent,'Snapshot · 3h old · Check failed');
+ ctx.overallLoadState.status='snapshot';ctx.rankedManualRefreshFailed=false;ctx.updateRankedFreshness();assert.equal(button.dataset.source,'snapshot');assert.equal(button.textContent,'Snapshot · 3h old');
 });
 
 test('non-track rankings combine community and custom without double-counting Extra',()=>{

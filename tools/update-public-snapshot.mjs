@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { decodeSnapshot, publishSnapshot, MAX_DECODED_BYTES } from './snapshot-package.mjs';
 import { runPublicSnapshotBackup } from './public-snapshot-backup.mjs';
+import { PublicBackupDeferredError } from './public-backup-fetch.mjs';
 import { exportPublicProfilesAndReplays } from './public-profile-replay-export.mjs';
 import { capturePublicEventTotals } from './public-event-totals-backup.mjs';
 import { buildProfileSnapshotResults } from './build-profile-snapshot-results.mjs';
@@ -349,15 +350,55 @@ async function moveIntoHistory(root, sourceName, destinationName) {
   return true;
 }
 
+const transientCaptureStatuses = new Set([408, 429, 500, 502, 503, 504]);
+const transientNetworkError = error => ['AbortError', 'TimeoutError'].includes(error?.name) ||
+  error instanceof TypeError && ['fetch failed', 'terminated'].includes(error.message);
+
+// Preserve typed deferrals before the replay exporter turns HTTP failures into ordinary errors.
+function replayCaptureFetch(fetchImpl) {
+  const read = async work => {
+    try { return await work(); }
+    catch (error) {
+      if (!transientNetworkError(error)) throw error;
+      throw new PublicBackupDeferredError('Replay export network request interrupted');
+    }
+  };
+  return async (...args) => {
+    const response = await read(() => fetchImpl(...args));
+    if (transientCaptureStatuses.has(response.status)) {
+      throw new PublicBackupDeferredError('Replay export service temporarily unavailable', response.status);
+    }
+    return {ok: response.ok, status: response.status, text: () => read(() => response.text())};
+  };
+}
+
+export async function reportCaptureOutcome(result, {env = process.env, log = console.log} = {}) {
+  if (typeof result?.deferred !== 'boolean') throw new Error('Invalid public capture outcome');
+  const status = result.deferred ? 'deferred' : 'complete';
+  if (env.GITHUB_OUTPUT) await fs.appendFile(env.GITHUB_OUTPUT, 'capture_status=' + status + '\n');
+  if (result.deferred) {
+    const message = 'Public capture deferred. Repository publication skipped; the prior published package and private retry ledger are retained. No immediate retry was started.';
+    log('::warning::' + message);
+    if (env.GITHUB_STEP_SUMMARY) await fs.appendFile(env.GITHUB_STEP_SUMMARY, '## Public capture deferred\n' + message + '\n');
+  }
+  return result;
+}
+
 export async function updatePublicSnapshot({ root = moduleRoot, offline = false, fullPublic = false, refreshReplays = false,
-  capture = runPublicSnapshotBackup, captureTotals = capturePublicEventTotals,
-  captureOptions = {}, exportPublic = exportPublicProfilesAndReplays, log = console.log } = {}) {
+  capture = runPublicSnapshotBackup, captureTotals = capture === runPublicSnapshotBackup ? capturePublicEventTotals : null,
+  captureOptions = {}, exportPublic = exportPublicProfilesAndReplays, exportFetch = fetch, log = console.log } = {}) {
   const absoluteRoot = path.resolve(root);
   const stagingDirectory = path.join(absoluteRoot, 'local-reports', 'snapshot-staging');
   const historyDirectory = path.join(absoluteRoot, 'local-reports', 'snapshot-history');
   const stageStat = await fs.stat(stagingDirectory).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
   let backupResult = null;
   let exportResult = null;
+  const defer = (phase, result) => {
+    const summary = {deferred: true, published: false, phase, reason: result.reason || result.message,
+      status: result.status ?? null, previousPackagePreserved: true};
+    log(JSON.stringify({updatePublicSnapshot: summary}));
+    return summary;
+  };
   const pointer = await readJsonIfPresent(path.join(absoluteRoot, 'snapshot-current.json'));
   if (pointer) {
     const match = /^public-snapshots([1-9]\d*)$/.exec(pointer.currentdir || '');
@@ -376,18 +417,30 @@ export async function updatePublicSnapshot({ root = moduleRoot, offline = false,
   }
   if (!offline) {
     backupResult = await capture({ ...captureOptions, directory: stagingDirectory, log });
-    if (backupResult?.deferred) throw new Error(`Snapshot capture deferred: ${backupResult.reason || 'previous backups preserved'}`);
-    if (capture === runPublicSnapshotBackup) {
-      try { await captureTotals({ directory: stagingDirectory, log }); }
-      catch (error) { log(JSON.stringify({ publicEventTotalsBackup: { preservedPrevious: true, error: error.message } })); }
+    if (backupResult?.deferred === true) return defer('snapshots', backupResult);
+    if (captureTotals) {
+      let totalsResult;
+      try { totalsResult = await captureTotals({ directory: stagingDirectory, log }); }
+      catch (error) {
+        if (!(error instanceof PublicBackupDeferredError)) throw error;
+        return defer('event-totals', error);
+      }
+      if (totalsResult?.deferred === true) return defer('event-totals', totalsResult);
+      if (totalsResult?.deferred !== false) throw new Error('Invalid public event totals capture outcome');
     }
   }
   if (fullPublic || refreshReplays) {
     const previousProgress = await readJsonIfPresent(path.join(stagingDirectory, 'export-progress.json'));
     const previousSummary = await readJsonIfPresent(path.join(stagingDirectory, 'public-export-summary.json'));
     const startFullSnapshot = fullPublic && previousProgress?.fullSnapshotPending !== true;
-    exportResult = await exportPublic({ directory: stagingDirectory, snapshotDirectory: stagingDirectory, maxDocuments: fullPublic ? 2000 : 100,
-      fullSnapshot: startFullSnapshot, includeProfiles: fullPublic, retryInvalidAfterMs:3600000, log });
+    try {
+      exportResult = await exportPublic({ directory: stagingDirectory, snapshotDirectory: stagingDirectory, maxDocuments: fullPublic ? 2000 : 100,
+        fullSnapshot: startFullSnapshot, includeProfiles: fullPublic, retryInvalidAfterMs:3600000,
+        fetchImpl: replayCaptureFetch(exportFetch), log });
+    } catch (error) {
+      if (!(error instanceof PublicBackupDeferredError)) throw error;
+      return defer('replays', error);
+    }
     const capturedAt = new Date().toISOString();
     const summary={counts:exportResult.counts,scanned:exportResult.scanned,capturedAt,
       profilesCapturedAt:fullPublic ? capturedAt : previousSummary?.profilesCapturedAt || previousSummary?.capturedAt || null,
@@ -429,7 +482,7 @@ export async function updatePublicSnapshot({ root = moduleRoot, offline = false,
     const archive = path.join(historyDirectory, `generation-${Number(match[1])}.snapshot.gz`);
     if (await fs.stat(archive).then(() => true, () => false)) await moveIntoHistory(absoluteRoot, name, `retired-${name}`);
   }
-  const summary = { ...result, coverage, backup: backupResult, profileReplay: exportResult };
+  const summary = { ...result, deferred: false, published: true, coverage, backup: backupResult, profileReplay: exportResult };
   log(JSON.stringify({ updatePublicSnapshot: summary }));
   return summary;
 }
@@ -438,5 +491,5 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const args = new Set(process.argv.slice(2));
   const unknown = [...args].filter(arg => !['--offline', '--full-public', '--refresh-replays'].includes(arg));
   if (unknown.length) throw new Error(`Unknown arguments: ${unknown.join(', ')}`);
-  await updatePublicSnapshot({ offline: args.has('--offline'), fullPublic: args.has('--full-public'), refreshReplays: args.has('--refresh-replays') });
+  await reportCaptureOutcome(await updatePublicSnapshot({ offline: args.has('--offline'), fullPublic: args.has('--full-public'), refreshReplays: args.has('--refresh-replays') }));
 }

@@ -676,7 +676,7 @@ test('normal engine pin failure prevents any event processing', async () => {
     eventRun:async()=>{throw Error('must not run events');}}),/pin mismatch/);
 });
 
-test('real event module idle preflight performs five bounded read operations and no writes', async () => {
+test('real event module idle preflight performs six bounded read operations and no writes', async () => {
   const calls=[];
   const result=await checkForWork({call:async(p,body)=>{
     calls.push({p,body});
@@ -708,14 +708,22 @@ test('real event receipt scan wakes workflow when canonical and period queues ar
 });
 
 test('real default event processor safely handles both queues empty', async () => {
-  let requests=0;
+  const calls=[];
   await runVerifier({env:{FIREBASE_VERIFIER_SERVICE_ACCOUNT:'synthetic'},log:()=>{},validateEngine:async()=>{},
-    connectDatabase:async()=>({call:async(p)=>{
-      requests++;
+    connectDatabase:async()=>({call:async(p,body)=>{
+      assert.notEqual(p,':commit','empty queues must never write');
+      calls.push([p,body?.structuredQuery?.from?.[0]?.collectionId,body?.structuredQuery?.limit]);
       if(p===':runQuery')return [];
       assert.ok(['/0.6.2_event_catalog/main','/0.6.2_event_cursors/scan'].includes(p),p);return null;
     }}),verifyNormal:async()=>{throw Error('No simulation should run');}});
-  assert.equal(requests,9);
+  assert.deepEqual(calls,[
+    ['/0.6.2_event_cursors/scan',undefined,undefined],
+    [':runQuery','0.6.2_event_inbox',1],
+    [':runQuery','0.6.2_event_retries',1],
+    ['/0.6.2_event_catalog/main',undefined,undefined],
+    [':runQuery',VERIFICATION_COLLECTION,8],
+    [':runQuery',EXTRA_VERIFICATION_COLLECTION,8],
+  ]);
 });
 
 test('shared budget gives events unused normal capacity without exceeding sixteen total', async () => {

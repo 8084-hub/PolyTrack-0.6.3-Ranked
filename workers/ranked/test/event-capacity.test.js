@@ -1,3 +1,5 @@
+import {recordFirestoreReads} from '../src/firestore-read-cost.js';
+import {publicationRetry,publicationRetries,EVENT_PUBLICATION_RETRY_MAX_MS} from '../src/event-publication-retry.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -157,7 +159,7 @@ test('combined publication defers an unavailable permanent source without replac
  await f.improve();const rolling=f.data.get(R.collection+'/'+R.trackId);rolling.complete=false;
  const result=await publishEventCapacity(f.runtime);assert.equal(result.reason,'permanent_source_unavailable');assert.equal(result.pending,true);
  assert.deepEqual(f.data.get(C.public+'/totals_full'),prior);assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
- f.data.get(R.collection+'/'+R.trackId).complete=true;assert.equal((await publishEventCapacity(f.runtime)).published,true);
+ f.data.get(R.collection+'/'+R.trackId).complete=true;advanceRetryClock(f);assert.equal((await publishEventCapacity(f.runtime)).published,true);
  assert.equal(f.data.get(C.public+'/totals_full').dynamicComponents.permanentRollingHills.sourceRevision,2);
 });
 
@@ -176,7 +178,7 @@ test('PB racing immutable page staging cannot publish obsolete combined ranks or
  assert.deepEqual(f.data.get(C.public+'/totals_full'),prior);assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
  const stagedGeneration=eventDecode({mapValue:{fields:staged[0].update.fields}}).generation;
  await assert.rejects(()=>f.service.publicPage('event_totals','main',stagedGeneration,0));
- f.runtime.request=request;assert.equal((await publishEventCapacity(f.runtime)).published,true);
+ f.runtime.request=request;advanceRetryClock(f);assert.equal((await publishEventCapacity(f.runtime)).published,true);
  assert.equal(f.data.get(C.public+'/totals_full').dynamicComponents.permanentRollingHills.sourceRevision,3);
  assert.equal(f.data.get(C.public+'/totals').publicationPending,false);
 });
@@ -197,7 +199,7 @@ test('Rolling-only refresh reuses completed finite scan even after snapshot quer
  f.data.get(C.public+'/totals').publicationPending=true;
  await advanceEventPublication(f.runtime);
  const job=f.data.get('0.6.2_event_publication_jobs/event_totals_main');
- assert.equal(job.scanComplete,true);assert.equal(job.complete,true);assert.equal(job.parts,3);
+ assert.equal(job.scanComplete,true);assert.equal(job.complete,true);assert.equal(job.parts,2);
  await f.improve();f.time(3600000);
  const start=f.calls.length;
  assert.equal((await publishEventCapacity(f.runtime)).published,true);
@@ -219,16 +221,17 @@ test('Rolling-only refresh reuses completed finite scan even after snapshot quer
 test('repeated blocked combined refreshes never query finite totals or read staged parts',async()=>{
  const f=await combinedFixture(),prior=structuredClone(f.data.get(C.public+'/totals_full'));
  await f.improve();f.data.get(R.collection+'/'+R.trackId).complete=false;
+ assert.equal((await publishEventCapacity(f.runtime)).reason,'permanent_source_unavailable');
  const start=f.calls.length;
- for(let i=0;i<5;i++)assert.equal((await publishEventCapacity(f.runtime)).reason,'permanent_source_unavailable');
+ for(let i=0;i<5;i++)assert.equal((await publishEventCapacity(f.runtime)).reason,'publication_backoff');
  const calls=f.calls.slice(start);
  assert.equal(calls.includes(':runQuery'),false);
  assert.equal(calls.includes(':batchGet'),false);
  assert.equal(calls.some(route=>route.includes('event_publication_jobs')),false);
  assert.deepEqual(f.data.get(C.public+'/totals_full'),prior);
  assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
- f.data.get(R.collection+'/'+R.trackId).complete=true;
- assert.equal((await publishEventCapacity(f.runtime)).published,true,'recovery is immediate, not timer based');
+ f.data.get(R.collection+'/'+R.trackId).complete=true;advanceRetryClock(f);
+ assert.equal((await publishEventCapacity(f.runtime)).published,true,'recovery succeeds when the durable retry is due');
  assert.equal(f.data.get(C.public+'/totals_full').dynamicComponents.permanentRollingHills.sourceRevision,2);
 });
 
@@ -239,11 +242,11 @@ test('one blocked combined source does not rewrite its cursor on every scheduled
  const cursorPath=C.cursors+'/public_capacity';
  f.data.set(cursorPath,Object.fromEntries(Object.entries(f.data.get(cursorPath)).reverse()));
  const start=f.calls.length,transactions=f.counts.length;
- for(let i=0;i<20;i++)assert.equal((await publishEventCapacity(f.runtime)).reason,'permanent_source_unavailable');
+ for(let i=0;i<20;i++)assert.equal((await publishEventCapacity(f.runtime)).reason,'publication_backoff');
  assert.equal(f.counts.length,transactions,'no cursor transaction or write on unchanged deferral');
  assert.equal(f.calls.slice(start).filter(path=>path==='/'+C.public+'/totals').length,20,'one root read per invocation');
- f.data.get(R.collection+'/'+R.trackId).complete=true;
- assert.equal((await publishEventCapacity(f.runtime)).published,true,'no timer delays recovery');
+ f.data.get(R.collection+'/'+R.trackId).complete=true;advanceRetryClock(f);
+ assert.equal((await publishEventCapacity(f.runtime)).published,true,'bounded retry permits recovery');
 });
 
 test('legacy completed jobs without an explicit scan-complete checkpoint rescan safely',async()=>{
@@ -263,7 +266,7 @@ test('missing reused immutable parts fail closed without replacing or acknowledg
  assert.equal((await publishEventCapacity(f.runtime)).reason,'source_parts_missing');
  assert.deepEqual(f.data.get(C.public+'/totals_full'),prior);
  assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
- const start=f.calls.length;
+ advanceRetryClock(f);const start=f.calls.length;
  assert.equal((await publishEventCapacity(f.runtime)).published,true);
  assert.equal(f.calls.slice(start).includes(':runQuery'),true,'lost parts trigger authoritative recovery');
  assert.equal(f.data.get(C.public+'/totals_full').dynamicComponents.permanentRollingHills.sourceRevision,2);
@@ -271,7 +274,7 @@ test('missing reused immutable parts fail closed without replacing or acknowledg
 
 for(const revision of [0,8])test(`finite revision ${revision} changing during a multi-pass scan preserves published totals and rescans`,async()=>{
  const f=await combinedFixture(),prior=structuredClone(f.data.get(C.public+'/totals_full'));
- for(let i=0;i<500;i++)f.data.set(C.totals+'/extra-'+i,{accountId:'extra-'+i,name:'Extra',rp:i,events:1});
+ for(let i=0;i<900;i++)f.data.set(C.totals+'/extra-'+i,{accountId:'extra-'+i,name:'Extra',rp:i,events:1});
  Object.assign(f.data.get(C.public+'/totals'),{revision,publicationPending:true});
  assert.equal((await advanceEventPublication(f.runtime)).pending,true);
  const request=f.runtime.request;let changed=false;
@@ -294,7 +297,7 @@ for(const revision of [0,8])test(`finite revision ${revision} changing during a 
  assert.equal((await advanceEventPublication(f.runtime)).pending,true);
  assert.equal((await advanceEventPublication(f.runtime)).published,true);
  const current=f.data.get(C.public+'/totals_full');
- assert.equal(current.totalEntries,504);assert.equal(current.entries[0].accountId,'new');
+ assert.equal(current.totalEntries,904);assert.equal(current.entries[0].accountId,'new');
  assert.equal(current.sourceRevision,revision+1);
  assert.equal(f.data.get(jobPath).restartRequired,undefined);
  assert.equal(f.data.get(C.public+'/totals').publicationPending,false);
@@ -303,7 +306,7 @@ for(const revision of [0,8])test(`finite revision ${revision} changing during a 
 
 test('missing unfinished scan parts invalidate immediately and recover without an expiry or reset loop',async()=>{
  const f=await combinedFixture(),prior=structuredClone(f.data.get(C.public+'/totals_full'));
- for(let i=0;i<500;i++)f.data.set(C.totals+'/extra-'+i,{accountId:'extra-'+i,name:'Extra',rp:i,events:1});
+ for(let i=0;i<900;i++)f.data.set(C.totals+'/extra-'+i,{accountId:'extra-'+i,name:'Extra',rp:i,events:1});
  f.data.get(C.public+'/totals').revision++;f.data.get(C.public+'/totals').publicationPending=true;
  assert.equal((await advanceEventPublication(f.runtime)).pending,true);
  const jobPath='0.6.2_event_publication_jobs/event_totals_main',job=f.data.get(jobPath);
@@ -314,7 +317,7 @@ test('missing unfinished scan parts invalidate immediately and recover without a
  assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
  assert.equal((await advanceEventPublication(f.runtime)).pending,true);
  assert.equal((await advanceEventPublication(f.runtime)).published,true);
- assert.equal(f.data.get(C.public+'/totals_full').totalEntries,503);
+ assert.equal(f.data.get(C.public+'/totals_full').totalEntries,903);
  assert.equal(f.data.get(jobPath).restartRequired,undefined);
  await f.improve();const start=f.calls.length;
  assert.equal((await advanceEventPublication(f.runtime)).published,true);
@@ -393,4 +396,257 @@ test('legacy inline event publication leaves no period work behind or perpetual 
  const start=f.calls.length,transactions=f.counts.length;
  assert.deepEqual(await publishEventCapacity(f.runtime),{idle:true});
  assert.deepEqual(f.calls.slice(start),['/'+C.public+'/totals']);assert.equal(f.counts.length,transactions);
+});
+
+
+function advanceRetryClock(f) {
+ const retries=f.data.get(C.cursors+'/public_capacity')?.retries||{};
+ f.time(Math.max(f.runtime.now(),...Object.values(retries).map(value=>value.retryAt)));
+}
+function readMeter(f) {
+ const audit={documentReadEstimate:0,collections:{}},start=f.counts.length,request=f.runtime.request;
+ f.runtime.request=async(route,init={})=>{
+   const result=await request(route,init);recordFirestoreReads(audit,route,init,result);return result;
+ };
+ return {audit,total:()=>audit.documentReadEstimate+f.counts.slice(start).reduce((sum,value)=>sum+value.reads,0),
+   writes:()=>(audit.writeEstimate||0)+(audit.deleteEstimate||0)+f.counts.slice(start).reduce((sum,value)=>sum+value.writes,0)};
+}
+async function finishedEventFixture(extra=0) {
+ const f=fixture();await f.service.createPeriod(period);f.time(2000);
+ const accountId=hash('plateau-racer'),ownerUid='plateau-owner';
+ f.data.set(C.profiles+'/'+accountId,{accountId,ownerUid,name:'Plateau Racer'});
+ f.data.set(R.collection+'/'+R.trackId,{trackId:R.trackId,algorithmVersion:R.algorithmVersion,
+   schemaVersion:R.minimumSchemaVersion,revision:1,sourceRevision:1,signature:'valid_rolling_snapshot_1',
+   builtAt:2000,updatedAt:2000,complete:true,totalEntries:1,entries:[{accountId,name:'Plateau Racer',
+     trackId:R.trackId,timeMs:10000,frames:10000,raceTimeFrames:10000,replayHash:hash('abcd'),
+     runVerified:true,integrityVerified:true}]});
+ await f.service.submit(period.id,ownerUid,{accountId,trackId:track,attemptId:'first',timeMs:21000,frames:21000,replay:'abcd',carStyle:'style'});
+ await f.service.processBatch(period.id,async jobs=>jobs.map(verdict));
+ await advanceEventPublication(f.runtime,period.id);
+ for(let i=0;i<extra;i++)f.data.set(C.totals+'/extra-'+i,{accountId:'extra-'+i,name:'Other',rp:i,events:1});
+ let result;
+ for(let i=0;i<10;i++){result=await advanceEventPublication(f.runtime);if(result.published)break;}
+ assert.equal(result.published,true);
+ return {...f,accountId,ownerUid};
+}
+async function improveEvent(f,{timeMs=20999,periodId=period.id}={}) {
+ f.time(4000);
+ await f.service.submit(periodId,f.ownerUid,{accountId:f.accountId,trackId:track,attemptId:'second',timeMs,frames:timeMs,replay:'abcd',carStyle:'style-new'});
+ await f.service.processBatch(periodId,async jobs=>jobs.map(verdict));
+}
+
+test('unchanged finite input saves 1000 source reads without suppressing improved PB, replay or event publication',async()=>{
+ const f=await finishedEventFixture(999),before=structuredClone(f.data.get(C.public+'/totals'));
+ assert.equal(f.data.get(C.public+'/totals_full').eventRpComplete,true,'the source is healthy, not a blocked scan');
+ const previousReplay=f.data.get(C.replays+'/'+period.id+'_'+f.accountId).runId;
+ const meter=readMeter(f);
+ await improveEvent(f);
+ const work=f.data.get(C.public+'/totals');
+ assert.equal(work.revision,before.revision);assert.equal(work.publicationPending,false);
+ assert.equal(work.updatedAt,before.updatedAt);assert.deepEqual(work.pendingPeriodIds,[period.id]);
+ assert.equal(f.data.get(C.pbs+'/'+period.id+'_'+f.accountId).timeMs,20999);
+ assert.notEqual(f.data.get(C.replays+'/'+period.id+'_'+f.accountId).runId,previousReplay);
+ assert.equal(f.data.get(C.replays+'/'+period.id+'_'+f.accountId).timeMs,20999);
+ assert.equal(f.data.get(C.live+'/'+period.id).publicationPending,true);
+ assert.equal((await publishEventCapacity(f.runtime)).published,true);
+ assert.equal(meter.audit.collections[C.totals]||0,0);
+ assert.deepEqual(f.data.get(C.public+'/totals').pendingPeriodIds,[]);
+ console.log('EVENT_COST plateau total source reads: before=1000 after=0 (event board still published)');
+});
+
+
+for(const shape of ['exact-reordered','legacy-extra','projection-equal-name'])test('canonical total write suppression: '+shape,async()=>{
+ const f=await finishedEventFixture(),totalPath=C.totals+'/'+f.accountId;
+ const total=structuredClone(f.data.get(totalPath)),revision=f.data.get(C.public+'/totals').revision;
+ if(shape==='exact-reordered')f.data.set(totalPath,{events:total.events,rp:total.rp,name:total.name,accountId:total.accountId});
+ if(shape==='legacy-extra')f.data.get(totalPath).legacyInternalMarker='remove me';
+ if(shape==='projection-equal-name')f.data.get(totalPath).name=' '+total.name+' ';
+ const transaction=f.runtime.store.transaction,written=[];
+ f.runtime.store.transaction=fn=>transaction(tx=>fn({...tx,set:(key,value)=>{written.push(key);return tx.set(key,value);}}));
+ await improveEvent(f);
+ assert.equal(written.filter(key=>key===totalPath).length,shape==='exact-reordered'?0:1);
+ assert.deepEqual(f.data.get(totalPath),total,'canonical rewrite must remove or normalize all legacy fields');
+ assert.equal(f.data.get(C.public+'/totals').revision,revision,'canonical cleanup alone is not a public change');
+ assert.ok(written.includes(C.pbs+'/'+period.id+'_'+f.accountId));
+ assert.ok(written.includes(C.replays+'/'+period.id+'_'+f.accountId));
+});
+
+test('100 unchanged-RP PB cycles meter submission, verification and event publication independently of finite population',async()=>{
+ const f=await finishedEventFixture(999),meter=readMeter(f);
+ for(let i=0;i<100;i++){
+   f.time(4000+i*2000);
+   const timeMs=20999-i;
+   await f.service.submit(period.id,f.ownerUid,{accountId:f.accountId,trackId:track,attemptId:'budget-'+i,
+     timeMs,frames:timeMs,replay:'abcd',carStyle:'style-new'});
+   await f.service.processBatch(period.id,async jobs=>jobs.map(verdict));
+   assert.equal((await publishEventCapacity(f.runtime)).published,true);
+ }
+ assert.equal(meter.audit.collections[C.totals]||0,0);
+ assert.equal(meter.total(),4501);
+ assert.equal(meter.writes(),2601);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,false);
+ console.log('EVENT_COST 100 unchanged-RP active cycles: reads='+meter.total()+' writes='+meter.writes()+' finite total scans=0');
+});
+
+for(const change of ['rp','name','events','carStyle-removal','country-removal','legacy-name'])test('meaningful finite input still invalidates: '+change,async()=>{
+ const f=await finishedEventFixture(),total=f.data.get(C.totals+'/'+f.accountId),work=f.data.get(C.public+'/totals');
+ const revision=work.revision;work.operatorMarker='preserved';
+ let periodId=period.id;
+ if(change==='name')f.data.get(C.profiles+'/'+f.accountId).name='Changed Name';
+ if(change==='carStyle-removal')total.carStyle='older-style';
+ if(change==='country-removal')total.countryCode='US';
+ if(change==='legacy-name')delete total.name;
+ if(change==='events'){f.time(0);periodId='second_day';await f.service.createPeriod({...period,id:periodId,kind:'weekly',maxRp:500});}
+ await improveEvent(f,{timeMs:change==='rp'?10000:20999,periodId});
+ assert.equal(f.data.get(C.public+'/totals').revision,revision+1);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
+ assert.equal(f.data.get(C.public+'/totals').operatorMarker,'preserved');
+});
+
+test('unchanged finite input cannot acknowledge already pending combined work',async()=>{
+ const f=await finishedEventFixture();f.data.get(C.public+'/totals').publicationPending=true;
+ const revision=f.data.get(C.public+'/totals').revision;
+ await improveEvent(f);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
+ assert.equal(f.data.get(C.public+'/totals').revision,revision);
+});
+
+test('24h unchanged blocked dependency: durable gates survive fresh runtimes and bound reads',async()=>{
+ const f=await combinedFixture();await f.improve();
+ f.data.get(R.collection+'/'+R.trackId).complete=false;
+ const start=Date.UTC(2026,9,20);f.time(start);
+ assert.equal((await publishEventCapacity(f.runtime)).reason,'permanent_source_unavailable');
+ const previous=structuredClone(f.data.get(C.public+'/totals_full')),meter=readMeter(f);
+ for(let minute=0;minute<1440;minute++)if([2,4].includes(minute%5)){
+   f.time(start+minute*60000);await publishEventCapacity({...f.runtime});
+ }
+ const reads=meter.total();
+ assert.equal(reads,1299);
+ assert.equal(meter.writes(),49);
+ assert.equal(meter.audit.collections[C.totals]||0,0);
+ assert.deepEqual(f.data.get(C.public+'/totals_full'),previous);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
+ console.log('EVENT_COST blocked dependency 24h: before=2304 after='+reads+' (49 retry cursor writes; priming excluded)');
+ f.data.get(R.collection+'/'+R.trackId).complete=true;advanceRetryClock(f);
+ assert.equal((await publishEventCapacity({...f.runtime})).published,true);
+ assert.equal(f.data.get(C.cursors+'/public_capacity').retries,undefined);
+});
+
+test('24h finite revision churn bounds restart scans; quiescent recovery preserves exact ties and deletions',async()=>{
+ const f=await combinedFixture(),start=Date.UTC(2026,9,20);
+ for(let i=0;i<999;i++)f.data.set(C.totals+'/extra-'+i,{accountId:'extra-'+i,name:'Other',rp:Math.floor(i/2),events:1});
+ const meter=readMeter(f),prior=structuredClone(f.data.get(C.public+'/totals_full'));
+ for(let minute=0;minute<1440;minute++)if([2,4].includes(minute%5)){
+   f.time(start+minute*60000);
+   f.data.get(C.totals+'/'+f.c).rp++;
+   const work=f.data.get(C.public+'/totals');work.revision++;work.publicationPending=true;
+   await publishEventCapacity({...f.runtime});
+ }
+ const sourceReads=meter.audit.collections[C.totals]||0;
+ assert.ok(sourceReads>0&&sourceReads<=40000,'source scans must be bounded across cold runtimes');
+ assert.deepEqual(f.data.get(C.public+'/totals_full'),prior);
+ console.log('EVENT_COST 24h churn source reads: before=230400 after='+sourceReads);
+ let result;
+ for(let pass=0;pass<12;pass++){advanceRetryClock(f);f.time(f.runtime.now()+180000);result=await publishEventCapacity(f.runtime);if(result.published)break;}
+ assert.equal(result.published,true);
+ const board=f.data.get(C.public+'/totals_full');
+ const actual=await loadPublicationEntries(board,'event_totals','main',async(c,id)=>({data:f.data.get(c+'/'+id)}));
+ const scores=new Map([...f.data].filter(([key])=>key.startsWith(C.totals+'/')).map(([,row])=>[row.accountId,row.rp]));
+ scores.set(f.a,(scores.get(f.a)||0)+1001);scores.set(f.b,(scores.get(f.b)||0)+500);
+ const expected=[...scores].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));let rank=0;
+ assert.deepEqual(actual.map(row=>[row.accountId,row.rp,row.rank]),expected.map(([id,rp],i)=>{if(!i||rp!==expected[i-1][1])rank=i+1;return [id,rp,rank];}));
+ f.data.delete(C.totals+'/'+f.c);f.data.get(C.public+'/totals').revision++;f.data.get(C.public+'/totals').publicationPending=true;
+ for(let pass=0;pass<8;pass++){f.time(f.runtime.now()+180000);result=await publishEventCapacity(f.runtime);if(result.published)break;}
+ assert.equal(result.published,true);
+ const deleted=await loadPublicationEntries(f.data.get(C.public+'/totals_full'),'event_totals','main',async(c,id)=>({data:f.data.get(c+'/'+id)}));
+ assert.equal(deleted.some(row=>row.accountId===f.c),false);
+});
+
+test('abandoned scan reads zero more source rows before durable coalescing; failed CAS keeps winning checkpoint',async()=>{
+ const f=await combinedFixture();
+ for(let i=0;i<900;i++)f.data.set(C.totals+'/extra-'+i,{accountId:'extra-'+i,name:'Other',rp:i,events:1});
+ f.data.get(C.public+'/totals').revision++;f.data.get(C.public+'/totals').publicationPending=true;
+ assert.equal((await advanceEventPublication(f.runtime)).pending,true);
+ f.data.get(C.public+'/totals').revision++;
+ const meter=readMeter(f),transaction=f.runtime.store.transaction,jobPath='0.6.2_event_publication_jobs/event_totals_main';
+ f.runtime.store.transaction=async fn=>{f.data.get(jobPath).generation='winning-generation';return transaction(fn);};
+ await assert.rejects(advanceEventPublication(f.runtime),error=>error.code==='event_publication_conflict');
+ assert.equal(meter.audit.collections[C.totals]||0,0);
+ assert.equal(f.data.get(jobPath).generation,'winning-generation');
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
+});
+
+test('coordinator CAS includes nested retry fields and cannot overwrite concurrent retry changes',async()=>{
+ const f=await combinedFixture();await f.improve();f.data.get(R.collection+'/'+R.trackId).complete=false;
+ await publishEventCapacity(f.runtime);advanceRetryClock(f);
+ const transaction=f.runtime.store.transaction,cursorPath=C.cursors+'/public_capacity';
+ let winning;
+ f.runtime.store.transaction=async fn=>{
+   f.data.get(cursorPath).retries.event_totals_main.retryAt++;
+   winning=structuredClone(f.data.get(cursorPath));return transaction(fn);
+ };
+ await assert.rejects(publishEventCapacity(f.runtime),error=>error.code==='event_publication_conflict');
+ assert.deepEqual(f.data.get(cursorPath),winning);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,true);
+});
+
+test('retry state rejects malformed or distant timestamps and never exceeds thirty minutes',()=>{
+ const now=1800000000000,key='event_totals_main';
+ for(const retryAt of [NaN,Infinity,-1,now+EVENT_PUBLICATION_RETRY_MAX_MS+1,'later'])
+   assert.deepEqual(publicationRetries({[key]:{attempts:1,reason:'finite_source_changed',retryAt}},[key],now),{});
+ let state;
+ for(let i=0;i<20;i++){state=publicationRetry(state,'finite_source_changed',now);assert.ok(state.retryAt>now&&state.retryAt<=now+EVENT_PUBLICATION_RETRY_MAX_MS);}
+ assert.equal(state.retryAt,now+EVENT_PUBLICATION_RETRY_MAX_MS);
+ assert.deepEqual(publicationRetries({discarded:state},[key],now),{});
+});
+
+
+for(const kind of ['event','event_totals'])test('10000-row '+kind+' publication completes before snapshot expiry at actual scheduler cadence',async()=>{
+ const f=fixture(),maximum={...period,capacity:{...capacity,entrants:10000,admissionsPerPeriod:10000}};
+ await f.service.createPeriod(maximum);
+ const event=eventPeriod(maximum);
+ for(let i=0;i<10000;i++){
+   const accountId=hash('maximum-'+i);
+   if(kind==='event')f.data.set(C.pbs+'/'+period.id+'_'+accountId,{periodId:period.id,accountId,
+     name:'Racer',timeMs:10000+Math.floor(i/2),submittedAt:2000,carStyle:'style'});
+   else f.data.set(C.totals+'/'+accountId,{accountId,name:'Racer',rp:10000-Math.floor(i/2),events:1});
+ }
+ if(kind==='event')f.data.set(C.public+'/'+period.id,{period:event,entries:[],racerCount:10000,
+   revision:10000,publicationPending:true});
+ f.data.set(C.public+'/totals',{revision:10000,publicationPending:kind==='event_totals',
+   pendingPeriodIds:kind==='event'?[period.id]:[]});
+ const meter=readMeter(f);let result,minute,passes=0;
+ for(minute=2;minute<54;minute++)if([2,4].includes(minute%5)){
+   f.time(minute*60000);passes++;
+   result=await publishEventCapacity({...f.runtime});
+   assert.notEqual(result.reason,'snapshot_expired');
+   if(result.published)break;
+ }
+ assert.equal(result.published,true);assert.equal(passes,13);assert.equal(minute,32);
+ assert.equal(result.totalEntries,10000);
+ assert.equal(meter.audit.collections[kind==='event'?C.pbs:C.totals],10001);
+ const board=f.data.get(C.public+'/'+(kind==='event'?period.id:'totals_full'));
+ const entries=await loadPublicationEntries(board,kind,kind==='event'?period.id:'main',async(c,id)=>({data:f.data.get(c+'/'+id)}));
+ assert.equal(entries.length,10000);assert.equal(entries[0].rank,1);assert.equal(entries[1].rank,1);
+ assert.equal(entries[9999].rank,9999);
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,false);
+ assert.deepEqual(f.data.get(C.public+'/totals').pendingPeriodIds,[]);
+ console.log('EVENT_COST stable 10000-row '+kind+': 13 passes / 30 elapsed minutes / 10001 source reads');
+});
+
+test('reordered Firestore job maps complete multi-page publication without false CAS conflicts',async()=>{
+ const f=await combinedFixture();
+ for(let i=0;i<999;i++)f.data.set(C.totals+'/extra-'+i,{accountId:'extra-'+i,name:'Racer',rp:i,events:1});
+ const work=f.data.get(C.public+'/totals');work.revision++;work.publicationPending=true;
+ const transaction=f.runtime.store.transaction,jobPath='0.6.2_event_publication_jobs/event_totals_main';
+ f.runtime.store.transaction=fn=>{
+   const job=f.data.get(jobPath);
+   if(job)f.data.set(jobPath,Object.fromEntries(Object.entries(job).sort(([a],[b])=>a.localeCompare(b))));
+   return transaction(fn);
+ };
+ const meter=readMeter(f);
+ assert.equal((await advanceEventPublication(f.runtime)).pending,true);
+ assert.equal((await advanceEventPublication(f.runtime)).published,true);
+ assert.equal(meter.audit.collections[C.totals],1001,'key ordering must not cause rereads');
+ assert.equal(f.data.get(C.public+'/totals').publicationPending,false);
 });

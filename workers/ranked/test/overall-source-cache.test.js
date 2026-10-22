@@ -415,7 +415,7 @@ const sourceReadNames = calls => calls.flatMap(call => call.path === ':batchGet'
 const entitlementNames = calls => calls.flatMap(call => call.path === ':batchGet' ? call.body.documents : [])
   .filter(name => name.includes('/0.6.2_s1_cosmetic_entitlements/'));
 
-test('Worker E2E: 385-board warm rebuild has zero source DB reads; changed track reads one; authority reads retained', async () => {
+test('Worker E2E: 385-board warm rebuild reuses source and entitlement companions; changed track reads one', async () => {
   const f = workerFixture(385);
   await rebuildOverall(f.env, true);
   assert.equal(f.data.get(META).sourceCatalog.count, 385);
@@ -426,7 +426,7 @@ test('Worker E2E: 385-board warm rebuild has zero source DB reads; changed track
   let calls = f.calls.slice(start);
   assert.equal(calls.filter(call => call.path === ':runQuery').length, 0);
   assert.equal(sourceReadNames(calls).length, 0);
-  assert.equal(entitlementNames(calls).length, 2);
+  assert.equal(entitlementNames(calls).length, 0);
   assert.equal(f.cache.calls.match - matches, 1); assert.equal(f.cache.calls.put - puts, 1);
   assert.equal(calls.length + 2, 7, 'five authoritative/commit HTTP plus two cache operations');
   const prior = f.prior(WORKER_TRACK), entries = clone(prior.data.entries); entries[0].timeMs--;
@@ -436,7 +436,7 @@ test('Worker E2E: 385-board warm rebuild has zero source DB reads; changed track
   await rebuildOverall(f.env);
   calls = f.calls.slice(start);
   assert.equal(sourceReadNames(calls).length, 1);
-  assert.equal(entitlementNames(calls).length, 2);
+  assert.equal(entitlementNames(calls).length, 0);
   assert.equal(calls.filter(call => call.path === ':runQuery').length, 0);
   assert.equal(calls.length + 2, 8);
 });
@@ -608,7 +608,7 @@ test('Worker E2E: cold dirty build reads committed publication plus exactly chan
   assert.equal(calls.some(c=>c.path===':runQuery'),false);
   assert.equal(sourceReadNames(calls).length,1);
   assert.equal(calls.filter(c=>c.path===':batchGet'&&c.body.documents.some(n=>n.includes('/'+SOURCE_PUBLICATION_COLLECTION+'/'))).length,1);
-  assert.equal(entitlementNames(calls).length,2,'authoritative entitlement reads remain');
+  assert.equal(entitlementNames(calls).length,0,'epoch-bound companion replaces canonical entitlement reads');
   assert.notEqual(f.data.get(META).sourceBundle.digest,original.digest);
 });
 
@@ -669,9 +669,9 @@ test('24h: 48 dirty cold-cache builds read 44 changed roots plus four 385-root a
     estimates+=audit.documentReadEstimate;
   }
   assert.equal(sourceRoots,1584);assert.equal(publishedParts,48);
-  assert.equal(estimates,1920,'builds only: sources1584+parts48+48*(meta1+overall1+migration1+entitlements2+group1)');
+  assert.equal(estimates,1876,'sources1584 + source parts48 + base authority192 + entitlement audit8 + entitlement parts44');
   // Before: every cold build scanned 385 sources plus six authority docs: 18768 reads.
-  assert.equal(48*(385+6)-estimates,16848);
+  assert.equal(48*(385+6)-estimates,16892);
 });
 
 
@@ -700,7 +700,7 @@ test('Worker E2E: published-source quota/network failure stops before source sca
 });
 
 
-test('24h quiet cold polls: four unchanged audits retain discovery without entitlement rereads',async t=>{
+test('24h quiet cold polls: four full source and entitlement audits retain discovery',async t=>{
   let now=Date.parse('2026-10-21T00:00:00Z');t.mock.method(Date,'now',()=>now);
   const f=workerFixture(385);await rebuildOverall(f.env,true);
   let reads=0,audits=0;
@@ -708,10 +708,10 @@ test('24h quiet cold polls: four unchanged audits retain discovery without entit
     now+=5*60000;f.cache.values.clear();
     const audit={httpRequests:0,failedRequests:0,documentReadEstimate:0,collections:{}};
     f.env.__FIRESTORE_READ_AUDIT=audit;
-    const result=await rebuildOverall(f.env);if(result.reason==='sources_unchanged')audits++;
+    const result=await rebuildOverall(f.env);if(result.rebuilt)audits++;
     reads+=audit.documentReadEstimate;delete f.env.__FIRESTORE_READ_AUDIT;
   }
-  assert.equal(audits,4);assert.equal(reads,1832,'288 meta +1540 scan sources +4 companion parts');
+  assert.equal(audits,4);assert.equal(reads,1852,'288 meta +1540 scan sources +4 source parts +4*(overall1+migration1+entitlements2+group1)');
 });
 
 

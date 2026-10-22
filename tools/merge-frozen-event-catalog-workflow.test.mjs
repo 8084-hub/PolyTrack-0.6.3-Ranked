@@ -14,7 +14,7 @@ function step(name){
  return next<0?workflow.slice(start):workflow.slice(start,start+1+next);
 }
 function condition(name){const match=/^        if: (.+)$/m.exec(step(name));return match?.[1];}
-function enabled(name,context){return vm.runInNewContext(condition(name),{always:()=>true,cancelled:()=>false,...context});}
+function enabled(name,context){return vm.runInNewContext(condition(name),{always:()=>true,success:()=>true,cancelled:()=>false,...context});}
 const capture='Capture bounded public snapshots',merge='Index all saved frozen event periods';
 const old={id:'old-frozen',kind:'daily',trackId:'a'.repeat(64),startsAt:1,endsAt:2};
 const fresh={periods:[{...old,id:'current',startsAt:3,endsAt:4}],archives:[]};
@@ -29,7 +29,7 @@ async function fixture(t){
 }
 
 test('scheduled Sunday skips snapshot capture but preserves archives with no staging or extra reads',async t=>{
- const context={github:{event_name:'schedule',event:{schedule:'10 20 * * 0'}},steps:{catalog:{outcome:'success'},snapshot:{outcome:'skipped'}}};
+ const context={github:{event_name:'schedule',event:{schedule:'10 20 * * 0'}},steps:{catalog:{outcome:'success',outputs:{capture_status:'complete'}},snapshot:{outcome:'skipped',outputs:{}}}};
  assert.match(step('Capture public event assignments'),/^        id: catalog$/m);
  assert.equal(enabled(capture,context),false);assert.equal(enabled(merge,context),true);
  const f=await fixture(t);
@@ -41,7 +41,7 @@ test('scheduled Sunday skips snapshot capture but preserves archives with no sta
 });
 
 test('failed daily snapshot still merges locally without erasing saved archive history or publishing partial capture',async t=>{
- const context={github:{event_name:'schedule',event:{schedule:'30 10 * * *'}},steps:{catalog:{outcome:'success'},snapshot:{outcome:'failure'}}};
+ const context={github:{event_name:'schedule',event:{schedule:'30 10 * * *'}},steps:{catalog:{outcome:'success',outputs:{capture_status:'complete'}},snapshot:{outcome:'failure',outputs:{}}}};
  assert.equal(enabled(capture,context),true);assert.equal(enabled(merge,context),true);
  const f=await fixture(t),frozen={...old,id:'staged-frozen',startsAt:2,endsAt:3};
  await assert.rejects((async()=>{
@@ -52,13 +52,44 @@ test('failed daily snapshot still merges locally without erasing saved archive h
  const result=await mergeSavedArchiveFiles(f);
  assert.deepEqual(result.archives.map(row=>row.id),[frozen.id,old.id]);
  assert.deepEqual(result.periods,fresh.periods);assert.equal(f.requests(),1);
- // Keep GitHub's default success() gate: failed capture must not publish partial files.
- assert.equal(condition('Commit changed assignments'),undefined);
+ assert.match(condition('Commit changed assignments'),/^success\(\) && /);
+ assert.equal(enabled('Commit changed assignments',{...context,success:()=>false}),false);
 });
 
 test('local history merge is gated by successful catalog sync and never runs after cancellation',()=>{
- assert.match(condition(merge),/^always\(\) && !cancelled\(\) && steps\.catalog\.outcome == 'success'$/);
+ assert.match(condition(merge),/^always\(\) && !cancelled\(\) && steps\.catalog\.outcome == 'success' && steps\.catalog\.outputs\.capture_status == 'complete'$/);
  for(const outcome of ['failure','skipped','cancelled'])
   assert.equal(enabled(merge,{steps:{catalog:{outcome},snapshot:{outcome:'success'}}}),false);
- assert.equal(enabled(merge,{cancelled:()=>true,steps:{catalog:{outcome:'success'},snapshot:{outcome:'failure'}}}),false);
+ assert.equal(enabled(merge,{cancelled:()=>true,steps:{catalog:{outcome:'success',outputs:{capture_status:'complete'}},snapshot:{outcome:'failure',outputs:{}}}}),false);
+});
+
+test('deferred catalog skips snapshot reads, archive merge and publication',()=>{
+ const context={github:{event_name:'schedule',event:{schedule:'30 10 * * *'}},
+  steps:{catalog:{outcome:'success',outputs:{capture_status:'deferred'}},snapshot:{outcome:'skipped',outputs:{}}}};
+ for(const name of [capture,merge,'Commit changed assignments'])assert.equal(enabled(name,context),false,name);
+});
+
+test('only completed captures publish, while deferred or failed attempts may retain private retry state',()=>{
+ for(const [event_name,schedule]of [['schedule','30 10 * * *'],['workflow_dispatch',undefined]]){
+  for(const status of ['complete','deferred',undefined]){
+   const context={github:{event_name,event:{schedule}},steps:{
+    catalog:{outcome:'success',outputs:{capture_status:'complete'}},
+    snapshot:{outcome:'success',outputs:{capture_status:status}},retry_prepare:{outcome:'success'}}};
+   assert.equal(enabled('Commit changed assignments',context),status==='complete');
+   assert.equal(enabled('Retain validated private replay retry ledger',context),true);
+   assert.equal(enabled('Commit changed assignments',{...context,success:()=>false}),false);
+  }
+ }
+ const sunday={github:{event_name:'schedule',event:{schedule:'10 20 * * 0'}},steps:{
+  catalog:{outcome:'success',outputs:{capture_status:'complete'}},snapshot:{outcome:'skipped',outputs:{}}}};
+ assert.equal(enabled('Commit changed assignments',sunday),true);
+ assert.equal(enabled('Commit changed assignments',{...sunday,github:{event_name:'schedule',event:{schedule:'unknown'}}}),false);
+});
+
+test('catalog wrapper reports deferral explicitly and snapshot CLI uses the same reporter',async()=>{
+ assert.match(step('Capture public event assignments'),/await reportCaptureOutcome\(await syncPublicEventCatalog\(\)\)/);
+ const source=await fs.readFile(new URL('./update-public-snapshot.mjs',import.meta.url),'utf8');
+ assert.match(source,/await reportCaptureOutcome\(await updatePublicSnapshot\(/);
+ for(const name of ['Capture public event assignments',capture,'Commit changed assignments'])
+  assert.doesNotMatch(step(name),/continue-on-error/);
 });

@@ -4,8 +4,12 @@ import {eventDecode,eventEncode} from './events-store.js';
 import {contentHash,preparePublicationPages,PUBLIC_MANIFEST_COLLECTION,publicationManifestId} from './paged-publication.js';
 import {PERMANENT_ROLLING_HILLS,readPermanentRollingHills,mergePermanentRollingIntoTotals} from './permanent-rolling-hills.js';
 
+import {publicationRetries,publicationRetry,samePublicationState} from './event-publication-retry.js';
+
 const JOBS='0.6.2_event_publication_jobs',PARTS='0.6.2_event_publication_parts';
-const PAGE=100,PAGES_PER_PASS=4;
+// At phase-2/4 cadence, 800 rows/pass completes 10,000 rows in 30 minutes,
+// inside the 50-minute snapshot window without increasing per-pass transactions.
+const PAGE=200,PAGES_PER_PASS=4;
 const decode=doc=>doc?eventDecode({mapValue:{fields:doc.fields||{}}}):null;
 const post=(r,route,body)=>r.request(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 const base=r=>`projects/${r.projectId}/databases/(default)/documents/`;
@@ -34,6 +38,17 @@ export async function advanceEventPublication(runtime,periodId=null,knownRoot=un
  if(periodId&&!p)return {idle:true};
  const priorJob=decode(await runtime.request('/'+JOBS+'/'+jobId));
  let state=priorJob;
+ // Defer abandoned checkpoints before reading another source page. The durable
+ // coordinator gate coalesces changes; the next due attempt may restart.
+ if(state?.complete===false&&!state.restartRequired&&state.readTime&&
+   (state.sourceRevision!==(root.revision||0)||runtime.now()-Date.parse(state.readTime)>50*60000)){
+   await runtime.store.transaction(async tx=>{
+     const current=await tx.get(JOBS+'/'+jobId);
+     if(!samePublicationState(current,priorJob))throw new EventError('event_publication_conflict',409);
+     await tx.set(JOBS+'/'+jobId,{...state,restartRequired:true});
+   });
+   return {pending:true,deferred:true,reason:state.sourceRevision!==(root.revision||0)?'finite_source_changed':'snapshot_expired',kind,id};
+ }
  // Rolling-only changes leave the finite revision unchanged. Persisted immutable
  // parts remain usable; the final transaction still fences both live sources.
  const reuseComplete=!periodId&&!state?.restartRequired&&state?.complete===true&&state.scanComplete===true&&state.sourceRevision===(root.revision||0);
@@ -68,7 +83,7 @@ export async function advanceEventPublication(runtime,periodId=null,knownRoot=un
    // A transactional checkpoint serializes overlapping cron/verifier invocations.
    await runtime.store.transaction(async tx=>{
      const current=await tx.get(JOBS+'/'+jobId);
-     if(JSON.stringify(current)!==JSON.stringify(state.parts===0&&!state.readTime?priorJob:state))throw new EventError('event_publication_conflict',409);
+     if(!samePublicationState(current,state.parts===0&&!state.readTime?priorJob:state))throw new EventError('event_publication_conflict',409);
      const partPath=PARTS+'/'+`${state.generation}_${state.parts}`;
      if(documents.length)await tx.get(partPath);
      if(documents.length)await tx.set(partPath,{entries});
@@ -83,7 +98,7 @@ export async function advanceEventPublication(runtime,periodId=null,knownRoot=un
    // A lost part must not strand durable work in a permanent reuse/failure loop.
    await runtime.store.transaction(async tx=>{
      const current=await tx.get(JOBS+'/'+jobId);
-     if(JSON.stringify(current)!==JSON.stringify(state))throw new EventError('event_publication_conflict',409);
+     if(!samePublicationState(current,state))throw new EventError('event_publication_conflict',409);
      await tx.set(JOBS+'/'+jobId,{...state,scanComplete:false,restartRequired:true});
    });
    return {pending:true,deferred:true,reason:'source_parts_missing',kind,id};
@@ -117,7 +132,7 @@ export async function advanceEventPublication(runtime,periodId=null,knownRoot=un
    const currentRolling=rollingSource?await tx.get(rollingPath):null;
    const workRoot=periodId?await tx.get(C.public+'/totals'):null;
    const manifestPath=PUBLIC_MANIFEST_COLLECTION+'/'+publicationManifestId(kind,id,paged.pagination.generation);await tx.get(manifestPath);
-   if(JSON.stringify(job)!==JSON.stringify(state))throw new EventError('event_publication_conflict',409);
+   if(!samePublicationState(job,state))throw new EventError('event_publication_conflict',409);
    if(!current||(current.revision||0)!==state.sourceRevision){
      await tx.set(JOBS+'/'+jobId,{...state,scanComplete:false,restartRequired:true});
      if(current)await tx.patch(rootPath,{publicationPending:true});
@@ -153,18 +168,31 @@ export async function publishEventCapacity(runtime) {
  const candidates=[...(work.publicationPending?[null]:[]),...periods];
  const cursorPath=C.cursors+'/public_capacity';
  const cursor=decode(await runtime.request('/'+cursorPath));
+ const now=runtime.now();
+ if(!Number.isSafeInteger(now)||now<0)throw Error('INVALID_EVENT_PUBLICATION_CLOCK');
+ const keyFor=id=>id?'event_'+id:'event_totals_main';
+ const retries=publicationRetries(cursor?.retries,candidates.map(keyFor),now);
+ const ready=index=>!(retries[keyFor(candidates[index])]?.retryAt>now);
  const active=cursor?.active?candidates.indexOf(cursor.periodId||null):-1;
- const index=active>=0?active:(cursor?.offset||0)%candidates.length,periodId=candidates[index];
- const result=await advanceEventPublication(runtime,periodId,periodId?undefined:work);
- const nextCursor={active:!!result.pending&&!result.deferred,periodId,offset:(index+1)%candidates.length};
- // One blocked source otherwise rewrites this identical cursor twice per five
- // minutes forever. Its source is still checked on every turn for recovery.
- const sameCursor=(a,b)=>a?.active===b?.active&&a?.periodId===b?.periodId&&a?.offset===b?.offset;
- if(!sameCursor(cursor,nextCursor))
+ const offset=Number.isSafeInteger(cursor?.offset)&&cursor.offset>=0?cursor.offset%candidates.length:0;
+ const index=active>=0&&ready(active)?active:Array.from({length:candidates.length},(_,i)=>(offset+i)%candidates.length).find(ready);
+ if(index===undefined)return {pending:true,deferred:true,reason:'publication_backoff',
+   retryAt:Math.min(...Object.values(retries).map(retry=>retry.retryAt))};
+ const periodId=candidates[index],key=keyFor(periodId);
+ let result=await advanceEventPublication(runtime,periodId,periodId?undefined:work);
+ if(result.idle)result={pending:true,deferred:true,kind:periodId?'event':'event_totals',id:periodId||'main',reason:'event_source_not_ready'};
+ if(result.published)delete retries[key];
+ else if(result.deferred){
+   const retry=publicationRetry(retries[key],result.reason,now);
+   if(retry)retries[key]=retry;
+ }
+ const nextCursor={active:!!result.pending&&!result.deferred,periodId,offset:(index+1)%candidates.length,
+   ...(Object.keys(retries).length?{retries}:{})};
+ if(!samePublicationState(cursor,nextCursor))
  await runtime.store.transaction(async tx=>{
    const current=await tx.get(cursorPath);
-   if(!sameCursor(current,cursor))throw new EventError('event_publication_conflict',409);
+   if(!samePublicationState(current,cursor))throw new EventError('event_publication_conflict',409);
    await tx.set(cursorPath,nextCursor);
  });
- return result.idle?{deferred:true,kind:periodId?'event':'event_totals',id:periodId||'main',reason:'event_source_not_ready'}:result;
+ return result;
 }

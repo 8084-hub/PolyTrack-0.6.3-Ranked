@@ -669,3 +669,65 @@ test('an unchanged pointer can be checked again after the deployment cooldown',a
   now=15*60_000;
   assert.equal((await read('overall'))?.updatedAt,8);assert.equal(pointers,2);
 });
+
+
+test('explicit snapshot refresh adopts a newer static generation and coalesces pointer checks',async()=>{
+  const f=await generationFixture({'overall.json':{updatedAt:7,entries:[]}}, {'overall.json':{updatedAt:8,entries:[]}});
+  assert.equal((await f.read('overall')).updatedAt,7);
+  const changed=await Promise.all([f.read.refresh(),f.read.refresh(),f.read.refresh()]);
+  assert.ok(changed.every(Boolean));
+  assert.equal((await f.read('overall')).updatedAt,8);
+  assert.equal(f.requests.filter(path=>path.endsWith('/snapshot-current.json')).length,1);
+  assert.equal(await f.read.refresh(),false);
+  assert.equal(f.requests.filter(path=>path.endsWith('/snapshot-current.json')).length,1);
+});
+
+test('failed explicit pointer refresh retains the usable static generation',async()=>{
+  const packed=await packedEntry({updatedAt:7,entries:[]});let calls=0;
+  const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/public-snapshots7/',fetchImpl:async url=>{
+    if(String(url).endsWith('snapshot-current.json')){calls++;return new Response('',{status:503});}
+    return String(url).endsWith('index.json')?packedIndex(packed.record):new Response(packed.bytes);
+  }});
+  assert.equal((await read('overall')).updatedAt,7);
+  await assert.rejects(read.refresh(),/pointer unavailable/);
+  assert.equal((await read('overall')).updatedAt,7);assert.equal(calls,1);
+});
+
+
+test('manual pointer checks use the UI two-minute budget independently of automatic recovery',async()=>{
+  let now=0,calls=0;
+  const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/public-snapshots7/',now:()=>now,
+    fetchImpl:async url=>{assert.ok(String(url).endsWith('snapshot-current.json'));calls++;return Response.json({currentdir:'public-snapshots7'});}});
+  assert.equal(await read.refresh(),false);assert.equal(calls,1);
+  now=119999;await read.refresh();assert.equal(calls,1);
+  now=120000;await Promise.all([read.refresh(),read.refresh()]);assert.equal(calls,2);
+});
+
+for(const failure of ['missing','malformed','redirected'])test('manual '+failure+' pointer is not reported as a successful check',async()=>{
+  const packed=await packedEntry({updatedAt:7,entries:[]});let calls=0;
+  const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/public-snapshots7/',fetchImpl:async url=>{
+    if(String(url).endsWith('snapshot-current.json')){
+      calls++;
+      if(failure==='missing')return new Response('',{status:404});
+      if(failure==='malformed')return Response.json({currentdir:'../private'});
+      const response=Response.json({currentdir:'public-snapshots8'});
+      Object.defineProperty(response,'url',{value:'https://other.test/snapshot-current.json'});return response;
+    }
+    return String(url).endsWith('index.json')?packedIndex(packed.record):new Response(packed.bytes);
+  }});
+  assert.equal((await read('overall')).updatedAt,7);
+  await assert.rejects(read.refresh(),/snapshot pointer/i);
+  assert.equal((await read('overall')).updatedAt,7);assert.equal(calls,1);
+});
+
+test('manual refresh joining automatic recovery retains the shared failure outcome',async()=>{
+  let release,started,pointers=0;const entered=new Promise(resolve=>{started=resolve;});
+  const read=createPublicSnapshotReader({packed:true,baseUrl:'https://example.test/public-snapshots7/',fetchImpl:async url=>{
+    if(String(url).endsWith('snapshot-current.json')){pointers++;started();return new Promise(resolve=>{release=resolve;});}
+    return new Response('',{status:404});
+  }});
+  const automatic=read('overall');await entered;
+  const manual=read.refresh();const rejected=assert.rejects(manual,/pointer unavailable/);
+  release(new Response('',{status:404}));
+  assert.equal(await automatic,null);await rejected;assert.equal(pointers,1);
+});

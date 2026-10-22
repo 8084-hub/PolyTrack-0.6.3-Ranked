@@ -7,7 +7,7 @@ export function isVerifiedNativeInitialLeaderboardSchedule(callback, delay, stac
   return source.includes('isCancelled') && source.includes('.getLeaderboard(');
 }
 
-export function installNativeInitialOpenLatencyHook({window: view = window, document: root = document, onEvent = () => {}} = {}) {
+export function installNativeInitialOpenLatencyHook({window: view = window, document: root = document, onEvent = () => {}, onInitialOpen = () => {}} = {}) {
   let activeRestore = null;
   const onClick = event => {
     const button = event.target?.closest?.(TRACK_BUTTON);
@@ -22,15 +22,19 @@ export function installNativeInitialOpenLatencyHook({window: view = window, docu
       settled = true;
       activeRestore = null;
       if (view.setTimeout === scopedTimeout) view.setTimeout = original;
-      button.removeEventListener('click', restore);
+      button.removeEventListener('click', finishOpen);
       view.clearTimeout(fallback);
       onEvent('restored');
     };
+    function finishOpen() {
+      // The constructor has now created its filter. Apply the existing default
+      // before either native request can paint; only this click is accelerated.
+      try { onInitialOpen(); } finally { restore(); }
+    }
     function scopedTimeout(callback, delay, ...args) {
       const stack = new Error().stack;
       if (isVerifiedNativeInitialLeaderboardSchedule(callback, delay, stack)) {
         onEvent('matched');
-        restore();
         return original.call(view, callback, 0, ...args);
       }
       return original.call(view, callback, delay, ...args);
@@ -38,7 +42,7 @@ export function installNativeInitialOpenLatencyHook({window: view = window, docu
     activeRestore = restore;
     view.setTimeout = scopedTimeout;
     onEvent('armed');
-    button.addEventListener('click', restore, {once:true});
+    button.addEventListener('click', finishOpen, {once:true});
     fallback = original.call(view, restore, 0);
   };
   root.addEventListener('click', onClick, true);

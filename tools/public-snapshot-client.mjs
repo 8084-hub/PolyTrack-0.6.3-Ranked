@@ -45,7 +45,7 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
   }
   async function fetchSnapshot(url,options){try{return await fetchImpl(url,options);}catch(error){throw markTransientFetchError(error);}}
   async function responseBody(response,method){try{return await response[method]();}catch(error){throw markTransientFetchError(error);}}
-  let packageBase=new URL(baseUrl),indexRequest=null,bootstrapRequest=null,preferBootstrap=bootstrap,pointerRecoveryRetryAt=0,pointerRecoveryRequest=null,pointerRecoveryFailure=null;
+  let packageBase=new URL(baseUrl),indexRequest=null,bootstrapRequest=null,preferBootstrap=bootstrap,pointerRecoveryRetryAt=0,manualPointerRetryAt=0,pointerRecoveryRequest=null,pointerRecoveryOutcome=null,pointerRecoveryFailure=null;
   const bootstrapPath=logical=>!/^(?:profiles|profile-results|canonical|recordings|event-replays)\//.test(logical);
   async function loadPackageIndex(compact){
     const failure=indexFailures.get(compact);
@@ -126,27 +126,36 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     }
     return loadPackageIndex(false);
   }
-  async function recoverCurrentGeneration(){
-    if(pointerRecoveryRequest)return pointerRecoveryRequest;
+  async function recoverCurrentGeneration({manual=false}={}){
+    const invalidPointer=message=>{const error=Error(message);outcome.error=error;if(manual)throw error;return false;};
+    if(pointerRecoveryRequest){
+      const joinedOutcome=pointerRecoveryOutcome;
+      if(manual)manualPointerRetryAt=now()+2*60_000;
+      const result=await pointerRecoveryRequest;
+      if(manual&&joinedOutcome?.error)throw joinedOutcome.error;
+      return result;
+    }
     if(pointerRecoveryFailure){
       if(now()<pointerRecoveryFailure.retryAt)throw pointerRecoveryFailure.error;
       pointerRecoveryFailure=null;pointerRecoveryRetryAt=0;
     }
-    if(now()<pointerRecoveryRetryAt)return false;
+    if(now()<(manual?manualPointerRetryAt:pointerRecoveryRetryAt))return false;
+    if(manual)manualPointerRetryAt=now()+2*60_000;
     // Bound pointer checks without permanently stranding a tab after another deployment.
     pointerRecoveryRetryAt=now()+LONG_RETRY_MS;
+    const outcome={error:null};pointerRecoveryOutcome=outcome;
     pointerRecoveryRequest=(async()=>{
       try{
         const parent=new URL('../',packageBase),pointerUrl=new URL('snapshot-current.json',parent);
-        if(pointerUrl.origin!==packageBase.origin)return false;
+        if(pointerUrl.origin!==packageBase.origin)return invalidPointer('Invalid snapshot pointer origin');
         const response=await fetchSnapshot(pointerUrl,{credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(5000)});
-        if(!response.ok){if(response.status===429||response.status>=500&&response.status<=599){const error=Error('Snapshot pointer unavailable');error.status=response.status;throw error;}return false;}
-        if(response.url){const finalUrl=new URL(response.url);if(finalUrl.origin!==pointerUrl.origin||finalUrl.href!==pointerUrl.href)return false;}
-        const text=await responseBody(response,'text');if(text.length>16384)return false;
+        if(!response.ok){if(manual||response.status===429||response.status>=500&&response.status<=599){const error=Error('Snapshot pointer unavailable');error.status=response.status;throw error;}return invalidPointer('Snapshot pointer unavailable');}
+        if(response.url){const finalUrl=new URL(response.url);if(finalUrl.origin!==pointerUrl.origin||finalUrl.href!==pointerUrl.href)return invalidPointer('Invalid snapshot pointer redirect');}
+        const text=await responseBody(response,'text');if(text.length>16384)return invalidPointer('Invalid snapshot pointer size');
         const pointer=JSON.parse(text);
-        if(typeof pointer.currentdir!=='string'||!/^public-snapshots[1-9]\d*$/.test(pointer.currentdir))return false;
+        if(typeof pointer?.currentdir!=='string'||!/^public-snapshots[1-9]\d*$/.test(pointer.currentdir))return invalidPointer('Invalid snapshot pointer directory');
         const nextBase=new URL(`${pointer.currentdir}/`,parent);
-        if(nextBase.origin!==packageBase.origin||nextBase.pathname!==`${parent.pathname}${pointer.currentdir}/`)return false;
+        if(nextBase.origin!==packageBase.origin||nextBase.pathname!==`${parent.pathname}${pointer.currentdir}/`)return invalidPointer('Invalid snapshot pointer path');
         if(nextBase.href===packageBase.href)return false;
         const previousBaseUrl=packageBase.href;
         packageBase=nextBase;
@@ -158,7 +167,7 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
         // Notify once after invalidation. Do not await callbacks that may read the new package.
         try{Promise.resolve(onGenerationChange?.({previousBaseUrl,baseUrl:packageBase.href,generation})).catch(()=>{});}catch{}
         return true;
-      }catch(error){if(isTransientFailure(error)){pointerRecoveryFailure={error,retryAt:now()+SHORT_RETRY_MS};throw error;}return false;}
+      }catch(error){outcome.error=error;if(isTransientFailure(error)){pointerRecoveryFailure={error,retryAt:now()+SHORT_RETRY_MS};throw error;}if(manual)throw error;return false;}
     })();
     const request=pointerRecoveryRequest;
     request.then(()=>{if(pointerRecoveryRequest===request)pointerRecoveryRequest=null;},()=>{if(pointerRecoveryRequest===request)pointerRecoveryRequest=null;});
@@ -390,7 +399,7 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
     if(preview&&(!Array.isArray(value.pageBounds)||value.pageBounds.length!==value.pageCount||value.pageBounds.some((bounds,index)=>
       !validBounds(bounds,index*100,Math.min(100,value.publishedEntries-index*100),index+1)||index>0&&(bounds.minTimeMs<value.pageBounds[index-1].maxTimeMs||value.ranksExact&&bounds.firstRank<=value.pageBounds[index-1].lastRank))))throw Error('Invalid track page directory');
   }
-  return async function read(kind,id='',accountId='',pageNumber){
+  const read=async function read(kind,id='',accountId='',pageNumber){
     if((kind==='track-page'||kind==='overall-page')&&pageNumber!==undefined)accountId=pageNumber;
     for(;;){
       const requestedGeneration=generation;
@@ -399,4 +408,6 @@ export function createPublicSnapshotReader({baseUrl,fetchImpl=fetch,now=Date.now
       if(requestedGeneration===generation)return value;
     }
   };
+  read.refresh=()=>recoverCurrentGeneration({manual:true});
+  return read;
 }

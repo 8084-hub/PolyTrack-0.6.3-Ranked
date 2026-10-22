@@ -69,19 +69,19 @@ test('PB is persisted before attempting Firestore',()=>{
 });
 function overallContext({firestoreData=null,workerData=null,offline=false,failFirestore=false}={}) {
  const saved={entries:[{userId:'a',rank:1},{userId:'b',rank:2}],trackSummaries:[{trackId:'saved'}],fetchedAt:1,serverUpdatedAt:1,signature:'saved'};
- // These refresh/fallback cases model an established, unlocked account; age-gate behavior is tested separately.
+ // Overall refresh reads the published package, regardless of account age.
  const ctx={Date,console,overallCloudRetryAt:0,overallCloudCheckedAt:0,publicSnapshotRetryAt:0,noteFirebaseQuota:()=>{},readOverallSnapshotCache:()=>saved,TOTAL_TRACKS:78,OVERALL_REFRESH_CHECK_MS:120000,overallTrackSummariesCache:[],overallLoadState:{},snapshotOnlyForNewAccount:()=>false,
  fetchRankedSnapshot:async()=>{if(workerData)return workerData;throw Error('blocked')},readPublicSnapshotBackup:async()=>null,
  db:async()=>{if(failFirestore)throw Error('quota');return {collection:()=>({doc:()=>({get:async()=>({data:()=>firestoreData,metadata:{fromCache:offline}})})})}},
  expandRankedResults:async data=>run('decodeRankedResults')(data),normalizeEntries:x=>x,annotateOverallMovement:x=>x,writeOverallSnapshotCache:(rows,meta)=>{ctx.written={rows,meta}},log:()=>{},isLocalApiCapableHost:()=>false,
  COLLECTIONS:{leaderboardsOverall:'overall'},AVERAGE_PLACEMENT_VERSION:1,AVERAGE_FINISH_VERSION:1,RANK_MODEL:'test',TRACK_CACHE_SCHEMA:1};ctx.readDirectPublicSnapshot=async(collection,id)=>(await ctx.db()).collection(collection).doc(id).get();return ctx;
 }
-test('blocked Worker falls back to a complete Firestore snapshot',async()=>{
+test('missing published Overall keeps saved standings without trying Firestore',async()=>{
  const data={entries:[{userId:'new',rankModel:'test',averageFinishVersion:1,averagePlacementVersion:1}],trackSummaries:[{trackId:'new'}],algorithmVersion:'test',schemaVersion:1,revision:2,builtRevision:2,sourceRevision:2,updatedAt:2};
- const ctx=overallContext({firestoreData:data});const rows=await run('loadOverallEntries',ctx)(true);
- assert.equal(rows[0].userId,'new');assert.equal(ctx.overallTrackSummariesCache[0].trackId,'new');assert.equal(ctx.written.meta.source,'firestore');
+ const ctx=overallContext({firestoreData:data});ctx.readDirectPublicSnapshot=async()=>assert.fail('Unexpected Firebase read');const rows=await run('loadOverallEntries',ctx)(true);
+ assert.equal(rows[0].userId,'a');assert.equal(ctx.overallTrackSummariesCache[0].trackId,'saved');assert.equal(ctx.written,undefined);
 });
-test('Worker and Firestore failure retain permanent saved Ranked',async()=>{
+test('published package failure retains permanent saved Ranked',async()=>{
  const ctx=overallContext({failFirestore:true});const rows=await run('loadOverallEntries',ctx)(true);
  assert.equal(rows.length,2);assert.equal(ctx.overallLoadState.status,'stale');assert.equal(ctx.written,undefined);
 });
@@ -91,7 +91,7 @@ test('partial Firestore cache never replaces complete saved Ranked',async()=>{
 });
 
 
-test('an older cloud revision cannot replace newer saved Overall',async()=>{
+test('an older published revision cannot replace newer saved Overall',async()=>{
  const ctx=overallContext({workerData:{entries:[{userId:'old',rankModel:'test',averageFinishVersion:1,averagePlacementVersion:1}],trackSummaries:[],algorithmVersion:'test',schemaVersion:1,revision:2,builtRevision:2,sourceRevision:2,updatedAt:999}});
  ctx.readOverallSnapshotCache=()=>({entries:[{userId:'current'}],trackSummaries:[{trackId:'current'}],algorithmVersion:'test',sourceRevision:3,serverUpdatedAt:3,signature:'new'});
  const rows=await run('loadOverallEntries',ctx)(true);assert.equal(rows[0].userId,'current');assert.equal(ctx.written,undefined);assert.equal(ctx.overallTrackSummariesCache[0].trackId,'current');
@@ -372,20 +372,20 @@ test('local PB never inherits a different cloud replay ID',()=>{
 test('same snapshot decode failure retains complete cached planner samples',async()=>{
  const row={userId:'me',score:5,raceCount:2,rankModel:'test',averageFinishVersion:1,averagePlacementVersion:1};
  const data={entries:[row],trackSummaries:[],algorithmVersion:'test',schemaVersion:1,revision:2,builtRevision:2,sourceRevision:2,updatedAt:2};
- const ctx=overallContext({firestoreData:data});ctx.readOverallSnapshotCache=()=>({entries:[{...row,resultSamples:[{trackId:'a'},{trackId:'b'}]}],signature:'test:2:2:2',fetchedAt:1});
+ const ctx=overallContext({workerData:data});ctx.readOverallSnapshotCache=()=>({entries:[{...row,resultSamples:[{trackId:'a'},{trackId:'b'}]}],signature:'test:2:2:2',fetchedAt:1});
  const rows=await run('loadOverallEntries',ctx)(true);assert.equal(rows[0].resultSamples.length,2);assert.equal(ctx.written.rows[0].resultSamples.length,2);
 });
 test('different revision cannot borrow older planner results',async()=>{
  const row={userId:'me',score:5,raceCount:2,rankModel:'test',averageFinishVersion:1,averagePlacementVersion:1};
  const data={entries:[row],trackSummaries:[],algorithmVersion:'test',schemaVersion:1,revision:3,builtRevision:3,sourceRevision:3,updatedAt:3};
- const ctx=overallContext({firestoreData:data});ctx.readOverallSnapshotCache=()=>({entries:[{...row,resultSamples:[{trackId:'a'},{trackId:'b'}]}],signature:'test:2:2:2',fetchedAt:1});
+ const ctx=overallContext({workerData:data});ctx.readOverallSnapshotCache=()=>({entries:[{...row,resultSamples:[{trackId:'a'},{trackId:'b'}]}],signature:'test:2:2:2',fetchedAt:1});
  const rows=await run('loadOverallEntries',ctx)(true);assert.equal(rows[0].resultSamples,undefined);
 });
 
 test('large planner sidecar is used only with exact snapshot binding',async()=>{
  for(const offset of [0,1]){
   const data={entries:[{userId:'me',rankModel:'test',averageFinishVersion:1,averagePlacementVersion:1}],trackSummaries:[],algorithmVersion:'test',schemaVersion:1,revision:2,builtRevision:2,sourceRevision:2,updatedAt:2,resultBundleLocation:'main_results'};
-  const ctx=overallContext({workerData:data});let reads=0;ctx.db=async()=>({collection:()=>({doc:id=>({get:async()=>{assert.equal(id,'main_results');reads++;return{data:()=>({algorithmVersion:'test',sourceRevision:2+offset,builtRevision:2,updatedAt:2,resultBundle:'bundle',resultBundleVersion:1})}}})})});
+  const ctx=overallContext({workerData:data});let reads=0;ctx.readPublicSnapshotBackup=async kind=>{assert.equal(kind,'overall-results');reads++;return{algorithmVersion:'test',sourceRevision:2+offset,builtRevision:2,updatedAt:2,resultBundle:'bundle',resultBundleVersion:1};};ctx.readDirectPublicSnapshot=async()=>assert.fail('Unexpected Firebase read');
   let seen;ctx.expandRankedResults=async d=>{seen=d;return d.entries};await run('loadOverallEntries',ctx)(true);assert.equal(reads,1);assert.equal(seen.resultBundle,offset?undefined:'bundle');
  }
 });

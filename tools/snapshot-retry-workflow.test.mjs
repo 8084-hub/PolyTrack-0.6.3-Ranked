@@ -118,3 +118,27 @@ test('restored history does not defer changed bindings or turn a cache miss into
  const result=await exportPublicProfilesAndReplays({directory,snapshotDirectory:directory,includeProfiles:false,now,fetchImpl:async(...args)=>{requests++;return missing(...args);}});
  assert.equal(requests,1);assert.equal(result.complete,false);assert.equal(result.deferredBindingRetries,0);assert.equal(result.totalCoverage.missing,1);
 });
+
+test('mid-export quota deferral retains checkpointed retry ledger and never advances public package',async t=>{
+ const root=await fixture(t),directory=await stage(root,[entry(),entry('c'.repeat(64),43)]);
+ const published=await updatePublicSnapshot({root,offline:true,log:()=>{}});
+ const pointer=await fs.readFile(path.join(root,'snapshot-current.json'));
+ const index=await fs.readFile(path.join(root,published.directory,'index.json'));
+ const html=await fs.readFile(path.join(root,'index.html'));
+ let calls=0;
+ const result=await updatePublicSnapshot({root,refreshReplays:true,capture:async()=>({}),log:()=>{},
+  exportPublic:options=>exportPublicProfilesAndReplays({...options,pageSize:1,now}),
+  exportFetch:async(...args)=>++calls===1?missing(...args):new Response('',{status:429})});
+ assert.equal(calls,2);assert.equal(result.deferred,true);assert.equal(result.published,false);
+ assert.deepEqual(await fs.readFile(path.join(root,'snapshot-current.json')),pointer);
+ assert.deepEqual(await fs.readFile(path.join(root,published.directory,'index.json')),index);
+ assert.deepEqual(await fs.readFile(path.join(root,'index.html')),html);
+ const cacheFile=path.join(root,'runner','history.json');
+ await run('save',cacheFile,path.join(directory,'export-progress.json'),now);
+ const saved=await read(cacheFile);assert.equal(Object.keys(saved.records).length,1);
+ assert.equal(saved.records[key].reason,'missing');
+ const freshProgress=path.join(root,'fresh-run','export-progress.json');
+ await run('restore',cacheFile,freshProgress,now);
+ assert.deepEqual((await read(freshProgress)).raceExport.records,saved.records);
+ assert.ok(!Object.keys(JSON.parse(index).files).includes('export-progress.json'));
+});

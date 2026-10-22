@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { decodeSnapshot } from './snapshot-package.mjs';
-import { updatePublicSnapshot } from './update-public-snapshot.mjs';
+import { updatePublicSnapshot, reportCaptureOutcome } from './update-public-snapshot.mjs';
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'update-public-snapshot-'));
@@ -140,9 +140,11 @@ test('deferred capture skips event totals and preserves the current pointer', as
   const root = await fixture(t);
   const { runPublicSnapshotBackup } = await import('./public-snapshot-backup.mjs');
   let totalsCalls = 0;
-  await assert.rejects(updatePublicSnapshot({ root, capture: runPublicSnapshotBackup,
+  const result = await updatePublicSnapshot({ root, capture: runPublicSnapshotBackup,
     captureOptions: { fetchImpl: async () => { throw new Error('test network disabled'); } },
-    captureTotals: async () => { totalsCalls++; }, log: () => {} }), /Snapshot capture deferred/);
+    captureTotals: async () => { totalsCalls++; }, log: () => {} });
+  assert.equal(result.deferred, true);
+  assert.equal(result.published, false);
   assert.equal(totalsCalls, 0);
   assert.equal(await readFile(path.join(root, 'snapshot-current.json')).then(() => true, () => false), false);
 });
@@ -238,7 +240,9 @@ test('deferred capture after rebase keeps the new baseline, old stage, and check
   await writeFile(path.join(stage, 'export-progress.json'), JSON.stringify({ checkpoint: 'keep' }));
   const publishedB = await publishFixture(root, path.join(root, 'external-stage'), { generationData: 'B', entries: [] });
 
-  await assert.rejects(updatePublicSnapshot({ root, capture: async () => ({ deferred: true, reason: 'test budget' }), log: () => {} }), /Snapshot capture deferred/);
+  const result = await updatePublicSnapshot({ root, capture: async () => ({ deferred: true, reason: 'test budget' }), log: () => {} });
+  assert.equal(result.deferred, true);
+  assert.equal(result.published, false);
   assert.deepEqual(JSON.parse(await readFile(path.join(root, 'snapshot-current.json'), 'utf8')), { currentdir: publishedB.directory });
   assert.equal(JSON.parse(await readFile(path.join(stage, 'overall.json'), 'utf8')).generationData, 'B');
   assert.equal(JSON.parse(await readFile(path.join(stage, 'export-progress.json'), 'utf8')).checkpoint, 'keep');
@@ -307,4 +311,152 @@ test('corrupt page payload safely aborts fresh hydration without creating a part
   await assert.rejects(updatePublicSnapshot({ root, offline: true, log: () => {} }), /Snapshot payload hash mismatch: track-pages/);
   assert.equal(await readFile(staging).then(() => true, () => false), false);
   assert.deepEqual(JSON.parse(await readFile(path.join(root, 'snapshot-current.json'), 'utf8')), { currentdir: published.directory });
+});
+
+async function replayCaptureFixture(t) {
+  const root = await fixture(t), staging = path.join(root, 'local-reports', 'snapshot-staging');
+  const accountId = 'a'.repeat(64), trackId = 'b'.repeat(64), replayHash = 'c'.repeat(64);
+  await mkdir(path.join(staging, 'tracks'));
+  await writeFile(path.join(staging, 'tracks', trackId + '.json'), JSON.stringify({trackId, complete: true, entries: [
+    {accountId, trackId, uploadId: 42, frames: 900, raceTimeFrames: 900, timeMs: 15000,
+      replayHash, runVerified: true, integrityVerified: true},
+  ]}));
+  await writeFile(path.join(staging, 'overall.json'), JSON.stringify({complete: true, entries: [], trackSummaries: []}));
+  const published = await updatePublicSnapshot({root, offline: true, log: () => {}});
+  const files = ['snapshot-current.json', 'index.html', ...
+    (await readdir(path.join(root, published.directory), {recursive: true, withFileTypes: true}))
+      .filter(entry => entry.isFile()).map(entry => path.relative(root, path.join(entry.parentPath, entry.name)))];
+  const original = new Map();
+  for (const file of files) original.set(file, await readFile(path.join(root, file)));
+  const unchanged = async () => {
+    for (const [file, bytes] of original) assert.deepEqual(await readFile(path.join(root, file)), bytes, file);
+    assert.deepEqual((await readdir(root)).filter(name => /^public-snapshots\d+$/.test(name)), [published.directory]);
+  };
+  return {root, staging, unchanged};
+}
+
+test('all expected replay HTTP deferrals stop without publishing or retrying', async t => {
+  const f = await replayCaptureFixture(t);
+  for (const status of [408, 429, 500, 502, 503, 504]) {
+    let requests = 0;
+    const result = await updatePublicSnapshot({root: f.root, refreshReplays: true, capture: async () => ({}),
+      exportFetch: async () => {requests++; return new Response('', {status});}, log: () => {}});
+    assert.deepEqual(result, {deferred: true, published: false, phase: 'replays',
+      reason: 'Replay export service temporarily unavailable', status, previousPackagePreserved: true});
+    assert.equal(requests, 1);
+    await f.unchanged();
+    const progress = JSON.parse(await readFile(path.join(f.staging, 'export-progress.json'), 'utf8'));
+    assert.equal(progress.raceExport.pending.length, 1);
+    assert.equal(Object.keys(progress.raceExport.covered).length, 0);
+  }
+});
+
+test('replay fetch and response-stream interruptions defer without publication', async t => {
+  const f = await replayCaptureFixture(t);
+  for (const exportFetch of [
+    async () => {throw new TypeError('fetch failed');},
+    async () => {throw new DOMException('timed out', 'TimeoutError');},
+    async () => ({ok: true, status: 200, text: async () => {throw new TypeError('terminated');}}),
+    async () => ({ok: true, status: 200, text: async () => {throw new DOMException('aborted', 'AbortError');}}),
+  ]) {
+    const result = await updatePublicSnapshot({root: f.root, refreshReplays: true,
+      capture: async () => ({}), exportFetch, log: () => {}});
+    assert.equal(result.deferred, true); assert.equal(result.published, false);
+    await f.unchanged();
+  }
+});
+
+test('authorization, malformed responses and unexpected export failures remain fatal', async t => {
+  const f = await replayCaptureFixture(t);
+  for (const [exportFetch, expected] of [
+    [async () => new Response('', {status: 403}), /batchGet failed \(403\)/],
+    [async () => new Response('not JSON'), /Invalid Firestore batchGet JSON/],
+    [async () => Response.json({invalid: true}), /Invalid Firestore batchGet response/],
+    [async () => {throw new Error('unexpected implementation failure');}, /unexpected implementation failure/],
+    [async () => {throw new TypeError('invalid option');}, /invalid option/],
+  ]) {
+    await assert.rejects(updatePublicSnapshot({root: f.root, refreshReplays: true,
+      capture: async () => ({}), exportFetch, log: () => {}}), expected);
+    await f.unchanged();
+  }
+});
+
+test('snapshot deferral preserves all published bytes and does not start replay export', async t => {
+  const f = await replayCaptureFixture(t);
+  let exported = 0;
+  const result = await updatePublicSnapshot({root: f.root, refreshReplays: true,
+    capture: async () => ({deferred: true, reason: 'quota', status: 429}),
+    exportPublic: async () => {exported++; throw Error('must not export');}, log: () => {}});
+  assert.equal(result.deferred, true); assert.equal(exported, 0);
+  await f.unchanged();
+});
+
+test('malformed snapshot data remains fatal rather than reporting a deferral', async t => {
+  const f = await replayCaptureFixture(t);
+  await assert.rejects(updatePublicSnapshot({root: f.root,
+    captureOptions: {fetchImpl: async () => new Response('not JSON')}, log: () => {}}), /Invalid public snapshot JSON/);
+  await f.unchanged();
+});
+
+test('workflow reporting explicitly distinguishes complete from deferred and rejects invalid outcomes', async t => {
+  const root = await fixture(t), env = {GITHUB_OUTPUT: path.join(root, 'output'), GITHUB_STEP_SUMMARY: path.join(root, 'summary')};
+  const warnings = [];
+  await reportCaptureOutcome({deferred: true, published: false}, {env, log: value => warnings.push(value)});
+  assert.equal(await readFile(env.GITHUB_OUTPUT, 'utf8'), 'capture_status=deferred\n');
+  assert.match(await readFile(env.GITHUB_STEP_SUMMARY, 'utf8'), /publication skipped/);
+  assert.match(warnings[0], /^::warning::/);
+  await writeFile(env.GITHUB_OUTPUT, '');
+  await reportCaptureOutcome({deferred: false}, {env, log: value => warnings.push(value)});
+  assert.equal(await readFile(env.GITHUB_OUTPUT, 'utf8'), 'capture_status=complete\n');
+  assert.equal(warnings.length, 1);
+  await assert.rejects(reportCaptureOutcome({}, {env}), /Invalid public capture outcome/);
+});
+
+async function totalsUpdateFixture(t){
+  const f=await replayCaptureFixture(t);
+  const progress=path.join(f.staging,'export-progress.json');
+  const ledger=JSON.stringify({schemaVersion:2,projectId:'polytrack-052',raceExport:{records:{prior:{available:false,reason:'missing',checkedAt:7}}}})+'\n';
+  await writeFile(progress,ledger);
+  return {...f,ledgerUnchanged:async()=>assert.equal(await readFile(progress,'utf8'),ledger)};
+}
+
+test('returned or typed totals deferral skips replay export and all package publication',async t=>{
+  const f=await totalsUpdateFixture(t);
+  const {PublicBackupDeferredError}=await import('./public-backup-fetch.mjs');
+  for(const captureTotals of [async()=>({deferred:true,status:429,reason:'totals quota'}),async()=>{throw new PublicBackupDeferredError('totals quota',429);}]){
+    const order=[];
+    const result=await updatePublicSnapshot({root:f.root,refreshReplays:true,capture:async()=>{order.push('snapshot');return {};},
+      captureTotals:async options=>{order.push('totals');return captureTotals(options);},
+      exportPublic:async()=>assert.fail('Replay export must not start'),log:()=>{}});
+    assert.deepEqual(result,{deferred:true,published:false,phase:'event-totals',reason:'totals quota',status:429,previousPackagePreserved:true});
+    assert.deepEqual(order,['snapshot','totals']);await f.unchanged();await f.ledgerUnchanged();
+    const output=path.join(f.root,'capture-output');await writeFile(output,'');
+    await reportCaptureOutcome(result,{env:{GITHUB_OUTPUT:output},log:()=>{}});
+    assert.equal(await readFile(output,'utf8'),'capture_status=deferred\n');
+  }
+});
+
+test('totals correctness throws and invalid outcome contracts do not publish or export',async t=>{
+  const f=await totalsUpdateFixture(t);
+  const failure=new Error('Malformed totals generation');
+  for(const captureTotals of [async()=>{throw failure;},async()=>undefined,async()=>({}),async()=>({deferred:'false'})]){
+    await assert.rejects(updatePublicSnapshot({root:f.root,refreshReplays:true,capture:async()=>({}),captureTotals,
+      exportPublic:async()=>assert.fail('Replay export must not start'),log:()=>{}}),error=>error===failure||/Invalid public event totals capture outcome/.test(error.message));
+    await f.unchanged();await f.ledgerUnchanged();
+  }
+});
+
+test('successful totals capture is included before publishing one complete package outcome',async t=>{
+  const f=await totalsUpdateFixture(t),order=[];
+  const {capturePublicEventTotals}=await import('./public-event-totals-backup.mjs');
+  const totals={updatedAt:9,entries:[{accountId:'a'.repeat(64),name:'Racer',rp:3}],complete:true,totalEntries:1};
+  const result=await updatePublicSnapshot({root:f.root,refreshReplays:true,
+    capture:async()=>{order.push('snapshot');return {};},
+    captureTotals:options=>capturePublicEventTotals({...options,fetchImpl:async()=>{order.push('totals');return Response.json(totals);}}),
+    exportPublic:async()=>{order.push('replays');return {complete:true,coverage:{complete:true},counts:{}};},log:()=>{}});
+  assert.deepEqual(order,['snapshot','totals','replays']);assert.equal(result.deferred,false);assert.equal(result.published,true);assert.equal(result.generation,2);
+  const index=JSON.parse(await readFile(path.join(f.root,result.directory,'index.json'),'utf8'));
+  const packed=await readFile(path.join(f.root,result.directory,index.files['event-totals.json'].path));
+  assert.deepEqual(JSON.parse(Buffer.from(await decodeSnapshot(packed)).toString('utf8')),{...totals,entries:totals.entries.map(row=>({...row,identityUpdatedAt:0}))});
+  await f.ledgerUnchanged();
 });

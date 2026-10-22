@@ -33,7 +33,7 @@ jobs:
         run: node tools/extra-verification-check.mjs
       - name: Test snapshot integrity and resumable capture
         # Offline safeguards run before any production reads.
-        run: node --test tools/snapshot-lookup.test.mjs tools/public-snapshot-backup.test.mjs tools/published-snapshot-pages.test.mjs tools/snapshot-package.test.mjs tools/public-snapshot-client.test.mjs tools/track-snapshot-paging.test.mjs tools/update-public-snapshot.test.mjs tools/snapshot-retry-workflow.test.mjs
+        run: node --test --test-concurrency=2 tools/snapshot-lookup.test.mjs tools/public-snapshot-backup.test.mjs tools/published-snapshot-pages.test.mjs tools/public-event-totals-backup.test.mjs tools/snapshot-package.test.mjs tools/public-snapshot-client.test.mjs tools/track-snapshot-paging.test.mjs tools/update-public-snapshot.test.mjs tools/snapshot-retry-workflow.test.mjs tools/merge-frozen-event-catalog-workflow.test.mjs tools/sync-event-catalog.test.mjs
       # Workflow-private state, NOT secret storage: only public binding IDs and
       # retry timestamps/counters. Never cache the raw export checkpoint or repo.
       - name: Restore private replay retry ledger
@@ -105,14 +105,19 @@ jobs:
           node "$RUNNER_TEMP/polytrack-replay-retry-cache.mjs" restore "$RUNNER_TEMP/polytrack-replay-retries/history.json" local-reports/snapshot-staging/export-progress.json
       - name: Capture public event assignments
         id: catalog
-        run: node tools/sync-event-catalog.mjs
+        run: |
+          node --input-type=module <<'CATALOG'
+          import {syncPublicEventCatalog} from './tools/sync-event-catalog.mjs';
+          import {reportCaptureOutcome} from './tools/update-public-snapshot.mjs';
+          await reportCaptureOutcome(await syncPublicEventCatalog());
+          CATALOG
       - name: Capture bounded public snapshots
         id: snapshot
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 10 * * *'
+        if: steps.catalog.outputs.capture_status == 'complete' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '30 10 * * *')
         # Only changed/missing trusted normal replays are fetched; bounded to 100 documents.
         run: node tools/update-public-snapshot.mjs --refresh-replays
       - name: Index all saved frozen event periods
-        if: always() && !cancelled() && steps.catalog.outcome == 'success'
+        if: always() && !cancelled() && steps.catalog.outcome == 'success' && steps.catalog.outputs.capture_status == 'complete'
         # Local files only, including catalog-only and failed-capture runs; staging is optional.
         run: node tools/merge-frozen-event-catalog.mjs
       - name: Retain validated private replay retry ledger
@@ -129,6 +134,8 @@ jobs:
           path: ${{ runner.temp }}/polytrack-replay-retries/history.json
           key: replay-retries-v1-${{ github.repository_id }}-${{ github.event.repository.default_branch }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Commit changed assignments
+        # A successful step can be explicitly deferred; never publish that capture.
+        if: success() && steps.catalog.outputs.capture_status == 'complete' && (steps.snapshot.outputs.capture_status == 'complete' || (github.event_name == 'schedule' && github.event.schedule == '10 20 * * 0' && steps.snapshot.outcome == 'skipped'))
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
