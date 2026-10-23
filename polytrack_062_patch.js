@@ -338,7 +338,9 @@
         },
         readStaticArchiveCatalog:async()=>{
           const url=new URL('./public-catalog.json',eventsModuleUrl);
-          if(url.origin!==location.origin)throw Error('Saved archive catalog must be same-origin.');
+          const assetBase=typeof document!=='undefined'?String(document.baseURI||''):'';
+          const pinnedCdn=/^https:\/\/cdn\.jsdelivr\.net\/gh\/StaticQuasar931\/PolyTrack-0\.6\.3-Ranked@[a-f0-9]{40}\/$/.test(assetBase)&&url.href===assetBase+'events/public-catalog.json';
+          if(url.origin!==location.origin&&!pinnedCdn)throw Error('Saved archive catalog must be same-origin or the pinned game CDN.');
           const response=await fetch(url,{cache:'default',signal:eventRequestSignal(5000)});
           if(!response.ok)throw Error('Saved archive catalog is unavailable.');
           const catalog=await response.json();
@@ -7468,7 +7470,7 @@ const q0='7f2a',q1='b19e',q2='d44c',q3='9a01';
   async function readPublicSnapshotBackup(kind,id='',accountId='',{refresh=false}={}){
     if(!publicSnapshotReaderPromise)publicSnapshotReaderPromise=import('./tools/public-snapshot-client.mjs?v=178').then(async module=>{
       const recoveryModule=await import('./tools/snapshot-metadata-recovery.mjs?v=178');
-      const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',window.location.href),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]')),bootstrap:true,optimizedIndex:true,onRead:metric=>noteDeveloperEvent('snapshot',String(metric.kind).toUpperCase(),metric.durationMs,metric.source==='failed'?0:200),onGenerationChange:()=>{
+      const reader=module.createPublicSnapshotReader({baseUrl:new URL(document.querySelector('meta[name="polytrack-snapshot"]')?.content||'./public-snapshots/',document.baseURI),packed:Boolean(document.querySelector('meta[name="polytrack-snapshot"]')),bootstrap:true,optimizedIndex:true,onRead:metric=>noteDeveloperEvent('snapshot',String(metric.kind).toUpperCase(),metric.durationMs,metric.source==='failed'?0:200),onGenerationChange:()=>{
         metadataRecovery.reset();
         if(typeof syncLocalOverallProjection==='function')void syncLocalOverallProjection();
         snapshotTrackStatistics={};snapshotCosmeticEntries={};snapshotRacerDirectoryEntries={};publicSnapshotCapturedAt=0;

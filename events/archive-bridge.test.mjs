@@ -9,10 +9,11 @@ const end=source.indexOf('        importTrackCode:',start);
 assert(start>=0&&end>start,'archive bridge hooks are present');
 const hooks=source.slice(start,end);
 
-function bridge({assets=new Map(),moduleUrl='https://game.test/events/client.mjs?v=168'}={}){
+function bridge({assets=new Map(),moduleUrl='https://game.test/events/client.mjs?v=168',baseURI='https://game.test/'}={}){
  const reads=[],requests=[];
  const context={
   URL,
+  document:{baseURI},
   readPublicSnapshotBackup:async(kind,id,accountId)=>{reads.push([kind,id,accountId]);return assets.get([kind,id,accountId].join('/'))||null;},
   eventsModuleUrl:moduleUrl,
   location:{origin:'https://game.test'},
@@ -48,4 +49,16 @@ test('archive catalog accepts only a same-origin static file',async()=>{
  const remote=bridge({moduleUrl:'https://cdn.test/events/client.mjs'});
  await assert.rejects(remote.hooks.readStaticArchiveCatalog(),/same-origin/);
  assert.deepEqual(remote.requests,[]);
+});
+
+test('archive catalog permits only this pinned jsDelivr game base across origins',async()=>{
+ const base='https://cdn.jsdelivr.net/gh/StaticQuasar931/PolyTrack-0.6.3-Ranked@'+'a'.repeat(40)+'/';
+ const good=bridge({baseURI:base,moduleUrl:base+'events/client.mjs?v=178'});
+ assert.equal((await good.hooks.readStaticArchiveCatalog()).archives.length,0);
+ assert.deepEqual(good.requests,[base+'events/public-catalog.json']);
+ for(const [baseURI,moduleUrl] of [
+  [base,base.replace('a'.repeat(40),'b'.repeat(40))+'events/client.mjs'],
+  [base.replace('@'+'a'.repeat(40),'@main'),base.replace('@'+'a'.repeat(40),'@main')+'events/client.mjs'],
+  [base.replace('cdn.jsdelivr.net','cdn.jsdelivr.net.evil.test'),base.replace('cdn.jsdelivr.net','cdn.jsdelivr.net.evil.test')+'events/client.mjs']
+ ]) {const bad=bridge({baseURI,moduleUrl});await assert.rejects(bad.hooks.readStaticArchiveCatalog(),/same-origin/);assert.deepEqual(bad.requests,[]);}
 });
