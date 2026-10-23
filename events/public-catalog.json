@@ -30,20 +30,34 @@
       "label": "Weekly 2026-10-19"
     },
     {
-      "id": "d_20261022",
-      "trackId": "a510bbd3341f2992a12db8a3780cb8943b6087538345d58d16602d6129742df0",
-      "startsAt": 1792627200000,
-      "endsAt": 1792713600000,
+      "id": "d_20261023",
+      "trackId": "39bd3fa6c3c769b298c219aee7561af35a6d856bfee14b46b0b48499e7a57ed5",
+      "startsAt": 1792713600000,
+      "endsAt": 1792800000000,
       "graceMs": 86400000,
       "maxRp": 100,
       "scoringVersion": "time-gap-v2",
-      "targetMs": 35521,
+      "targetMs": 25544,
       "kind": "daily",
       "entrantLimit": 200,
-      "label": "Daily 2026-10-22"
+      "label": "Daily 2026-10-23"
     }
   ],
   "archives": [
+    {
+      "id": "d_20261021",
+      "trackId": "81cede50724b1ee0c2ebcef973c37d620680766bd75771c5ae2728b8732c7a66",
+      "startsAt": 1792540800000,
+      "endsAt": 1792627200000,
+      "graceMs": 86400000,
+      "maxRp": 100,
+      "scoringVersion": "time-gap-v2",
+      "targetMs": 27778,
+      "kind": "daily",
+      "racerCount": 9,
+      "entrantLimit": 200,
+      "label": "Daily 2026-10-21"
+    },
     {
       "id": "d_20261020",
       "trackId": "9f827673c4132828009237a03e12ead73eae87504b4708a79c6cc0858212262d",
