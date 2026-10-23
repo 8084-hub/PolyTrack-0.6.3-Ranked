@@ -339,9 +339,10 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
   cleanerReveal.append(make('figcaption', '', 'Window Cleaner - thanks for helping with track gradings!'));
   const staticReveal = make('figure', 'sq-extra-static');
   staticReveal.hidden = true;
-  const sunshine = make('span', 'sq-extra-static-sun', ':)');
-  sunshine.setAttribute('aria-hidden', 'true');
-  staticReveal.append(sunshine, make('figcaption', '', 'Static - a little sunshine between finish lines. Thanks for bringing this community together!'));
+  let staticImageCreated = false;
+  const staticCaption = make('figcaption');
+  staticCaption.append(make('strong', 'sq-extra-static-name', 'Static'), make('p', '', 'I build and maintain Ranked. Thanks for playing.'));
+  staticReveal.append(staticCaption);
   dialog.append(cleanerReveal, staticReveal);
   const pagination = make('nav', 'sq-extra-pagination');
   pagination.setAttribute('aria-label', 'Track pages');
@@ -1048,6 +1049,18 @@ export function mountExtraTracks({ document, root, entries = [], onPlay, onSave,
     const showStatic = showCredits || query === 'static';
     staticReveal.hidden = !showStatic;
     cleanerReveal.hidden = !showCleaner;
+    if (showStatic && !staticImageCreated) {
+      const logo = make('img', 'sq-extra-static-logo');
+      logo.alt = '';
+      logo.width = 64;
+      logo.height = 64;
+      logo.decoding = 'async';
+      logo.referrerPolicy = 'no-referrer';
+      logo.addEventListener('error', () => { logo.hidden = true; }, {once: true});
+      logo.src = 'https://cdn.jsdelivr.net/gh/StaticQuasar931/Images@main/squarestaticquasar931logo.jpg';
+      staticReveal.append(logo);
+      staticImageCreated = true;
+    }
     if (showCleaner && !cleanerImageCreated) {
       const cat = make('img');
       cat.src = 'https://cdn.jsdelivr.net/gh/StaticQuasar931/Images@main/Window_Cleaner_Cat.jpg';

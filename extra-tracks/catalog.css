@@ -180,11 +180,14 @@
 @media(max-width:600px),(pointer:coarse){.sq-extra-grading-help summary{min-height:44px}}
 .sq-extra-summary{flex-wrap:wrap;align-items:center;gap:6px 20px}
 
-/* A local, motion-free sunshine badge shares the game's angular blue identity. */
-.sq-extra-static{display:flex;align-items:center;gap:18px;margin:12px clamp(16px,2.2vw,36px) 20px;padding:20px;border:1px solid #95d8f0;background:radial-gradient(ellipse at top left,#315d7d,#182c4d 75%);color:#e5f3ff;line-height:1.5}
+.sq-extra-static{display:flex;align-items:center;gap:16px;margin:12px clamp(16px,2.2vw,36px) 20px;padding:16px;border:1px solid #597dab;background:#182c4d;color:#d0edff;line-height:1.5}
 .sq-extra-static[hidden]{display:none}
-.sq-extra-static-sun{display:grid;place-items:center;flex:none;width:72px;height:72px;background:#ffe1a3;color:#182c4d;font-size:28px;font-weight:bold;clip-path:polygon(50% 0,61% 15%,80% 6%,82% 27%,100% 34%,88% 50%,100% 66%,82% 73%,80% 94%,61% 85%,50% 100%,39% 85%,20% 94%,18% 73%,0 66%,12% 50%,0 34%,18% 27%,20% 6%,39% 15%)}
-@media(max-width:400px){.sq-extra-static{gap:12px;padding:14px}.sq-extra-static-sun{width:56px;height:56px}}
+.sq-extra-static-logo{order:-1;flex:none;width:64px;height:64px;object-fit:contain;border-radius:6px}
+.sq-extra-static-logo[hidden]{display:none}
+.sq-extra-static figcaption{min-width:0;overflow-wrap:anywhere}
+.sq-extra-static-name{color:#e5f3ff;font-weight:normal;font-size:20px}
+.sq-extra-static p{margin:4px 0 0;font-size:16px}
+@media(max-width:400px){.sq-extra-static{gap:12px;padding:14px}.sq-extra-static-logo{width:48px;height:48px}}
 
 /* Discovery stays above the fold; submission guidance belongs in its dialog. */
 .sq-extra-header>.sq-extra-title-group{margin-right:auto}

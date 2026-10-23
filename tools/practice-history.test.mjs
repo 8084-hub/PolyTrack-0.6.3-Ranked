@@ -253,3 +253,16 @@ test('clock recovery reclassifies bounded prior idle without inventing movement'
  const row=h.history.get(account,track);assert.equal(row.activeMs,2000);assert.equal(row.progressingMs,2000);
  assert.equal(row.idleMs,0);assert.equal(row.movingMs,1000);assert.equal(row.stationaryMs,1000);
 });
+
+test('asynchronous first placement survives immediate reload without another drive',()=>{
+ const account='a'.repeat(64),track='b'.repeat(64),at=Date.UTC(2026,9,22);
+ let saved;
+ const storage={getItem:()=>saved,setItem:(_key,value)=>{saved=value;}};
+ const history=createPracticeHistory({storage,now:()=>at});
+ const finish=history.begin(account,track).finish(10000);
+ const evidence={...finish,at,rank:3,total:50,exact:true,complete:true,authoritative:true};
+ assert.equal(history.observePlacement(account,track,evidence),true);
+ const restored=createPracticeHistory({storage,now:()=>at});
+ assert.deepEqual(restored.get(account,track).firstPlacement,evidence);
+ assert.equal(restored.get(account,track).finishes,1);
+});

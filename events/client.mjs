@@ -28,15 +28,15 @@ export function eventVerificationLabel(row,pending=!!row?.pending,locale){
   const date=at?new Date(at).toLocaleString(locale,{year:'numeric',month:'2-digit',day:'2-digit',hour:'numeric',minute:'2-digit'}):'Date unavailable';
   return date+' - '+(pending?'Pending':'Verified');
 }
-export function eventExactRunAt(row){
+export function eventExactRunAt(row,at=Date.now()){
   for(const field of ['runCreatedAt','pbAt','createdAt']){
     const value=Number(row?.[field]);
-    if(Number.isSafeInteger(value)&&value>=946684800000&&value<=8640000000000000)return value;
+    if(Number.isSafeInteger(value)&&value>=946684800000&&value<=Math.min(at,8640000000000000))return value;
   }
   const uploadId=Number(row?.uploadId);
   if(Number.isSafeInteger(uploadId)&&uploadId>=946684800000000){
     const value=Math.floor(uploadId/1000);
-    if(value<=8640000000000000)return value;
+    if(value<=Math.min(at,8640000000000000))return value;
   }
   return null;
 }
@@ -432,9 +432,17 @@ export function installEvents(bridge){
   }
   async function importArchived(period){
     if(typeof bridge.readArchivedTrack!=='function'){message('Saved archived track import is unavailable.');return;}
-    const token=++requestId;message('Loading archived track for custom-track practice...');
-    try{const code=await bridge.readArchivedTrack(period);if(token!==requestId||!dialog)return;close();bridge.importTrackCode(code);}
-    catch(error){if(dialog)message(error.message||'Archived track could not be imported.');}
+    const token=++requestId,owner=dialog;
+    const current=()=>!!owner&&token===requestId&&dialog===owner;
+    message('Loading archived track for custom-track practice...');
+    try{
+      const code=await bridge.readArchivedTrack(period);if(!current())return;
+      const result=bridge.importTrackCode(code,current);
+      const handedOff=result&&typeof result.then==='function'?await result:result;
+      if(!current())return;
+      if(handedOff===false)throw Error('Archived track could not be imported. Please try again.');
+      returnFocus=null;close();
+    }catch(error){if(current())message(error?.message||'Archived track could not be imported.');}
   }
   async function totals(){if(typeof bridge.openRankedEvents==='function'){close();await bridge.openRankedEvents();return;}shell();selectView('totals');selected=null;const token=++requestId;body('<p>Loading Event RP...</p>');try{let data;try{data=await bridge.readTotals();if(!Array.isArray(data?.entries))throw Error('Invalid standings');cacheWrite(STORE+'-totals',data);}catch(error){data=read(STORE+'-totals',null);if(!data)throw error;data={...data,saved:true};}if(!dialog||token!==requestId)return;body('<h3>Lifetime Event RP</h3><p>'+data.entries.length+' racers loaded</p>'+(data.saved?'<p class="sq-event-saved">Saved standings</p>':'')+'<p>Points earned across events. Faster event PBs replace earlier points; repeated runs do not stack.</p><ol class="sq-event-results">'+(data.entries||[]).map((row,i)=>`<li><b>#${row.rank||i+1}</b><span>${escape(row.name||'Racer')}</span><span>${Number(row.events)||0} events</span><strong>${Number(row.rp)||0} RP</strong></li>`).join('')+'</ol>'+(!data.entries.length?'<p>No Event RP earned yet. Try a live event.</p>':''));}catch{if(token===requestId)body('<p>Event RP is unavailable right now.</p>');}}
   async function archives(month=''){
@@ -462,7 +470,9 @@ export function installEvents(bridge){
     const snapshot=saved||cache.get(period?.id)||read(STORE+'-'+period?.id,null);
     if(!period?.id||!period.trackId||!snapshot||!Array.isArray(snapshot.entries)||snapshot.period?.id&&snapshot.period.id!==period.id||snapshot.period?.trackId&&snapshot.period.trackId!==period.trackId){message('Archived standings are not loaded or do not match this track. Reopen the archive card and try again.');return false;}
     entryRequest++;sessions.leave();eventIntent=null;archiveIntent={archive:true,period,periodId:period.id,trackId:period.trackId,accountId:bridge.accountId(),snapshot};knownPeriods.set(period.id,period);close();message('Opening archived track for normal practice.');
-    nativeOpenPermit=true;try{if(await bridge.openTrack(period.trackId)===false)throw Error('The archived track could not open. Please try again.');}catch(error){archiveIntent=null;message(error?.message||'Archived track could not be opened.');return false;}finally{nativeOpenPermit=false;}
+    const intent=archiveIntent;
+    nativeOpenPermit=true;try{if(await bridge.openTrack(period.trackId)===false)throw Error('The archived track could not open. Please try again.');}catch(error){if(archiveIntent===intent&&bridge.accountId()===intent.accountId){archiveIntent=null;message(error?.message||'Archived track could not be opened.');}return false;}finally{nativeOpenPermit=false;}
+    if(archiveIntent!==intent||bridge.accountId()!==intent.accountId)return false;
     tick();return true;
   }
   let launching=false,nativeOpenPermit=false,nativePlayPermit=false,selectedGhost=null,replayRequest=0,topSelectionToken=0,eventTopPrefixUntil=0,eventTopHeld=false,eventDigitBoard=null;const selectedGhosts=new Map(),pendingGhosts=new Map(),replayCache=new Map(),preparedGhosts=new Map(),preparedOwnGhosts=new Map(),replayFailures=new Map(),eventDigitsHeld=new Map(),eventDigitsConsumed=new Set();
@@ -563,18 +573,22 @@ export function installEvents(bridge){
     return true;
   }
   const replayContextActive=session=>session?.archive===true?archiveIntent===session&&bridge.accountId()===session.accountId:sessions.current()===session&&bridge.accountId()===session.accountId;
+  function cancelPendingEventGroups(){
+    // Individual actions invalidate the batch token, so release all its loading rows.
+    for(const [id,target] of pendingGhosts)if(target.groupToken)pendingGhosts.delete(id);
+  }
   async function selectReplay(period,row,{silent=false}={}){
     const session=sessions.current()||archiveIntent,viewer=bridge.accountId(),readReplay=session?.archive?bridge.readArchivedReplay:bridge.readReplay;
     if(!session||session.periodId!==period.id||typeof readReplay!=='function')return;
     const pendingSelection=pendingGhosts.get(row.accountId);
     if(pendingSelection?.periodId===period.id&&pendingSelection.accountId===viewer&&pendingSelection.targetTimeMs===row.timeMs&&pendingSelection.targetPending===!!row.pending&&pendingSelection.targetRunId===(row.runId||null)){
-      ++topSelectionToken;++replayRequest;pendingGhosts.delete(row.accountId);if(!silent)message('Event ghost selection cancelled.');tick();return false;
+      ++topSelectionToken;++replayRequest;pendingGhosts.delete(row.accountId);cancelPendingEventGroups();if(!silent)message('Event ghost selection cancelled.');tick();return false;
     }
     const previous=selectedGhosts.get(row.accountId);
     if(previous?.periodId===period.id&&previous.accountId===viewer&&previous.targetTimeMs===row.timeMs&&previous.targetPending===!!row.pending&&previous.targetRunId===(row.runId||null)){
-      ++topSelectionToken;++replayRequest;pendingGhosts.delete(row.accountId);selectedGhosts.delete(row.accountId);selectedGhost=[...selectedGhosts.values()].at(-1)||null;if(!silent){message('Event ghost unselected.');tick();}return false;
+      ++topSelectionToken;++replayRequest;pendingGhosts.delete(row.accountId);cancelPendingEventGroups();selectedGhosts.delete(row.accountId);selectedGhost=[...selectedGhosts.values()].at(-1)||null;if(!silent){message('Event ghost unselected.');tick();}return false;
     }
-    ++topSelectionToken;const token=++replayRequest;for(const [id,target] of pendingGhosts)if(target.groupToken)pendingGhosts.delete(id);const pending={periodId:period.id,accountId:viewer,targetAccountId:row.accountId,targetTimeMs:row.timeMs,targetPending:!!row.pending,targetRunId:row.runId||null};pendingGhosts.set(row.accountId,pending);if(!silent){message('Loading event replay...');tick();}
+    ++topSelectionToken;const token=++replayRequest;cancelPendingEventGroups();const pending={periodId:period.id,accountId:viewer,targetAccountId:row.accountId,targetTimeMs:row.timeMs,targetPending:!!row.pending,targetRunId:row.runId||null};pendingGhosts.set(row.accountId,pending);if(!silent){message('Loading event replay...');tick();}
     const key=(session.archive?'archive:':'live:')+period.id+'_'+row.accountId+'_'+row.timeMs+'_'+(row.runId||'verified'),failureKey=key+'_'+viewer;
     try{
       const failure=replayFailure(failureKey);if(failure)throw Error(failure);

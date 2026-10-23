@@ -131,7 +131,7 @@ export function createPracticeHistory({storage,now=Date.now,onChange=()=>{}}={})
   const placement=cleanPlacement(evidence,now());
   if(!placement)return false;const row=data.accounts[accountId]?.[trackId];
   if(!row||row.firstPlacement||!row.trackedBestMs||placement.timeMs!==row.lastObservedFinishMs||placement.finishedAt!==row.lastObservedFinishAt)return false;
-  row.firstPlacement=placement;changed();return true;
+  row.firstPlacement=placement;changed();flush(true);return true;
  }
  function observeBest(accountId,trackId,timeMs){
   if(!Number.isFinite(timeMs)||timeMs<=0||timeMs>LIMIT)return false;

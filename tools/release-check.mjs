@@ -5,9 +5,13 @@ import {trackMenuReadContract} from './track-menu-read-contract.mjs';
 import {checkRepositoryExtraVerification} from './extra-verification-check.mjs';
 import {buildNamePolicy} from './build-name-policy.mjs';
 import {validateEnginePin} from './verifier/run.mjs';
+import {privatePublicationPaths} from './publication-privacy.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const failures = [];
+const tracked = spawnSync('git', ['ls-files', '-z', '--', 'docs/security', 'workers/ranked/test/quota-rules-candidate.test.js', '*.rules', '*.rules.*', '*firebase-config.local*', '*service-account*', '*serviceAccount*', '*firebase-adminsdk*', '*service_account*', '*credentials*.json', '.env*', '**/.env*', '.dev.vars*', '**/.dev.vars*', '*.pem', '*.p12', '*.key'], {cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024});
+if (tracked.status !== 0) failures.push('Cannot verify tracked publication files. Run release checks from a Git checkout.');
+else for (const file of privatePublicationPaths(tracked.stdout.split('\0').filter(Boolean))) failures.push('Private file remains tracked: ' + file);
 try { await validateEnginePin(); }
 catch (error) { failures.push('Verifier engine pin: ' + error.message); }
 try { await buildNamePolicy({check:true}); }

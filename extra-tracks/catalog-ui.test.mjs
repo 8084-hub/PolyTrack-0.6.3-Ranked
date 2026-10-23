@@ -1178,17 +1178,22 @@ test('filter CSS uses a compact natural grid with no obsolete explicit row assig
   assert.ok(css.includes('.sq-extra-advanced>.sq-extra-field{grid-column:auto;grid-row:auto;min-width:0}'));
 });
 
-test('Static and credits reveals are cheerful, query-scoped and need no new image',async()=>{
+test('Static credit is modest, query-scoped and loads one optional square logo',async()=>{
  const {root,api}=fixture([entry(1)]);api.open();
  const search=tag(cls(root,'sq-extra-search-field')[0],'input')[0];
  const sunshine=cls(root,'sq-extra-static')[0],cleaner=cls(root,'sq-extra-cleaner')[0];
- assert.equal(sunshine.hidden,true);
+ assert.equal(sunshine.hidden,true);assert.equal(tag(sunshine,'img').length,0);
  for(const query of ['Static','STATIC','credits']){
   search.value=query;await search.dispatch('input');
-  assert.equal(sunshine.hidden,false);assert.match(sunshine.textContent,/sunshine.*community/);
-  assert.equal(tag(sunshine,'img').length,0);assert.equal(cls(root,'sq-extra-empty').length,0);
+  assert.equal(sunshine.hidden,false);assert.equal(sunshine.textContent,'StaticI build and maintain Ranked. Thanks for playing.');
+  assert.equal(tag(sunshine,'img').length,1);assert.equal(cls(root,'sq-extra-empty').length,0);
   assert.equal(cleaner.hidden,query!=='credits');
  }
+ const logo=tag(sunshine,'img')[0];
+ assert.equal(logo.src,'https://cdn.jsdelivr.net/gh/StaticQuasar931/Images@main/squarestaticquasar931logo.jpg');
+ assert.equal(logo.alt,'');assert.equal(logo.width,64);assert.equal(logo.height,64);
+ await logo.dispatch('error');assert.equal(logo.hidden,true);
+ api.refresh();assert.equal(tag(sunshine,'img')[0],logo);assert.equal(logo.hidden,true);
  search.value='static noise';await search.dispatch('input');assert.equal(sunshine.hidden,true);
  assert.equal(cls(root,'sq-extra-empty').length,1);
  search.value='window cleaner';await search.dispatch('input');assert.equal(sunshine.hidden,true);assert.equal(cleaner.hidden,false);

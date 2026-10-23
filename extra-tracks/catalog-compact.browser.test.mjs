@@ -198,12 +198,12 @@ test('local review filter and ordering include ratings and update after a review
   await page.locator('.sq-extra-sort-controls select').selectOption('my-rating');assert.equal((await names())[0],'Beta');
   await page.evaluate(()=>{reviews[0]={rating:10};catalog.refresh();});assert.equal((await names())[0],'Alpha');
   await page.evaluate(()=>{reviews[0]={rating:0};catalog.refresh();});assert.equal((await names())[0],'Beta');
-  await page.locator('.sq-extra-sort-controls button').click();assert.equal(await page.locator('.sq-extra-review-field select').inputValue(),'all');
+  await page.getByRole('button',{name:'Reset filters',exact:true}).click();assert.equal(await page.locator('.sq-extra-review-field select').inputValue(),'all');
   assert.deepEqual(await names(),['Alpha','Beta','Gamma']);assert.deepEqual(unexpected,[]);
  }finally{await browser.close();}
 });
 
-test('desktop and compact discovery keep filters accessible and Static credits local',{skip:!chromium},async()=>{
+test('desktop and compact discovery keep filters accessible with optional Static artwork',{skip:!chromium},async()=>{
  const browser=await chromium.launch({headless:true});
  try{
   const page=await browser.newPage();
@@ -275,7 +275,7 @@ test('desktop and compact discovery keep filters accessible and Static credits l
   await reachable(page.locator('.sq-extra-close'));await shot('catalog-close-844x320');await page.locator('.sq-extra-close').click();
   assert.equal(await page.locator('.sq-extra-overlay').isHidden(),true);
   await page.evaluate(()=>catalog.open());await page.setViewportSize({width:390,height:844});
-  assert.deepEqual(unexpected,[],'Static, filters and catalog discovery need no external assets');
+  assert.deepEqual(unexpected,['https://cdn.jsdelivr.net/gh/StaticQuasar931/Images@main/squarestaticquasar931logo.jpg'],'only the requested Static artwork uses an external asset');
   await page.route('**/Window_Cleaner_Cat.jpg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="72"><text x="12" y="36" fill="white">Window Cleaner cat (offline fixture)</text></svg>'}));
   await search.fill('credits');
   assert.equal(await page.locator('.sq-extra-static').isVisible(),true);

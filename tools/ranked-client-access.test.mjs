@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import {stampClientRelease} from './site-release.mjs';
 const patch=fs.readFileSync(new URL('../polytrack_062_patch.js',import.meta.url),'utf8');
 const index=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
+const revision=JSON.parse(fs.readFileSync(new URL('../site-version.json',import.meta.url),'utf8')).revision;
 const helper=patch.match(/  function rankedFetch\([\s\S]*?\r?\n  \}/)[0];
 test('Ranked transport adds release without dropping auth, payload or cancellation',async()=>{
  let call;const ctx=vm.createContext({Headers,fetch:(...args)=>{call=args;return Promise.resolve('ok');}});
@@ -13,13 +14,13 @@ test('Ranked transport adds release without dropping auth, payload or cancellati
  const options={method:'POST',headers:{Authorization:'Bearer fixture','Content-Type':'application/json'},body:'{}',signal};
  assert.equal(await ctx.rankedFetch('https://fixture.example/v1/pb/notify',options),'ok');
  assert.equal(call[1].headers.get('Authorization'),'Bearer fixture');
- assert.equal(call[1].headers.get('X-PolyTrack-Revision'),'177');
+ assert.equal(call[1].headers.get('X-PolyTrack-Revision'),String(revision));
  assert.equal(call[1].body,'{}');assert.equal(call[1].signal,signal);
  assert.equal(options.headers['X-PolyTrack-Revision'],undefined);
 });
 test('future release stamping advances explicit backend revision',()=>{
- const result=stampClientRelease(patch,index,178);
- assert.match(result.patch,/headers\.set\('X-PolyTrack-Revision', String\(178\)\)/);
+ const next=revision+1,result=stampClientRelease(patch,index,next);
+ assert.ok(result.patch.includes("headers.set('X-PolyTrack-Revision', String("+next+"))"));
 });
 test('all directly addressed Ranked requests use revisioned transport',()=>{
  assert.doesNotMatch(patch,/\bfetch\(rankedBrokerUrl\(\)/);
